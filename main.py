@@ -17,6 +17,9 @@ def main():
     vid.add_argument("--conf",           type=float, default=0.30, help="Confidence threshold for ball detection")
     vid.add_argument("--trail-len",      type=int,   default=40,   help="Length of the visual ball trajectory")
     vid.add_argument("--no-preview",     action="store_true",      help="Disable the real-time preview window")
+    vid.add_argument("--raw",            action="store_true",      help="Show raw YOLO detections without Kalman/trail")
+    vid.add_argument("--net-width-px",  type=int, default=None,   help="Net width in pixels (pole to pole = 9m) for speed calibration")
+    vid.add_argument("--net-height-px", type=int, default=None,   help="Net height in pixels (top to bottom = 1m) for speed calibration")
 
     # ── live sub-command ───────────────────────────────────────────────────
     # Placeholder for future live implementation (e.g., using a USB/CSI camera)
@@ -45,6 +48,8 @@ def main():
         print(f"  Confidence:  {args.conf}")
         print(f"  Trail len:   {args.trail_len}")
         print(f"  Preview:     {not args.no_preview}")
+        print(f"  Raw mode:    {args.raw}")
+        print(f"  Calibration: {f'{args.net_width_px}x{args.net_height_px} px' if args.net_width_px and args.net_height_px else 'interactive'}")
         print("=" * 40)
 
         run_video_pipeline(
@@ -53,7 +58,10 @@ def main():
             model_path=args.model,
             conf=args.conf,
             trail_len=args.trail_len,
-            show_preview=not args.no_preview
+            show_preview=not args.no_preview,
+            raw=args.raw,
+            net_width_px=args.net_width_px,
+            net_height_px=args.net_height_px,
         )
 
     elif args.command == "live":
