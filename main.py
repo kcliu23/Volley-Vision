@@ -13,7 +13,7 @@ def main():
     vid = sub.add_parser("video", help="Analyze a pre-recorded volleyball match")
     vid.add_argument("input",            help="Path to the input video file (mp4, avi, etc.)")
     vid.add_argument("--output",         default="output", help="Directory to save the tracked video")
-    vid.add_argument("--model",          default="models/best.pt", help="Path to your custom YOLO weights")
+    vid.add_argument("--model",          default="models/YOLOV11m.pt", help="Path to your custom YOLO weights")
     vid.add_argument("--conf",           type=float, default=0.30, help="Confidence threshold for ball detection")
     vid.add_argument("--trail-len",      type=int,   default=40,   help="Length of the visual ball trajectory")
     vid.add_argument("--no-preview",     action="store_true",      help="Disable the real-time preview window")

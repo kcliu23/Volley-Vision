@@ -9,8 +9,8 @@ workspaceId = "laundry"
 projectId = "volleyball-lcy2z"
 project = rf.workspace(workspaceId).project(projectId)
 
-image_dir = "runs/detect/auto_labels_clean/volleyball_data/images"
-label_dir = "runs/detect/auto_labels_clean/volleyball_data/labels"
+image_dir = "auto_labels_clean/test14/images"
+label_dir = "auto_labels_clean/test14/labels"
 
 # 70% train, 20% valid, 10% test
 SPLIT_RATIOS = {"train": 0.70, "valid": 0.20, "test": 0.10}

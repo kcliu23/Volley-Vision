@@ -3,8 +3,9 @@ import cv2
 import os
 
 
-model = YOLO("models/best.pt")
-source_video = "tests/test13.mov"
+model = YOLO("models/YOLOv11m.pt")
+# model = YOLO("models/best.pt")
+source_video = "tests/test14.mov"
 project_name = "auto_labels_clean"
 video_stem = os.path.splitext(os.path.basename(source_video))[0]
 
