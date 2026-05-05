@@ -62,7 +62,6 @@ def run(
     write_path = tmp_path if has_ffmpeg else out_path
     writer     = cv2.VideoWriter(write_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
 
-    tracker       = BallTracker(model_path=model_path, conf=conf, trail_len=trail_len)
     prev_pos: tuple[float, float] | None = None
     speed: float        = 0.0
     peak_speed: float   = 0.0
@@ -79,6 +78,14 @@ def run(
         print(f"[VolleyVision] Calibration: {px_per_m:.1f} px/m  ({px_per_m_x:.1f} horiz, {px_per_m_y:.1f} vert)")
     elif ok:
         px_per_m = _interactive_calibrate(first_frame)
+
+    # Optional ignore regions (e.g. wall painting) — only in interactive mode
+    ignore_regions = []
+    if ok and net_width_px is None:
+        ignore_regions = _interactive_ignore_regions(first_frame)
+
+    tracker = BallTracker(model_path=model_path, conf=conf, trail_len=trail_len,
+                          ignore_regions=ignore_regions)
 
     # JSON exporter
     exporter = ClipExporter(
@@ -215,6 +222,67 @@ def _interactive_calibrate(frame) -> float | None:
     px_per_m   = (px_per_m_x + px_per_m_y) / 2
     print(f"[Calibration] {px_per_m:.1f} px/m  (horiz: {px_per_m_x:.1f}, vert: {px_per_m_y:.1f})")
     return px_per_m
+
+
+def _interactive_ignore_regions(frame) -> list[tuple[int, int, int, int]]:
+    """Let the user drag rectangles over false-positive regions (e.g. wall painting).
+    Press S to skip, ENTER or C to confirm and continue."""
+    regions = []
+    drawing = [False]
+    start   = [0, 0]
+    current = [0, 0]
+    display = frame.copy()
+    base    = frame.copy()
+
+    def on_mouse(event, x, y, flags, param):
+        if event == cv2.EVENT_LBUTTONDOWN:
+            drawing[0] = True
+            start[0], start[1] = x, y
+            current[0], current[1] = x, y
+        elif event == cv2.EVENT_MOUSEMOVE and drawing[0]:
+            current[0], current[1] = x, y
+        elif event == cv2.EVENT_LBUTTONUP:
+            drawing[0] = False
+            x1, y1 = min(start[0], x), min(start[1], y)
+            x2, y2 = max(start[0], x), max(start[1], y)
+            if x2 - x1 > 5 and y2 - y1 > 5:
+                regions.append((x1, y1, x2, y2))
+
+    cv2.namedWindow("Ignore Regions", cv2.WINDOW_NORMAL)
+    cv2.setMouseCallback("Ignore Regions", on_mouse)
+    print("[Ignore Regions] Drag boxes over false detections. Press S to skip, ENTER when done.")
+
+    while True:
+        display = base.copy()
+        # Draw confirmed regions
+        for (x1, y1, x2, y2) in regions:
+            cv2.rectangle(display, (x1, y1), (x2, y2), (50, 50, 220), 2)
+            cv2.putText(display, "ignored", (x1 + 4, y1 + 16),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (50, 50, 220), 1, cv2.LINE_AA)
+        # Draw in-progress rectangle
+        if drawing[0]:
+            cv2.rectangle(display, (start[0], start[1]), (current[0], current[1]),
+                          (50, 50, 220), 1)
+        hint = f"Drag to mask | {len(regions)} region(s) | ENTER=confirm  S=skip  Z=undo"
+        cv2.putText(display, hint, (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 220, 255), 2, cv2.LINE_AA)
+        cv2.imshow("Ignore Regions", display)
+
+        key = cv2.waitKey(20) & 0xFF
+        if key in (13, ord("c")):   # ENTER or C → confirm
+            break
+        if key == ord("s"):          # S → skip entirely
+            regions.clear()
+            break
+        if key == ord("z") and regions:  # Z → undo last region
+            regions.pop()
+
+    cv2.destroyWindow("Ignore Regions")
+    if regions:
+        print(f"[Ignore Regions] {len(regions)} region(s) masked: {regions}")
+    else:
+        print("[Ignore Regions] Skipped — no regions masked")
+    return regions
 
 
 def _hud(frame, idx, total, fps, pos, speed: float = 0.0, peak_speed: float = 0.0,

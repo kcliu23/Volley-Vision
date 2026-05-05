@@ -130,6 +130,35 @@
     /* trajectory canvas */
     #traj-canvas { background: #0a1628; border-radius: 6px; cursor: crosshair; }
 
+    /* ── video controls ─────────────────────────────────────────────────── */
+    #vid-controls { display: flex; align-items: center; justify-content: center;
+                    gap: 6px; padding: 8px 16px 10px;
+                    background: #0a0a0e; border-top: 1px solid var(--border); }
+    .vc-left  { display: flex; align-items: center; gap: 2px; }
+    .vc-mid   { display: flex; align-items: center; gap: 6px; padding: 0 10px; }
+    .vc-right { display: flex; align-items: center; gap: 2px; }
+
+    .vc-btn { background: transparent; border: none; color: var(--muted);
+              border-radius: 50%; width: 36px; height: 36px;
+              display: grid; place-items: center;
+              cursor: pointer; transition: background 0.15s, color 0.15s; flex-shrink: 0; }
+    .vc-btn:hover { background: rgba(255,255,255,0.08); color: var(--text); }
+    .vc-btn svg { width: 18px; height: 18px; }
+    .vc-btn.skip { width: auto; height: 34px; border-radius: 17px;
+                   padding: 0 11px; gap: 5px; display: flex; align-items: center;
+                   font-size: 11px; font-weight: 800; letter-spacing: 0.5px; }
+    .vc-btn.play { width: 44px; height: 44px; background: var(--accent);
+                   color: #000; border-radius: 50%; }
+    .vc-btn.play:hover { background: #7b9fff; color: #000; }
+    .vc-btn.play svg { width: 20px; height: 20px; }
+    .vc-btn.frame svg { width: 19px; height: 19px; }
+
+    #vc-timecode { font-size: 11px; font-weight: 700; color: var(--muted);
+                   font-variant-numeric: tabular-nums; text-align: center;
+                   letter-spacing: 0.3px; white-space: nowrap; }
+    #vc-speed { font-size: 11px; font-weight: 800; color: var(--muted);
+                min-width: 36px; text-align: right; letter-spacing: 0.5px; }
+
     /* ── scrollbar ───────────────────────────────────────────────────── */
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: var(--bg); }
@@ -196,6 +225,55 @@
         <!-- video -->
         <div id="player-wrap">
           <video id="player" controls preload="metadata"></video>
+          <div id="vid-controls">
+
+            <!-- left: −5s −1s ‹ -->
+            <div class="vc-left">
+              <button class="vc-btn skip" onclick="skipSec(-5)" title="−5s  [J]">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3z"/><path d="M12.5 3V7l-4-4 4-4v4z"/></svg>
+                5
+              </button>
+              <button class="vc-btn skip" onclick="skipSec(-1)" title="−1s  [←]">
+                <svg viewBox="0 0 24 24" fill="currentColor"><path d="M12.5 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3z"/><path d="M12.5 3V7l-4-4 4-4v4z"/></svg>
+                1
+              </button>
+              <button class="vc-btn frame" onclick="stepFrame(-1)" title="Prev frame  [,]">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="4" y="5" width="3" height="14" rx="1" fill="currentColor" stroke="none"/>
+                  <polyline points="17 5 8 12 17 19"/>
+                </svg>
+              </button>
+            </div>
+
+            <!-- center: timecode ▶ frame# speed -->
+            <div class="vc-mid">
+              <span id="vc-timecode" style="font-variant-numeric:tabular-nums;">0:00.000</span>
+              <button class="vc-btn play" id="play-btn" onclick="togglePlay()" title="Play / Pause  [Space]">
+                <svg id="play-icon" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21"/></svg>
+              </button>
+              <span id="vc-frame" style="font-size:9px;font-variant-numeric:tabular-nums;color:var(--muted);font-weight:700;min-width:28px;">f0</span>
+              <span id="vc-speed" title="Speed  [< >]" style="font-size:10px;color:var(--accent);font-weight:800;min-width:28px;">1×</span>
+            </div>
+
+            <!-- right: › +1s +5s -->
+            <div class="vc-right">
+              <button class="vc-btn frame" onclick="stepFrame(1)" title="Next frame  [.]">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="17" y="5" width="3" height="14" rx="1" fill="currentColor" stroke="none"/>
+                  <polyline points="7 5 16 12 7 19"/>
+                </svg>
+              </button>
+              <button class="vc-btn skip" onclick="skipSec(1)" title="+1s  [→]">
+                1
+                <svg viewBox="0 0 24 24" fill="currentColor" style="transform:scaleX(-1)"><path d="M12.5 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3z"/><path d="M12.5 3V7l-4-4 4-4v4z"/></svg>
+              </button>
+              <button class="vc-btn skip" onclick="skipSec(5)" title="+5s  [K]">
+                5
+                <svg viewBox="0 0 24 24" fill="currentColor" style="transform:scaleX(-1)"><path d="M12.5 3a9 9 0 1 0 9 9h-2a7 7 0 1 1-7-7V3z"/><path d="M12.5 3V7l-4-4 4-4v4z"/></svg>
+              </button>
+            </div>
+
+          </div>
         </div>
 
         <!-- metrics -->
@@ -250,9 +328,10 @@
 
 <script>
 // ── state ──────────────────────────────────────────────────────────────────
-let clips     = [];
-let activeId  = null;
+let clips      = [];
+let activeId   = null;
 let speedChart = null;
+let clipFps    = 30;   // updated when a clip loads
 
 // ── init ───────────────────────────────────────────────────────────────────
 async function init() {
@@ -354,10 +433,12 @@ function showDetail(clip) {
     parts.slice(0, -1).join(' ') + ' <span>' + (parts.at(-1) || '') + '</span>';
 
   // video
+  clipFps = clip.fps || 30;
   const vid = document.getElementById('player');
   vid.src   = `/output/${clip.video}`;
   vid.poster = clip.poster ? `/output/${clip.poster}` : '';
   vid.load();
+  vid.ontimeupdate = updateTimecode;
 
   // metrics
   const m = clip.metrics || {};
@@ -512,6 +593,90 @@ function renderTrajectory(trajectory, events) {
     ctx.fillText(label, lx + 13, H - pad - 4);
     lx += 60;
   }
+}
+
+// ── video controls ─────────────────────────────────────────────────────────
+function skipSec(delta) {
+  const vid = document.getElementById('player');
+  vid.currentTime = Math.max(0, Math.min(vid.duration || 0, vid.currentTime + delta));
+}
+
+function stepFrame(delta) {
+  const vid = document.getElementById('player');
+  vid.pause();
+  vid.currentTime = Math.max(0, Math.min(vid.duration || 0, vid.currentTime + delta / clipFps));
+}
+
+function updateTimecode() {
+  const vid = document.getElementById('player');
+  const t   = vid.currentTime || 0;
+  const frame = Math.round(t * clipFps);
+  const mins  = Math.floor(t / 60);
+  const secs  = (t % 60).toFixed(3).padStart(6, '0');
+  document.getElementById('vc-timecode').textContent = `${mins}:${secs}`;
+  document.getElementById('vc-frame').textContent    = `f${frame}`;
+}
+
+// keyboard shortcuts
+const SPEEDS = [0.07, 0.15, 0.25, 0.5, 0.75, 1, 1.25, 1.5, 2];
+document.addEventListener('keydown', e => {
+  if (!document.getElementById('detail').classList.contains('show')) return;
+  if (['INPUT','TEXTAREA','BUTTON'].includes(document.activeElement.tagName)) return;
+  const vid = document.getElementById('player');
+  if (e.key === ' ')          { e.preventDefault(); togglePlay(); }
+  if (e.key === 'f')          { e.preventDefault(); vid.requestFullscreen?.(); }
+  if (e.key === 'j')          { e.preventDefault(); skipSec(-5);   }
+  if (e.key === 'k')          { e.preventDefault(); skipSec(5);    }
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); skipSec(-1);   }
+  if (e.key === 'ArrowRight') { e.preventDefault(); skipSec(1);    }
+  if (e.key === ',')          { e.preventDefault(); stepFrame(-1); }
+  if (e.key === '.')          { e.preventDefault(); stepFrame(1);  }
+  if (e.key === '<')          { e.preventDefault(); changeSpeed(-1); }
+  if (e.key === '>')          { e.preventDefault(); changeSpeed(1);  }
+});
+
+function togglePlay() {
+  const vid = document.getElementById('player');
+  vid.paused ? vid.play() : vid.pause();
+  document.activeElement?.blur();   // prevent spacebar double-firing via button focus
+}
+
+// keep play icon in sync
+document.getElementById('player').addEventListener('play',  () => {
+  document.getElementById('play-icon').innerHTML = '<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>';
+});
+document.getElementById('player').addEventListener('pause', () => {
+  document.getElementById('play-icon').innerHTML = '<polygon points="5 3 19 12 5 21"/>';
+});
+
+function changeSpeed(dir) {
+  const vid = document.getElementById('player');
+  const idx = SPEEDS.indexOf(vid.playbackRate);
+  const cur = idx === -1 ? SPEEDS.findIndex(s => s >= vid.playbackRate) : idx;
+  const next = Math.max(0, Math.min(SPEEDS.length - 1, cur + dir));
+  vid.playbackRate = SPEEDS[next];
+  showSpeedToast(SPEEDS[next]);
+}
+
+function showSpeedToast(rate) {
+  // update inline label
+  const lbl = document.getElementById('vc-speed');
+  if (lbl) lbl.textContent = `${rate}×`;
+
+  // flash toast
+  let toast = document.getElementById('speed-toast');
+  if (!toast) {
+    toast = document.createElement('div');
+    toast.id = 'speed-toast';
+    toast.style.cssText = `position:fixed;bottom:80px;left:50%;transform:translateX(-50%);
+      background:rgba(0,0,0,0.75);color:#fff;padding:6px 16px;border-radius:20px;
+      font-size:13px;font-weight:700;pointer-events:none;z-index:9999;transition:opacity 0.3s;`;
+    document.body.appendChild(toast);
+  }
+  toast.textContent = `${rate}×`;
+  toast.style.opacity = '1';
+  clearTimeout(toast._hide);
+  toast._hide = setTimeout(() => toast.style.opacity = '0', 1200);
 }
 
 // ── boot ───────────────────────────────────────────────────────────────────

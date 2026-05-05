@@ -10,14 +10,19 @@ class BallTracker:
     _MAX_JUMP_PX = 200
     _SMOOTH_WIN  = 3
 
+    _MIN_BALL_PX = 13
+    _MAX_BALL_PX = 85
+
     def __init__(
         self,
         model_path: str = "models/best4.pt",
         conf: float = 0.40,
         trail_len: int = 40,
+        ignore_regions: list[tuple[int, int, int, int]] | None = None,
     ):
-        self.model    = YOLO(model_path)
-        self.conf     = conf
+        self.model          = YOLO(model_path)
+        self.conf           = conf
+        self.ignore_regions = ignore_regions or []   # [(x1,y1,x2,y2), ...]
 
         self.trail: deque[tuple[float, float] | None] = deque(maxlen=trail_len)
         self.position: tuple[float, float] | None = None
@@ -57,8 +62,11 @@ class BallTracker:
 
     # ── Detection ─────────────────────────────────────────────────────────────
 
-    _MIN_BALL_PX = 13
-    _MAX_BALL_PX = 85
+    def _in_ignore_region(self, cx: float, cy: float) -> bool:
+        for x1, y1, x2, y2 in self.ignore_regions:
+            if x1 <= cx <= x2 and y1 <= cy <= y2:
+                return True
+        return False
 
     def _best_detection(self, result) -> tuple[float, float] | None:
         best = None
@@ -70,10 +78,12 @@ class BallTracker:
                 continue
             if w > self._MAX_BALL_PX or h > self._MAX_BALL_PX:
                 continue
+            cx = float((x1 + x2) / 2)
+            cy = float((y1 + y2) / 2)
+            if self._in_ignore_region(cx, cy):
+                continue
             conf = float(box.conf[0])
             if best is None or conf > best[0]:
-                cx = float((x1 + x2) / 2)
-                cy = float((y1 + y2) / 2)
                 best = (conf, cx, cy)
         return (best[1], best[2]) if best else None
 
@@ -111,9 +121,9 @@ class BallTracker:
 
     def draw(self, frame: np.ndarray) -> np.ndarray:
         out = frame.copy()
+
         total_pts = len([p for p in self.trail if p is not None])
 
-        # Draw trail in continuous segments — never connect across a None gap.
         segment: list[tuple[float, float]] = []
         drawn = 0
         for p in self.trail:
