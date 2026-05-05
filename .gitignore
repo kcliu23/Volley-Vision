@@ -1,0 +1,32 @@
+# Training data & runs
+training/datasets/
+training/runs/
+
+# Pipeline outputs
+output/
+
+# Raw footage & model weights
+tests/
+# models/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+.venv
+venv/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDEs
+.vscode/
+.idea/
+*.swp

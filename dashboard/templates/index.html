@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>VolleyVision</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+  <style>
+    /* ── reset & tokens ──────────────────────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #0d0d0f;
+      --surface:   #141418;
+      --card:      #1c1c22;
+      --border:    #2a2a33;
+      --accent:    #5B7FFF;   /* orange */
+      --accent2:   #06b6d4;   /* cyan   */
+      --green:     #22c55e;
+      --red:       #ef4444;
+      --text:      #f1f5f9;
+      --muted:     #64748b;
+      --sidebar-w: 280px;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text);
+                 font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
+
+    /* ── layout ─────────────────────────────────────────────────────── */
+    #app        { display: flex; flex-direction: column; height: 100vh; }
+    #header     { display: flex; align-items: center; gap: 16px; padding: 0 24px;
+                  height: 56px; background: var(--surface); border-bottom: 1px solid var(--border);
+                  flex-shrink: 0; }
+    #body       { display: flex; flex: 1; overflow: hidden; }
+    #sidebar    { width: var(--sidebar-w); background: var(--surface);
+                  border-right: 1px solid var(--border); display: flex; flex-direction: column;
+                  flex-shrink: 0; }
+    #main       { flex: 1; overflow-y: auto; padding: 24px; }
+
+    /* ── header ─────────────────────────────────────────────────────── */
+    .logo-mark  { width: 32px; height: 32px; background: var(--accent);
+                  border-radius: 6px; display: grid; place-items: center;
+                  font-weight: 900; font-size: 16px; color: #000; letter-spacing: -1px; }
+    .logo-text  { font-size: 18px; font-weight: 800; letter-spacing: 2px;
+                  text-transform: uppercase; color: var(--text); }
+    .logo-text span { color: var(--accent); }
+    #header-stats { margin-left: auto; display: flex; gap: 24px; }
+    .hstat      { text-align: right; }
+    .hstat-val  { font-size: 20px; font-weight: 800; color: var(--accent); line-height: 1; }
+    .hstat-lbl  { font-size: 10px; font-weight: 600; color: var(--muted);
+                  text-transform: uppercase; letter-spacing: 1px; }
+
+    /* ── sidebar ─────────────────────────────────────────────────────── */
+    .sidebar-head { padding: 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+    .sidebar-head h3 { font-size: 11px; font-weight: 700; letter-spacing: 2px;
+                       text-transform: uppercase; color: var(--muted); }
+    #clip-list  { flex: 1; overflow-y: auto; }
+    .clip-item  { display: flex; gap: 10px; align-items: center; padding: 10px 16px;
+                  cursor: pointer; border-bottom: 1px solid var(--border);
+                  transition: background 0.15s; }
+    .clip-item:hover    { background: var(--card); }
+    .clip-item.active   { background: var(--card); border-left: 3px solid var(--accent); }
+    .clip-thumb { width: 56px; height: 36px; object-fit: cover; border-radius: 4px;
+                  background: var(--border); flex-shrink: 0; }
+    .clip-thumb-placeholder { width: 56px; height: 36px; border-radius: 4px;
+                              background: var(--border); flex-shrink: 0;
+                              display: grid; place-items: center; font-size: 18px; }
+    .clip-meta  { flex: 1; min-width: 0; }
+    .clip-title { font-size: 12px; font-weight: 700; white-space: nowrap;
+                  overflow: hidden; text-overflow: ellipsis; color: var(--text); }
+    .clip-sub   { font-size: 10px; color: var(--muted); margin-top: 2px; }
+    .clip-badge { background: var(--accent); color: #000; font-size: 9px; font-weight: 800;
+                  padding: 2px 5px; border-radius: 3px; text-transform: uppercase;
+                  letter-spacing: 0.5px; flex-shrink: 0; }
+
+    /* ── gallery (no clip selected) ─────────────────────────────────── */
+    #gallery    { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+                  gap: 16px; }
+    .gallery-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px;
+                    overflow: hidden; cursor: pointer; transition: transform 0.15s, border-color 0.15s; }
+    .gallery-card:hover { transform: translateY(-3px); border-color: var(--accent); }
+    .gc-thumb   { width: 100%; aspect-ratio: 16/9; object-fit: cover; background: var(--border); }
+    .gc-thumb-ph { width: 100%; aspect-ratio: 16/9; background: var(--border);
+                   display: grid; place-items: center; font-size: 36px; }
+    .gc-body    { padding: 12px; }
+    .gc-title   { font-size: 13px; font-weight: 800; text-transform: uppercase;
+                  letter-spacing: 0.5px; color: var(--text); }
+    .gc-stats   { display: flex; gap: 12px; margin-top: 8px; }
+    .gc-stat    { font-size: 10px; color: var(--muted); }
+    .gc-stat strong { color: var(--accent); font-size: 13px; display: block; font-weight: 800; }
+
+    /* ── detail view ─────────────────────────────────────────────────── */
+    #detail     { display: none; flex-direction: column; gap: 20px; }
+    #detail.show { display: flex; }
+
+    .back-btn   { display: inline-flex; align-items: center; gap: 6px; cursor: pointer;
+                  color: var(--muted); font-size: 12px; font-weight: 700;
+                  text-transform: uppercase; letter-spacing: 1px;
+                  transition: color 0.15s; padding: 0; background: none; border: none;
+                  margin-bottom: 4px; }
+    .back-btn:hover { color: var(--accent); }
+    .back-btn svg { width: 14px; height: 14px; }
+
+    #detail-title { font-size: 28px; font-weight: 900; text-transform: uppercase;
+                    letter-spacing: 1px; color: var(--text); }
+    #detail-title span { color: var(--accent); }
+
+    /* video player */
+    #player-wrap { background: #000; border-radius: 10px; overflow: hidden;
+                   border: 1px solid var(--border); }
+    #player-wrap video { width: 100%; display: block; max-height: 480px; }
+
+    /* metrics strip */
+    .metrics-row { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; }
+    .metric-card { background: var(--card); border: 1px solid var(--border); border-radius: 8px;
+                   padding: 14px 16px; }
+    .metric-val  { font-size: 28px; font-weight: 900; color: var(--accent); line-height: 1; }
+    .metric-unit { font-size: 11px; font-weight: 700; color: var(--muted); margin-left: 2px; }
+    .metric-lbl  { font-size: 10px; font-weight: 700; color: var(--muted);
+                   text-transform: uppercase; letter-spacing: 1px; margin-top: 4px; }
+
+    /* charts + trajectory grid */
+    .viz-grid   { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .viz-card   { background: var(--card); border: 1px solid var(--border);
+                  border-radius: 10px; padding: 16px; }
+    .viz-title  { font-size: 11px; font-weight: 700; text-transform: uppercase;
+                  letter-spacing: 1.5px; color: var(--muted); margin-bottom: 12px; }
+    .viz-card canvas { display: block; width: 100% !important; }
+
+    /* trajectory canvas */
+    #traj-canvas { background: #0a1628; border-radius: 6px; cursor: crosshair; }
+
+    /* ── scrollbar ───────────────────────────────────────────────────── */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: var(--bg); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── empty state ─────────────────────────────────────────────────── */
+    #empty { display: flex; flex-direction: column; align-items: center;
+             justify-content: center; height: 100%; gap: 12px; color: var(--muted); }
+    #empty svg { width: 64px; height: 64px; opacity: 0.3; }
+    #empty p { font-size: 14px; font-weight: 600; }
+    #empty small { font-size: 12px; opacity: 0.6; text-align: center; max-width: 300px; }
+  </style>
+</head>
+<body>
+<div id="app">
+
+  <!-- ── header ── -->
+  <header id="header">
+    <div class="logo-mark">VV</div>
+    <div class="logo-text">Volley<span>Vision</span></div>
+    <div id="header-stats">
+      <div class="hstat">
+        <div class="hstat-val" id="h-total">—</div>
+        <div class="hstat-lbl">Clips</div>
+      </div>
+      <div class="hstat">
+        <div class="hstat-val" id="h-hits">—</div>
+        <div class="hstat-lbl">Total Hits</div>
+      </div>
+    </div>
+  </header>
+
+  <div id="body">
+
+    <!-- ── sidebar ── -->
+    <aside id="sidebar">
+      <div class="sidebar-head">
+        <h3>Clip Library</h3>
+      </div>
+      <div id="clip-list">
+        <div id="empty-sidebar" style="padding:24px;text-align:center;color:var(--muted);font-size:12px;">
+          Loading clips…
+        </div>
+      </div>
+    </aside>
+
+    <!-- ── main ── -->
+    <main id="main">
+
+      <!-- gallery -->
+      <div id="gallery"></div>
+
+      <!-- detail -->
+      <div id="detail">
+        <button class="back-btn" onclick="showGallery()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+          All Clips
+        </button>
+
+        <div id="detail-title">CLIP</div>
+
+        <!-- video -->
+        <div id="player-wrap">
+          <video id="player" controls preload="metadata"></video>
+        </div>
+
+        <!-- metrics -->
+        <div class="metrics-row">
+          <div class="metric-card">
+            <div class="metric-val" id="m-peak">—<span class="metric-unit">km/h</span></div>
+            <div class="metric-lbl">Peak Speed</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-val" id="m-avg">—<span class="metric-unit">km/h</span></div>
+            <div class="metric-lbl">Avg Speed</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-val" id="m-apex">—<span class="metric-unit">m</span></div>
+            <div class="metric-lbl">Peak Apex</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-val" id="m-tempo">—<span class="metric-unit">s</span></div>
+            <div class="metric-lbl">Avg Tempo</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-val" id="m-cont">—<span class="metric-unit">%</span></div>
+            <div class="metric-lbl">Track Rate</div>
+          </div>
+        </div>
+
+        <!-- charts + trajectory -->
+        <div class="viz-grid">
+          <div class="viz-card">
+            <div class="viz-title">Ball Speed Over Time</div>
+            <canvas id="speed-chart" height="160"></canvas>
+          </div>
+          <div class="viz-card">
+            <div class="viz-title">Ball Path (Camera View)</div>
+            <canvas id="traj-canvas" height="220"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- empty state (no clips) -->
+      <div id="empty" style="display:none;">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+          <circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>
+        </svg>
+        <p>No analyzed clips yet</p>
+        <small>Run the pipeline on a video first:<br><code>python main.py video path/to/video.mp4</code></small>
+      </div>
+
+    </main>
+  </div>
+</div>
+
+<script>
+// ── state ──────────────────────────────────────────────────────────────────
+let clips     = [];
+let activeId  = null;
+let speedChart = null;
+
+// ── init ───────────────────────────────────────────────────────────────────
+async function init() {
+  try {
+    const res = await fetch('/api/clips');
+    clips = await res.json();
+  } catch(e) {
+    clips = [];
+  }
+
+  // header stats
+  const totalHits = clips.reduce((s,c) => s + (c.hits || 0), 0);
+  document.getElementById('h-total').textContent = clips.length;
+  document.getElementById('h-hits').textContent  = totalHits;
+
+  renderSidebar();
+  renderGallery();
+}
+
+// ── sidebar ────────────────────────────────────────────────────────────────
+function renderSidebar() {
+  const el = document.getElementById('clip-list');
+  if (!clips.length) {
+    el.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);font-size:12px;">No clips found</div>';
+    return;
+  }
+  el.innerHTML = clips.map(c => `
+    <div class="clip-item" data-id="${c.id}" onclick="loadClip('${c.id}')">
+      ${c.thumb
+        ? `<img class="clip-thumb" src="/output/${c.thumb}" loading="lazy">`
+        : `<div class="clip-thumb-placeholder">🏐</div>`}
+      <div class="clip-meta">
+        <div class="clip-title">${c.title || c.id}</div>
+        <div class="clip-sub">${c.duration_s ? (c.duration_s).toFixed(1)+'s' : '—'}  ·  ${c.hits || 0} hits</div>
+      </div>
+      ${c.hits ? `<div class="clip-badge">${c.hits}</div>` : ''}
+    </div>
+  `).join('');
+}
+
+// ── gallery ────────────────────────────────────────────────────────────────
+function renderGallery() {
+  const el = document.getElementById('gallery');
+  const empty = document.getElementById('empty');
+  if (!clips.length) {
+    el.style.display = 'none';
+    empty.style.display = 'flex';
+    return;
+  }
+  el.innerHTML = clips.map(c => `
+    <div class="gallery-card" onclick="loadClip('${c.id}')">
+      ${c.thumb
+        ? `<img class="gc-thumb" src="/output/${c.thumb}" loading="lazy">`
+        : `<div class="gc-thumb-ph">🏐</div>`}
+      <div class="gc-body">
+        <div class="gc-title">${c.title || c.id}</div>
+        <div class="gc-stats">
+          <div class="gc-stat"><strong>${c.duration_s ? c.duration_s.toFixed(1)+'s' : '—'}</strong>Duration</div>
+          <div class="gc-stat"><strong>${c.hits || 0}</strong>Hits</div>
+          <div class="gc-stat"><strong>${c.status === 'analyzed' ? '✓' : '…'}</strong>Status</div>
+        </div>
+      </div>
+    </div>
+  `).join('');
+}
+
+// ── load clip ──────────────────────────────────────────────────────────────
+async function loadClip(id) {
+  activeId = id;
+
+  // sidebar highlight
+  document.querySelectorAll('.clip-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.id === id);
+  });
+
+  let clip;
+  try {
+    const res = await fetch(`/api/clips/${id}`);
+    if (!res.ok) throw new Error('not found');
+    clip = await res.json();
+  } catch(e) {
+    alert(`Clip data not available for "${id}". Run the pipeline to generate it.`);
+    return;
+  }
+
+  showDetail(clip);
+}
+
+// ── detail view ────────────────────────────────────────────────────────────
+function showDetail(clip) {
+  document.getElementById('gallery').style.display   = 'none';
+  document.getElementById('empty').style.display     = 'none';
+  const detail = document.getElementById('detail');
+  detail.classList.add('show');
+
+  // title
+  const parts = (clip.title || clip.id).replace(/_/g, ' ').split(' ');
+  document.getElementById('detail-title').innerHTML =
+    parts.slice(0, -1).join(' ') + ' <span>' + (parts.at(-1) || '') + '</span>';
+
+  // video
+  const vid = document.getElementById('player');
+  vid.src   = `/output/${clip.video}`;
+  vid.poster = clip.poster ? `/output/${clip.poster}` : '';
+  vid.load();
+
+  // metrics
+  const m = clip.metrics || {};
+  const cal = (clip.calibration?.px_per_m != null);
+
+  setText('m-peak',  m.peak_speed_kmh != null ? m.peak_speed_kmh.toFixed(1) : '—', cal ? 'km/h' : 'px/s');
+  setText('m-avg',   m.avg_speed_kmh  != null ? m.avg_speed_kmh.toFixed(1)  : '—', cal ? 'km/h' : 'px/s');
+  setText('m-apex',  m.apex_m         != null ? m.apex_m.toFixed(2)         : '—', 'm');
+  setText('m-tempo', m.tempo_s        != null ? m.tempo_s.toFixed(2)        : '—', 's');
+  setText('m-cont',  m.track_continuity != null ? (m.track_continuity*100).toFixed(0) : '—', '%');
+
+  // charts
+  renderSpeedChart(clip.trajectory || []);
+  renderTrajectory(clip.trajectory || [], clip.events || []);
+}
+
+function setText(id, val, unit) {
+  const el = document.getElementById(id);
+  el.innerHTML = `${val}<span class="metric-unit">${unit}</span>`;
+}
+
+function showGallery() {
+  document.getElementById('detail').classList.remove('show');
+  document.getElementById('gallery').style.display = '';
+  document.querySelectorAll('.clip-item').forEach(el => el.classList.remove('active'));
+  activeId = null;
+}
+
+// ── speed chart ────────────────────────────────────────────────────────────
+function renderSpeedChart(trajectory) {
+  const ctx = document.getElementById('speed-chart').getContext('2d');
+  if (speedChart) { speedChart.destroy(); speedChart = null; }
+
+  const step = Math.max(1, Math.floor(trajectory.length / 200));
+  const labels = [], data = [];
+  for (let i = 0; i < trajectory.length; i += step) {
+    const t = trajectory[i];
+    labels.push(t.f);
+    data.push(t.speed_kmh ?? 0);
+  }
+
+  speedChart = new Chart(ctx, {
+    type: 'line',
+    data: {
+      labels,
+      datasets: [{
+        data,
+        borderColor: '#5B7FFF',
+        backgroundColor: 'rgba(91,127,255,0.12)',
+        borderWidth: 1.5,
+        pointRadius: 0,
+        fill: true,
+        tension: 0.3,
+      }],
+    },
+    options: {
+      animation: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { display: false },
+        y: {
+          grid:  { color: 'rgba(255,255,255,0.05)' },
+          ticks: { color: '#64748b', font: { size: 10 } },
+          beginAtZero: true,
+        },
+      },
+    },
+  });
+}
+
+// ── trajectory canvas ──────────────────────────────────────────────────────
+function renderTrajectory(trajectory, events) {
+  const canvas = document.getElementById('traj-canvas');
+  const W = canvas.offsetWidth || 480;
+  const H = parseInt(canvas.getAttribute('height')) || 220;
+  canvas.width  = W;
+  canvas.height = H;
+
+  const ctx = canvas.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
+
+  // Court outline
+  ctx.strokeStyle = '#1e3a5f';
+  ctx.lineWidth   = 1;
+  const pad = 20;
+  ctx.strokeRect(pad, pad, W - pad * 2, H - pad * 2);
+  // Net line
+  ctx.beginPath();
+  ctx.moveTo(W / 2, pad);
+  ctx.lineTo(W / 2, H - pad);
+  ctx.strokeStyle = '#2a5080';
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  if (!trajectory.length) {
+    ctx.fillStyle = '#64748b';
+    ctx.font = '12px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText('No trajectory data', W / 2, H / 2);
+    return;
+  }
+
+  const toX = nx => pad + nx * (W - pad * 2);
+  const toY = ny => pad + ny * (H - pad * 2);
+
+  let inSeg = false;
+  ctx.beginPath();
+  ctx.strokeStyle = '#06b6d4';
+  ctx.lineWidth   = 1.5;
+
+  for (let i = 0; i < trajectory.length; i++) {
+    const t = trajectory[i];
+    if (t.x == null || t.lost) {
+      inSeg = false;
+      continue;
+    }
+    const x = toX(t.x), y = toY(t.y);
+    if (!inSeg) { ctx.moveTo(x, y); inSeg = true; }
+    else          ctx.lineTo(x, y);
+  }
+  ctx.stroke();
+
+  // Draw events
+  for (const ev of events) {
+    const tf = trajectory.find(t => t.f === ev.f && t.x != null);
+    if (!tf) continue;
+    const x = toX(tf.x), y = toY(tf.y);
+    if (ev.type === 'apex') {
+      ctx.beginPath();
+      ctx.arc(x, y, 5, 0, Math.PI * 2);
+      ctx.fillStyle = '#22c55e';
+      ctx.fill();
+    } else if (ev.type === 'contact') {
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fillStyle = '#5B7FFF';
+      ctx.fill();
+    }
+  }
+
+  // Legend
+  const legend = [['#06b6d4', 'Path'], ['#22c55e', 'Apex'], ['#5B7FFF', 'Contact']];
+  let lx = pad + 4;
+  for (const [color, label] of legend) {
+    ctx.beginPath();
+    ctx.arc(lx + 5, H - pad - 8, 4, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.fill();
+    ctx.fillStyle = '#94a3b8';
+    ctx.font = '10px sans-serif';
+    ctx.textAlign = 'left';
+    ctx.fillText(label, lx + 13, H - pad - 4);
+    lx += 60;
+  }
+}
+
+// ── boot ───────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
