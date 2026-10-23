@@ -41,6 +41,10 @@ class BallTracker:
 
         self.trail: deque[tuple[float, float] | None] = deque(maxlen=trail_len)
         self.position: tuple[float, float] | None = None
+        # The raw detection accepted this frame (before Kalman smoothing), or None.
+        # Touch detection uses these: the Kalman output lags and smears sharp hits.
+        self.last_det: tuple[float, float] | None = None
+        self.last_conf: float | None = None
 
         self._kf       = self._build_kf()
         self._kf_ready = False
@@ -178,6 +182,8 @@ class BallTracker:
                 self._kf_ready = False   # re-init fresh at the new lock, don't blend with the old track
                 self._weak_streak = self._decoy_streak = 0
 
+        self.last_det, self.last_conf = det, det_conf
+
         if det is not None:
             x, y = det
             if not self._kf_ready:
@@ -263,3 +269,5 @@ class BallTracker:
         self._weak_streak  = 0
         self._decoy_streak = 0
         self._pending_pos  = None
+        self.last_det  = None
+        self.last_conf = None
