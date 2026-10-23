@@ -3,6 +3,7 @@
     python -m tools.try_linker tests/test10.mov
     python -m tools.try_linker tests/test2*.MP4 tests/test3*.mov
     python -m tools.try_linker tests/test10.mov --ring          # hollow marker, ball stays visible
+    python -m tools.try_linker tests/test10.mov --linker cost   # cost-based linker instead of the rule-based one
 
 For each video:
   1. YOLO detection pass (skipped if output/detections/<clip>_dets.json exists)
@@ -39,7 +40,7 @@ def marker(img, p, ring, color=(0, 255, 255)):
         cv2.circle(img, (cx, cy), 12, (0, 180, 180), 2)
 
 
-def render(video, old_pos, new_pos, out, ring=False, trail_len=40):
+def render(video, old_pos, new_pos, out, ring=False, trail_len=40, new_label="linker"):
     cap = cv2.VideoCapture(video)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     W, H = int(cap.get(3)), int(cap.get(4))
@@ -51,7 +52,7 @@ def render(video, old_pos, new_pos, out, ring=False, trail_len=40):
         if not ok:
             break
         panes = []
-        for label, P in (("current", old_pos), ("linker", new_pos)):
+        for label, P in (("current", old_pos), (new_label, new_pos)):
             im = img.copy()
             lo = max(0, f - trail_len + 1)
             draw_trail(im, [P[i] if i < len(P) else None for i in range(lo, f + 1)], trail_len)
@@ -77,6 +78,8 @@ def main():
     ap.add_argument("--model", default="models/best4.pt")
     ap.add_argument("--ring", action="store_true", help="hollow ring marker instead of a solid dot")
     ap.add_argument("--no-video", action="store_true", help="only compute + print coverage")
+    ap.add_argument("--linker", choices=["rule", "cost"], default="rule",
+                    help="rule: step-by-step rules (core/linker.py); cost: one global optimization (core/cost_linker.py)")
     args = ap.parse_args()
 
     from ultralytics import YOLO
@@ -93,17 +96,17 @@ def main():
             dump(v, model, det_dir, 0.05, 1280)
         dets = json.load(open(dpath))
         print(f"[{stem}] linking...")
-        track = link_with_zoom(dets, v, model, LinkParams())
+        track = link_with_zoom(dets, v, model, LinkParams(), linker=args.linker)
         json.dump(dets, open(dpath, "w"), separators=(",", ":"))       # caches zoom + repeat-frame flags
         json.dump({"schema": "vv-link/1", "video": v, "fps": dets["fps"], "width": dets["width"],
-                   "height": dets["height"], "frames": track.to_rows()}, open(f"output/{stem}_link.json", "w"))
+                   "height": dets["height"], "frames": track.to_rows()}, open(f"output/{stem}_link_{args.linker}.json", "w"))
         old_state, old_pos = run_old(dets["frames"], with_pos=True)
         o_cov = 1 - old_state.count("none") / len(old_state)
         s = track.summary()
         rows.append((stem, len(old_state), o_cov, s))
         if not args.no_video:
-            out = f"output/dev/{stem}_compare.mp4"
-            render(v, old_pos, track.pos, out, ring=args.ring)
+            out = f"output/dev/{stem}_compare_{args.linker}.mp4"
+            render(v, old_pos, track.pos, out, ring=args.ring, new_label=f"{args.linker} linker")
             print(f"[{stem}] → {out}")
 
     print(f"\n{'clip':10s} {'frames':>6s}  {'current':>7s}  {'linker':>6s}   (detected / weak / filled)")

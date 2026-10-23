@@ -1,39 +1,63 @@
 # VolleyVision
 
-Volleyball ball tracking: YOLOv8 detection + Kalman filter, drawn as a trail on the output video, plus touch (contact) detection from the ball trajectory.
+Volleyball ball tracking and touch detection from a single camera.
+
+Two passes: YOLOv8 runs **once** per clip and every ball candidate is cached; a **linker**
+then builds the ball's path over the whole clip (physics-based: gravity arcs, speed and
+size limits, one ball), zoom-searches wherever the ball was missed, detects touches and
+renders the result.
 
 ## Usage
 
 ```bash
 pip install -r requirements.txt
-python main.py path/to/video.mp4
+python main.py tests/test42.MP4
 ```
 
-Outputs in `output/`:
-
-- `<name>_tracked.mp4` — ball trail, with each detected touch ringed and numbered
-- `<name>_track.json` — per-frame raw detection + Kalman position
-- `<name>_touches.json` — detected touches (frame, time, position, velocity in/out, turn angle)
-
-The tracked video is written to `output/<name>_tracked.mp4`. If `ffmpeg` is installed, the output is H.264 with the original audio.
+The first run of a clip includes the YOLO pass (minutes on CPU); re-runs reuse the cached
+detections and take seconds plus zoom search.
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--output` | `output` | Directory for the tracked video |
-| `--model` | `models/best4.pt` | YOLO weights |
-| `--conf` | `0.40` | Detection confidence threshold |
+| `--linker` | `rule` | `rule` (best measured) or `cost` (global optimization) |
+| `--no-zoom` | off | Skip zoom search (faster, fewer recovered frames) |
+| `--redetect` | off | Re-run the YOLO pass even if cached |
+| `--ring` | off | Hollow ring marker, so the real ball stays visible underneath |
+| `--preview` | off | Show the render while it's written |
 | `--trail-len` | `40` | Ball trail length in frames |
-| `--no-preview` | off | Disable the live preview window (press `q` to quit it) |
-| `--raw` | off | Show raw YOLO boxes (no Kalman / trail) |
 | `--no-touches` | off | Skip touch detection and overlay |
+| `--output` | `output` | Output directory |
+| `--model` | `models/best4.pt` | YOLO weights |
+| `--legacy` | off | Old single-pass tracker (YOLO conf ≥ 0.40 + Kalman); `--conf`, `--raw` apply to it |
 
-### Re-running touch detection only
+Outputs in `output/`:
 
-Touch detection works from the saved trajectory, so it can be tuned without re-running YOLO:
+- `<clip>_tracked.mp4` — ball trail + a ring at each touch (H.264 with the original audio if `ffmpeg` is installed)
+- `<clip>_track.json` — per frame: `state` (`detected` / `weak` / `filled` / `none`) and `pos`
+- `<clip>_touches.json` — touches: frame, time, position, velocity in/out, turn angle
+- `detections/<clip>_dets.json` — cached YOLO candidates, repeated-frame flags, picture area, zoom finds
+
+## Accuracy
+
+Measured on 10 hand-labelled clips (`data/gt/`, 1,024 frames with the ball visible), share of
+frames where the track is within one ball-width of the labelled ball:
+
+| | old tracker | rule linker | cost linker |
+|---|---|---|---|
+| on the ball | 74.8% | **95.2%** | 93.1% |
+| wrong ball / place | 8.3% | 0.9% | 2.3% |
+| missed | 17.0% | 3.9% | 4.6% |
+
+## Development tools
 
 ```bash
-python -m tools.detect_touches output/test10_track.json
-python -m tools.detect_touches output/test10_track.json --frames tests/test10.mov   # contact sheets per touch
+python -m tools.regression [--linker cost]      # 11 known-tricky moments, seconds, no YOLO
+python -m tools.eval_gt                          # score old / rule / cost trackers on data/gt labels
+python -m tools.label_gt --suggested             # label ground truth (click the ball every 5th frame)
+python -m tools.try_linker tests/x.mov --ring    # side-by-side video: old tracker vs linker
+python -m tools.dump_detections tests/*.mov      # pre-compute the YOLO pass for many clips
+python -m tools.analyze_detections output/detections/x_dets.json --track ... --video ...
+python -m tools.detect_touches output/x_track.json --frames tests/x.mov   # touch contact sheets
 ```
 
 ## Layout
@@ -41,12 +65,17 @@ python -m tools.detect_touches output/test10_track.json --frames tests/test10.mo
 ```
 main.py                 CLI entry point
 core/
-  ball_tracker.py       YOLO + Kalman tracker, trail drawing
-  touch_detector.py     Touch detection (split-parabola impulse fit on raw detections)
-  video_pipeline.py     Read video, track, detect touches, write output
-models/best4.pt         Trained weights
-training/               Training notebook and dataset scripts
-tools/                  Dataset helpers, detect_touches.py
+  video_pipeline.py     run(): detect (cached) -> link + zoom search -> touches -> render; run_legacy()
+  linker.py             rule-based linker (default) + shared gap filling
+  cost_linker.py        cost-based linker (Viterbi over candidates)
+  refine.py             zoom search, repeated-frame detection, picture-area detection
+  touch_detector.py     touch detection (split-parabola impulse fit)
+  render.py             trail / marker / touch rings, ffmpeg encode
+  ball_tracker.py       legacy single-pass YOLO + Kalman tracker
+tools/                  dev tools above, dataset helpers
+data/gt/                ground-truth labels (committed)
+models/best4.pt         trained weights
+training/               training notebook and dataset scripts
 ```
 
 Earlier work on court calibration, 3D height estimation and a web dashboard lives on the `wip/court-calibration` branch.
