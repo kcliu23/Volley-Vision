@@ -70,6 +70,7 @@ class Track:
     conf: list[float | None]
     dup: list[bool] = field(default_factory=list)
     content: tuple = ()                             # picture area (x0, y0, x1, y1) inside the frame
+    size: list = field(default_factory=list)        # ball box size (px) per frame where observed
     tentative: list = field(default_factory=list)   # [[(frame, x, y), ...], ...] unconfirmed weak chains
 
     def summary(self) -> dict:
@@ -507,8 +508,9 @@ def finalize(owner: dict, n: int, fps: float, width: int, height: int, P: LinkPa
     state = [NONE] * n
     pos: list = [None] * n
     conf: list = [None] * n
+    size: list = [None] * n
     for f, (x, y, s, c, st) in owner.items():
-        state[f], pos[f], conf[f] = st, (x, y), c
+        state[f], pos[f], conf[f], size[f] = st, (x, y), c, s
 
     # repeated frames show the same image as the frame before — copy it
     for i in range(1, n):
@@ -577,4 +579,4 @@ def finalize(owner: dict, n: int, fps: float, width: int, height: int, P: LinkPa
             state[i], pos[i] = FILLED, pos[i - 1]
 
     return Track(fps=fps, width=width, height=height, state=state, pos=pos, conf=conf, dup=dup,
-                 content=(cx0, cy0, cx1, cy1), tentative=tentative or [])
+                 content=(cx0, cy0, cx1, cy1), tentative=tentative or [], size=size)

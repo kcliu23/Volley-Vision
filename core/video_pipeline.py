@@ -238,18 +238,31 @@ def run(
                    "height": height, "linker": linker, "frames": track.to_rows()}, fh)
     print(f"[VolleyVision] trajectory  →  {track_path}")
 
-    # 3. touches: from real positions only (filled frames are guesses)
+    # 3. contacts: split the track into flights (one parabola each); each boundary is a
+    #    contact, classified touch / bounce / other using where the people are
     found = []
     if touches:
-        pts = [(f, p[0], p[1]) for f, (st, p) in enumerate(zip(track.state, track.pos))
-               if p is not None and st in ("detected", "weak")]
-        if pts:
-            found = detect_touches(*map(np.array, zip(*pts)), fps, height)
-        touch_path = os.path.join(output_dir, f"{stem}_touches.json")
-        with open(touch_path, "w") as fh:
-            json.dump({"schema": "vv-touches/1", "video": str(input_path), "fps": fps,
-                       "touches": [t.to_dict() for t in found]}, fh, indent=1)
-        print(f"[VolleyVision] {len(found)} touches  →  {touch_path}")
+        from core.flights import from_track
+        from core.contacts import classify
+        flights, found = from_track(track)
+        if found:
+            person_model = YOLO(str(Path(model_path).parent / "yolov8n.pt")) \
+                if (Path(model_path).parent / "yolov8n.pt").exists() else YOLO("yolov8n.pt")
+            classify(found, track, input_path, person_model, dets.setdefault("persons", {}))
+            with open(det_path, "w") as fh:               # cache person boxes too
+                json.dump(dets, fh, separators=(",", ":"))
+        contact_path = os.path.join(output_dir, f"{stem}_contacts.json")
+        with open(contact_path, "w") as fh:
+            json.dump({"schema": "vv-contacts/1", "video": str(input_path), "fps": fps,
+                       "flights": [{"f0": fl.f0, "f1": fl.f1, "n": int(fl.n), "rms": round(fl.rms, 2),
+                                    "cx": [round(v, 5) for v in fl.cx], "cy": [round(v, 5) for v in fl.cy]}
+                                   for fl in flights],
+                       "contacts": [c.to_dict() for c in found]}, fh, indent=1)
+        kinds = {k: sum(c.kind == k for c in found) for k in ("touch", "bounce", "other")}
+        print(f"[VolleyVision] {len(flights)} flights, {kinds['touch']} touches, {kinds['bounce']} bounces, "
+              f"{kinds['other']} other contacts  →  {contact_path}")
+        for c in found:
+            print(f"    {c.t:6.2f}s  frame {c.frame:7.1f}  {c.kind:6s}{'  (ball hidden at contact)' if c.in_gap else ''}")
 
     # 4. render
     out_path = os.path.join(output_dir, f"{stem}_tracked.mp4")
@@ -265,7 +278,8 @@ def run(
         draw_trail(img, [track.pos[i] if i < len(track.pos) else None for i in range(lo, f + 1)])
         if f < len(track.pos) and track.pos[f] is not None:
             draw_ball(img, track.pos[f], ring=ring)
-        draw_touch_rings(img, f, found, fps)
+        draw_touch_rings(img, f, [c for c in found if c.kind == "touch"], fps)
+        draw_touch_rings(img, f, [c for c in found if c.kind == "bounce"], fps, color=(255, 255, 255))
         writer.write(img)
         if show_preview:
             cv2.imshow("VolleyVision", img)

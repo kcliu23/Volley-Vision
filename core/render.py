@@ -47,15 +47,17 @@ def draw_ball(img, p, ring: bool = False):
         cv2.circle(img, (cx, cy), 12, (0, 180, 180), 2)
 
 
-def draw_touch_rings(img, f: int, touches, fps: float, hold_s: float = 0.5):
-    """Expanding, fading ring at each touch for hold_s after the contact frame."""
+def draw_touch_rings(img, f: int, touches, fps: float, hold_s: float = 0.5, color=None):
+    """Expanding, fading ring at each contact for hold_s after the contact frame.
+    Default colour (orange) for touches; pass color for other kinds (e.g. white = bounce)."""
     hold = max(1, int(round(hold_s * fps)))
     scale = img.shape[0] / 1080
     for t in touches:
-        if not (t.frame <= f < t.frame + hold):
+        t0 = int(round(t.frame))
+        if not (t0 <= f < t0 + hold):
             continue
-        fade = 1 - (f - t.frame) / hold
-        c = (0, int(80 + 175 * fade), 255)
+        fade = 1 - (f - t0) / hold
+        c = color if color is not None else (0, int(80 + 175 * fade), 255)
         cv2.circle(img, (int(t.x), int(t.y)), int((28 + 30 * (1 - fade)) * scale), c,
                    max(2, int(4 * scale)), cv2.LINE_AA)
 
