@@ -76,11 +76,11 @@ class BallTracker:
     def _kf_correct(self, x, y) -> tuple[float, float]:
         self._kf.predict()
         r = self._kf.correct(np.array([[x],[y]], np.float32))
-        return float(r[0]), float(r[1])
+        return float(r[0, 0]), float(r[1, 0])
 
     def _kf_predict(self) -> tuple[float, float]:
         r = self._kf.predict()
-        return float(r[0]), float(r[1])
+        return float(r[0, 0]), float(r[1, 0])
 
     # ── Detection ─────────────────────────────────────────────────────────────
 
@@ -166,7 +166,7 @@ class BallTracker:
         ref_xy = None
         if self._kf_ready:
             p = self._kf.predict()
-            ref_xy = (float(p[0]), float(p[1]))
+            ref_xy = (float(p[0, 0]), float(p[1, 0]))
 
         det, det_conf, rival = self._select_detection(candidates, ref_xy)
 
