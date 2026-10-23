@@ -15,6 +15,7 @@ def main():
     parser.add_argument("--trail-len",  type=int,   default=40,    help="Length of the visual ball trail (frames)")
     parser.add_argument("--no-preview", action="store_true",       help="Disable the real-time preview window")
     parser.add_argument("--raw",        action="store_true",       help="Show raw YOLO detections without Kalman/trail")
+    parser.add_argument("--no-touches", action="store_true",       help="Skip touch detection / overlay")
     args = parser.parse_args()
 
     if not Path(args.input).exists():
@@ -31,6 +32,7 @@ def main():
         trail_len=args.trail_len,
         show_preview=not args.no_preview,
         raw=args.raw,
+        touches=not args.no_touches,
     )
 
 
