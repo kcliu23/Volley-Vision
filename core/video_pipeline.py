@@ -1,3 +1,9 @@
+"""VolleyVision pipeline.
+
+run()         two-pass (default): YOLO once with every candidate cached -> linker over the
+              whole clip with zoom search -> touch detection -> render.
+run_legacy()  the original single-pass tracker (YOLO conf >= 0.40 + Kalman), kept for comparison.
+"""
 import cv2
 import json
 import os
@@ -13,7 +19,7 @@ from core.ball_tracker import BallTracker
 from core.touch_detector import detect_touches, Touch
 
 
-def run(
+def run_legacy(
     input_path: str,
     output_dir: str = "output",
     model_path: str = "models/best4.pt",
@@ -153,3 +159,125 @@ def overlay_touches(src: str, dst: str, touches: list[Touch], fps: float, hold_s
         f += 1
     cap.release()
     writer.release()
+
+
+# ── two-pass pipeline ─────────────────────────────────────────────────────────
+
+def run(
+    input_path: str,
+    output_dir: str = "output",
+    model_path: str = "models/best4.pt",
+    det_conf: float = 0.05,
+    imgsz: int = 1280,
+    linker: str = "rule",
+    zoom: bool = True,
+    redetect: bool = False,
+    trail_len: int = 40,
+    show_preview: bool = False,
+    touches: bool = True,
+    ring: bool = False,
+) -> str:
+    from ultralytics import YOLO
+    from core.linker import link as rule_link, LinkParams
+    from core.refine import link_with_zoom, video_dup_flags, content_box
+    from core.render import draw_trail, draw_ball, draw_touch_rings, finish_video
+    from tools.dump_detections import dump
+
+    cap = cv2.VideoCapture(input_path)
+    if not cap.isOpened():
+        raise FileNotFoundError(f"Cannot open: {input_path}")
+    fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
+    width, height = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    cap.release()
+    stem = Path(input_path).stem
+    print(f"[VolleyVision] {Path(input_path).name}  {width}x{height}  {fps:.1f}fps  {total} frames  ({linker} linker)")
+    t0 = time.time()
+
+    # 1. detection pass (cached)
+    det_dir = Path(output_dir) / "detections"
+    det_dir.mkdir(parents=True, exist_ok=True)
+    det_path = det_dir / f"{stem}_dets.json"
+    model = YOLO(model_path)
+    dets = json.load(open(det_path)) if det_path.exists() else None
+    stale = (dets is None or redetect or dets.get("imgsz") != imgsz or dets.get("conf", det_conf) > det_conf
+             or dets.get("model", model_path) != model_path)
+    if stale:
+        print(f"[VolleyVision] detection pass (YOLO on every frame, cached afterwards)...")
+        dump(input_path, model, det_dir, det_conf, imgsz)
+        dets = json.load(open(det_path))
+        dets["model"] = model_path
+    else:
+        print(f"[VolleyVision] detections: cached ({det_path})")
+
+    # 2. linking (+ zoom search)
+    if zoom:
+        track = link_with_zoom(dets, input_path, model, LinkParams(), linker=linker,
+                               log=lambda m: print("[VolleyVision]" + m))
+    else:
+        if len(dets.get("dup") or []) != len(dets["frames"]):
+            dets["dup"] = video_dup_flags(input_path)
+        if not dets.get("content"):
+            dets["content"] = content_box(input_path)
+        if linker == "cost":
+            from core.cost_linker import link as cost_link
+            track = cost_link(dets["frames"], dets["fps"], dets["width"], dets["height"],
+                              dup_flags=dets["dup"], content=dets["content"])
+        else:
+            track = rule_link(dets["frames"], dets["fps"], dets["width"], dets["height"],
+                              dup_flags=dets["dup"], content=dets["content"])
+    with open(det_path, "w") as fh:                       # keep zoom finds / repeat flags cached
+        json.dump(dets, fh, separators=(",", ":"))
+    s = track.summary()
+    print(f"[VolleyVision] ball tracked in {s['coverage']:.1%} of frames "
+          f"(detected {s['detected']}, weak {s['weak']}, filled {s['filled']}, none {s['none']})")
+    os.makedirs(output_dir, exist_ok=True)
+    track_path = os.path.join(output_dir, f"{stem}_track.json")
+    with open(track_path, "w") as fh:
+        json.dump({"schema": "vv-track/2", "video": str(input_path), "fps": fps, "width": width,
+                   "height": height, "linker": linker, "frames": track.to_rows()}, fh)
+    print(f"[VolleyVision] trajectory  →  {track_path}")
+
+    # 3. touches: from real positions only (filled frames are guesses)
+    found = []
+    if touches:
+        pts = [(f, p[0], p[1]) for f, (st, p) in enumerate(zip(track.state, track.pos))
+               if p is not None and st in ("detected", "weak")]
+        if pts:
+            found = detect_touches(*map(np.array, zip(*pts)), fps, height)
+        touch_path = os.path.join(output_dir, f"{stem}_touches.json")
+        with open(touch_path, "w") as fh:
+            json.dump({"schema": "vv-touches/1", "video": str(input_path), "fps": fps,
+                       "touches": [t.to_dict() for t in found]}, fh, indent=1)
+        print(f"[VolleyVision] {len(found)} touches  →  {touch_path}")
+
+    # 4. render
+    out_path = os.path.join(output_dir, f"{stem}_tracked.mp4")
+    tmp_path = os.path.join(tempfile.gettempdir(), f"{stem}_render.mp4")
+    writer = cv2.VideoWriter(tmp_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+    cap = cv2.VideoCapture(input_path)
+    f = 0
+    while True:
+        ok, img = cap.read()
+        if not ok:
+            break
+        lo = max(0, f - trail_len + 1)
+        draw_trail(img, [track.pos[i] if i < len(track.pos) else None for i in range(lo, f + 1)])
+        if f < len(track.pos) and track.pos[f] is not None:
+            draw_ball(img, track.pos[f], ring=ring)
+        draw_touch_rings(img, f, found, fps)
+        writer.write(img)
+        if show_preview:
+            cv2.imshow("VolleyVision", img)
+            if cv2.waitKey(1) & 0xFF == ord("q"):
+                show_preview = False
+                cv2.destroyAllWindows()
+        f += 1
+    cap.release()
+    writer.release()
+    if show_preview:
+        cv2.destroyAllWindows()
+    used_ffmpeg = finish_video(tmp_path, input_path, out_path)
+    print(f"[VolleyVision] {'H.264 + audio' if used_ffmpeg else 'ffmpeg not found — no audio'}")
+    print(f"[VolleyVision] Done in {time.time() - t0:.1f}s  →  {out_path}")
+    return out_path

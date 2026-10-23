@@ -22,7 +22,10 @@ def load_track(path: str):
     """Returns (frames, xs, ys, fps, w, h) of raw detections in pixels."""
     d = json.load(open(path))
     fps, w, h = d["fps"], d["width"], d["height"]
-    if d.get("schema") == "vv-track/1":
+    if d.get("schema") == "vv-track/2":      # two-pass pipeline: real positions only (filled = guesses)
+        pts = [(r["f"], r["pos"][0], r["pos"][1]) for r in d["frames"]
+               if r.get("pos") and r.get("state") in ("detected", "weak")]
+    elif d.get("schema") == "vv-track/1":
         pts = [(r["f"], r["det"][0], r["det"][1]) for r in d["frames"] if r.get("det")]
     else:  # vv-clip/1 (May dashboard export): normalised coords
         pts = [(r["f"], r["x"] * w, r["y"] * h) for r in d["detections"] if r.get("x") is not None]
