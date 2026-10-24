@@ -36,7 +36,14 @@ Outputs in `output/`:
 - `<clip>_tracked.mp4` — ball trail; orange ring at each touch, white ring at each bounce (H.264 + original audio if `ffmpeg` is installed)
 - `<clip>_track.json` — per frame: `state` (`detected` / `weak` / `filled` / `none`) and `pos`
 - `<clip>_contacts.json` — flights (one parabola each) and the contacts between them: frame (can fall inside a gap), position, velocity in/out, `kind` = `touch` / `bounce` / `other` (net, wall, unclear)
-- `detections/<clip>_dets.json` — cached YOLO candidates, repeated-frame flags, picture area, zoom finds
+- `detections/<clip>_dets.json` — cached YOLO candidates, clip profile (timestamps, repeated frames, picture area, ball size, camera motion), zoom finds, person boxes
+
+## Any video
+
+Settings are in **seconds** and **ball-widths** (1 ball-width ≈ 0.21 m at the ball's depth), not
+frames and pixels, and fits use each frame's real timestamp. Simulated on the labelled clips:
+30 fps 95.0%, 15 fps 91.5%, 720p-like 95.3%, 4K-like 95.3% (original 95.3%). Camera motion is
+measured but not yet compensated, so handheld footage is still weaker.
 
 ## Accuracy
 
@@ -45,9 +52,9 @@ frames where the track is within one ball-width of the labelled ball:
 
 | | old tracker | rule linker | cost linker |
 |---|---|---|---|
-| on the ball | 74.8% | **95.2%** | 93.1% |
+| on the ball | 74.8% | **95.3%** | 93.1% |
 | wrong ball / place | 8.3% | 0.9% | 2.3% |
-| missed | 17.0% | 3.9% | 4.6% |
+| missed | 17.0% | 3.8% | 4.6% |
 
 ## Development tools
 
@@ -66,7 +73,9 @@ python -m tools.detect_touches output/x_track.json --frames tests/x.mov   # touc
 ```
 main.py                 CLI entry point
 core/
-  video_pipeline.py     run(): detect (cached) -> link + zoom search -> touches -> render; run_legacy()
+  video_pipeline.py     run(): detect (cached) -> link + zoom search -> contacts -> render; run_legacy()
+  profile.py            clip profile: real frame timestamps, repeated frames, picture area, ball size,
+                        camera motion — all thresholds work in seconds and ball-widths
   linker.py             rule-based linker (default) + shared gap filling
   cost_linker.py        cost-based linker (Viterbi over candidates)
   refine.py             zoom search, repeated-frame detection, picture-area detection

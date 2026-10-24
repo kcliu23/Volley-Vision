@@ -60,7 +60,7 @@ def classify(contacts, track, video: str, person_model, cache: dict | None = Non
     """Sets c.kind and c.extra['person'] on each contact; returns the contacts."""
     if not contacts:
         return contacts
-    ys = [p[1] for p, s in zip(track.pos, track.state) if p is not None and s in ("detected", "weak")]
+    ys = [p[1] for p, s in zip(track.pos, track.state) if p is not None and s in ("detected", "weak", "tracknet")]
     ylo, yhi = (np.percentile(ys, 2), np.percentile(ys, 98)) if ys else (0, track.height)
     frames = [int(round(c.frame)) for c in contacts]
     boxes = person_boxes(video, frames, person_model, cache)

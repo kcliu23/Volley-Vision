@@ -2,6 +2,7 @@
 
     python -m tools.regression                      # rule-based linker (core.linker)
     python -m tools.regression --linker cost        # cost-based linker (core.cost_linker)
+    python -m tools.regression --tracknet           # rule linker + TrackNet stage
 
 Uses the cached detections + zoom finds in output/detections (no YOLO), so it runs
 in seconds. Each case came from a real bug; a linker change that re-breaks one fails here.
@@ -90,7 +91,7 @@ def _cases():
     ]
 
 
-def run(linker_name="rule", verbose=True):
+def run(linker_name="rule", verbose=True, tracknet=False):
     if linker_name == "cost":
         from core.cost_linker import link as linkf
     else:
@@ -99,18 +100,30 @@ def run(linker_name="rule", verbose=True):
     for stem, desc, check in _cases():
         if stem not in cache:
             d, fr, dup = _load(stem, "zoom" if linker_name == "rule" else f"zoom_{linker_name}")
-            cache[stem] = linkf(fr, d["fps"], d["width"], d["height"], dup_flags=dup, content=d.get("content"))
+            from core.profile import link_args
+            a = link_args(d)
+            cache[stem] = linkf(fr, a["fps"], d["width"], d["height"], dup_flags=a["dup_flags"],
+                                content=a["content"], times=a["times"])
+            tp = Path(f"output/detections/{stem}_tracknet.json")
+            if tracknet and tp.exists():
+                from core.tracknet_fill import apply as tracknet_fill
+                sz = [max(c[2], c[3]) for f in d["frames"] for c in f if c[4] >= 0.4]
+                tracknet_fill(cache[stem], json.load(open(tp))["frames"], sorted(sz)[len(sz) // 2] if sz else 30.0)
+            elif tracknet:
+                print(f"  (no TrackNet cache for {stem}: run main.py on it first)")
         ok, detail = check(cache[stem])
         passed += ok
         results.append((stem, desc, ok, detail))
         if verbose:
             print(f"  {'PASS' if ok else 'FAIL'}  {stem:7s} {desc:55s} {'' if ok else detail}")
     if verbose:
-        print(f"{passed}/{len(results)} passed ({linker_name} linker)")
+        print(f"{passed}/{len(results)} passed ({linker_name} linker{' + TrackNet' if tracknet else ''})")
     return results
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--linker", choices=["rule", "cost"], default="rule")
-    run(ap.parse_args().linker)
+    ap.add_argument("--tracknet", action="store_true", help="apply the TrackNet stage (needs <clip>_tracknet.json)")
+    a = ap.parse_args()
+    run(a.linker, tracknet=a.tracknet)

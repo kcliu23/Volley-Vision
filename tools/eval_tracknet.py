@@ -65,7 +65,8 @@ def main():
 
     names = ["yolo", "tn", "tn+link", "yolo+tn"]
     tot = {n: {"hit": 0, "wrong": 0, "miss": 0, "ok": 0, "false": 0, "err": []} for n in names}
-    rec = {"yolo": 0, "tn": 0, "union": 0, "vis": 0, "tn_only": 0, "yolo_only": 0}
+    rec = {"yolo": 0, "tn": 0, "union": 0, "vis": 0, "tn_only": 0, "yolo_only": 0,
+           "pipe_bad": 0, "pipe_bad_tn": 0, "hid": 0, "hid_tn": 0}
     print(f"{'clip':7s} {'vis':>4s} | recall yolo   tn  union | " + " | ".join(f"{n:>7s}" for n in names))
     for g in sorted(glob.glob(f"{a.gt}/*_gt.json")):
         stem = Path(g).name.replace("_gt.json", "")
@@ -100,10 +101,19 @@ def main():
         tracks["yolo+tn"] = run_link([yo[i] + tn_scaled[i] for i in range(n)])
 
         vis = 0; ry = rt = ru = 0
+        ypos = tracks["yolo"][0]
         for k, v in labels.items():
+            f = int(k)
+            if v == "none":
+                rec["hid"] += 1
+                rec["hid_tn"] += any(c[4] >= 0.5 for c in tn[f])
             if not isinstance(v, list):
                 continue
-            f = int(k); vis += 1
+            vis += 1
+            p = ypos[f] if f < len(ypos) else None
+            if p is None or math.hypot(p[0] - v[0], p[1] - v[1]) > a.tol * ball:
+                rec["pipe_bad"] += 1
+                rec["pipe_bad_tn"] += any_near(tn[f], v, a.tol * ball)
             hy = any_near([c for c in yo[f] if c[4] >= 0.05], v, a.tol * ball)
             ht = any_near(tn[f], v, a.tol * ball)
             ry += hy; rt += ht; ru += hy or ht
@@ -121,6 +131,9 @@ def main():
     print(f"\ncandidate recall (any candidate within {a.tol} ball-width): YOLO {rec['yolo'] / V:.1%}   "
           f"TrackNet {rec['tn'] / V:.1%}   union {rec['union'] / V:.1%}   "
           f"(TrackNet-only {rec['tn_only']}, YOLO-only {rec['yolo_only']} of {rec['vis']} frames)")
+    print(f"pipeline (yolo) wrong/missed frames: {rec['pipe_bad']}; TrackNet has the ball in {rec['pipe_bad_tn']} of them")
+    print(f"ball hidden in GT: {rec['hid']} frames; TrackNet reports a ball (peak >= 0.5) in {rec['hid_tn']} "
+          f"({rec['hid_tn'] / max(rec['hid'], 1):.0%})")
     print(f"TrackNet conf scale for linking: {a.scale}")
     for nme in names:
         t = tot[nme]

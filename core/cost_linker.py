@@ -27,7 +27,7 @@ import numpy as np
 
 from core.linker import LinkParams, finalize, DETECTED, WEAK
 
-COST_LINKER_VERSION = 1   # bump when behaviour changes (invalidates cached zoom searches)
+COST_LINKER_VERSION = 2   # bump when behaviour changes (invalidates cached zoom searches)
 
 
 @dataclass
@@ -40,12 +40,12 @@ class CostParams:
     sigma0: float = 0.35      # motion tolerance, ball-widths, at 1 frame
     sigma_gap: float = 0.10   # + per frame of gap
     sigma_speed: float = 0.40 # + this fraction of the per-frame speed (timing jitter, uneven phone frame times)
-    vlim: float = 2.5         # speed prior: free up to this many ball-widths/frame
+    vlim_bw_s: float = 150.0  # speed prior: free up to this many ball-widths/second
     k_speed: float = 100.0    # ... then k·(v/vlim - 1)^2 (steep: a teleport must never pay off)
     size_rate: float = 0.12   # size continuity: box size may change by this (log) ...
-    size_rate_gap: float = 0.03   # ... + this per frame of gap, before it costs
+    size_rate_gap_s: float = 1.8  # ... + this per second of gap, before it costs
     k_size: float = 60.0      # cost k·(excess log-ratio)^2
-    still_speed: float = 0.1  # ball-widths/frame below which a step counts as "still"
+    still_speed_bw_s: float = 6.0  # ball-widths/second below which a step counts as "still"
     still: float = 3.2        # cost of a still step (> miss: a still object is never worth following)
     short_gap_s: float = 0.30 # G: gaps up to this keep the velocity (motion model applies)
     size_tol: float = 1.8     # no size penalty within ×/÷ this of the clip's ball size
@@ -79,8 +79,10 @@ def _gravity(pts_by_frame, usable, med):
 
 def link(frames: list, fps: float, width: int, height: int, params: CostParams | None = None,
          dup_flags: list[bool] | None = None, content: list | None = None,
-         link_params: LinkParams | None = None, return_debug: bool = False):
+         link_params: LinkParams | None = None, return_debug: bool = False, times: list | None = None):
     C = params or CostParams()
+    # per-frame equivalents of the per-second settings, for this clip's frame rate
+    vlim, still_speed, size_rate_gap = C.vlim_bw_s / fps, C.still_speed_bw_s / fps, C.size_rate_gap_s / fps
     LP = link_params or LinkParams()
     n = len(frames)
     content = tuple(content) if content else (0, 0, width, height)
@@ -132,7 +134,7 @@ def link(frames: list, fps: float, width: int, height: int, params: CostParams |
 
     def speed_cost(dist, gap, size):
         v = dist / max(gap, 1) / size
-        return C.k_speed * max(0.0, v / C.vlim - 1.0) ** 2
+        return C.k_speed * max(0.0, v / vlim - 1.0) ** 2
 
     INF = float("inf")
     # states: dict keyed by (a, b) with a = -1 for "velocity unknown" (start / re-entry)
@@ -156,9 +158,9 @@ def link(frames: list, fps: float, width: int, height: int, params: CostParams |
             dist = np.hypot(X[c] - X[earlier], Y[c] - Y[earlier])
             sz = np.maximum(S[earlier], S[c])
             v = dist / np.maximum(gaps, 1) / sz
-            sp = C.k_speed * np.maximum(0.0, v / C.vlim - 1.0) ** 2
+            sp = C.k_speed * np.maximum(0.0, v / vlim - 1.0) ** 2
             dlog = np.abs(np.log(S[c] / S[earlier]))
-            sp = sp + C.k_size * np.maximum(0.0, dlog - (C.size_rate + C.size_rate_gap * gaps)) ** 2
+            sp = sp + C.k_size * np.maximum(0.0, dlog - (C.size_rate + size_rate_gap * gaps)) ** 2
             between = np.array([u_between(int(F[b]), fc) for b in earlier])
             tot = bend[earlier] + C.miss * between + C.reentry + sp
             k = int(np.argmin(tot))
@@ -181,9 +183,9 @@ def link(frames: list, fps: float, width: int, height: int, params: CostParams |
             dist = float(np.hypot(X[c] - X[b], Y[c] - Y[b]))
             size = max(S[b], S[c])
             sp = speed_cost(dist, gap, size)
-            still = C.still if dist / gap / size < C.still_speed else 0.0
+            still = C.still if dist / gap / size < still_speed else 0.0
             dlog = abs(np.log(S[c] / S[b]))
-            szc = C.k_size * max(0.0, dlog - (C.size_rate + C.size_rate_gap * gap)) ** 2
+            szc = C.k_size * max(0.0, dlog - (C.size_rate + size_rate_gap * gap)) ** 2
             base = C.miss * u_between(fb, fc) + det[c] + still + szc
             # option 1: a touch at b (velocity restarts), from the best path ending at b
             best, arg = (bend[b] + C.touch + sp, ("touch", bend_state[b])) if bend[b] < INF else (INF, None)

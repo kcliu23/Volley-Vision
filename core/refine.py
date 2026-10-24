@@ -125,6 +125,7 @@ def ahead_targets(track, horizon: int, fit_pts: int = 6):
     """
     from core.linker import _predict, NONE
     n = len(track.state)
+    tau = track.tau if getattr(track, "tau", None) else None
     have = [s != NONE and p is not None for s, p in zip(track.state, track.pos)]
     out = {}
     for i in range(n):
@@ -149,7 +150,7 @@ def ahead_targets(track, horizon: int, fit_pts: int = 6):
                 f = i + direction * step
                 if not (0 <= f < n) or have[f]:
                     break
-                px, py, _ = _predict(sup, xs, ys, f)
+                px, py, _ = _predict(sup, xs, ys, f, tau)
                 x0, y0, x1, y1 = track.content or (0, 0, track.width, track.height)
                 if not (x0 <= px < x1 and y0 <= py < y1):
                     break
@@ -163,7 +164,7 @@ def ahead_targets(track, horizon: int, fit_pts: int = 6):
         for f in range(max(0, lo), min(n, hi + 1)):
             if have[f] or f in fs:
                 continue
-            px, py, _ = _predict(fs, xs, ys, f)
+            px, py, _ = _predict(fs, xs, ys, f, tau)
             x0, y0, x1, y1 = track.content or (0, 0, track.width, track.height)
             if x0 <= px < x1 and y0 <= py < y1:
                 out.setdefault(f, (px, py))
@@ -171,7 +172,7 @@ def ahead_targets(track, horizon: int, fit_pts: int = 6):
 
 
 def link_with_zoom(dets: dict, video: str, model, params: LinkParams | None = None,
-                   rounds: int = 6, half_mult: float = 5.0, min_half: int = 128,
+                   rounds: int = 6, half_mult: float = 5.0, min_half: int = 64,
                    ahead_s: float = 0.25, log=print, linker: str = "rule"):
     """linker: "rule" (core.linker) or "cost" (core.cost_linker). Each keeps its own zoom
     cache, because zoom search only looks where that linker's track points it."""
@@ -182,8 +183,9 @@ def link_with_zoom(dets: dict, video: str, model, params: LinkParams | None = No
     if linker == "cost":
         from core.cost_linker import link as _cost_link, COST_LINKER_VERSION as ver
 
-        def link(frames, fps, W, H, P, dup_flags=None, content=None):
-            return _cost_link(frames, fps, W, H, dup_flags=dup_flags, content=content, link_params=P)
+        def link(frames, fps, W, H, P, dup_flags=None, content=None, times=None):
+            return _cost_link(frames, fps, W, H, dup_flags=dup_flags, content=content, link_params=P,
+                              times=times)
     else:
         from core.linker import link
         ver = LINKER_VERSION
@@ -194,10 +196,11 @@ def link_with_zoom(dets: dict, video: str, model, params: LinkParams | None = No
     reader = FrameReader(video)
     if len(dets.get("dup") or []) != len(dets["frames"]):   # missing/broken: compute from the video once
         dets["dup"] = video_dup_flags(video)
-    dupf = dets["dup"]
-    if not dets.get("content"):
-        dets["content"] = content_box(video)
-    content = dets["content"]
+    # clip profile: real timestamps, repeats, picture area, ball size, camera motion
+    from core.profile import get as get_profile
+    prof = get_profile(video, dets)
+    dupf, content, times = prof["dup"], prof["content"], prof["times"]
+    fps = prof["fps"]
 
     def merged():
         fr = [list(f) for f in dets["frames"]]
@@ -205,7 +208,7 @@ def link_with_zoom(dets: dict, video: str, model, params: LinkParams | None = No
             fr[int(k)] = fr[int(k)] + v["cands"]
         return fr
 
-    track = link(merged(), fps, W, H, P, dup_flags=dupf, content=content)
+    track = link(merged(), fps, W, H, P, dup_flags=dupf, content=content, times=times)
     ball = float(np.median([max(c[2], c[3]) for f in dets["frames"] for c in f if c[4] >= P.strong_conf] or [30]))
     half = int(max(min_half, half_mult * ball))
     for rnd in range(rounds):
@@ -233,7 +236,7 @@ def link_with_zoom(dets: dict, video: str, model, params: LinkParams | None = No
             zoom[str(f)] = {"c": [round(p[0], 1), round(p[1], 1)], "cands": cands}
             found += bool(cands)
         before = track.summary()
-        track = link(merged(), fps, W, H, P, dup_flags=dupf, content=content)
+        track = link(merged(), fps, W, H, P, dup_flags=dupf, content=content, times=times)
         after = track.summary()
         log(f"  zoom round {rnd + 1}: searched {len(todo)} frames ({n_fill} filled + route ahead), "
             f"candidates in {found}; coverage {before['coverage']:.1%} -> {after['coverage']:.1%}, "
