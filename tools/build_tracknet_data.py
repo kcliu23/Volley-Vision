@@ -1,6 +1,6 @@
 """Build a TrackNetV3 training set from your own clips + the YOLO dataset's labels.
 
-    python -m tools.build_tracknet_data --labels output/dataset_labels.json --out output/tracknet_data
+    python -m tools.build_tracknet_data --labels training/tracknet/dataset_labels.json --out training/tracknet/datasets/tracknet_v1
 
 Labels come from training/datasets/volleyball_combined (Roboflow export, files named
 testN_<frame>_jpg.rf.*): image N of a clip is decoded frame N of tests/testN.* and its
@@ -101,9 +101,9 @@ def build_clip(video, runs, out_match):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--labels", default="output/dataset_labels.json")
+    ap.add_argument("--labels", default="training/tracknet/dataset_labels.json")
     ap.add_argument("--video-dir", default="/mnt/user-data/uploads/Volley-Vision/tests")
-    ap.add_argument("--out", default="output/tracknet_data")
+    ap.add_argument("--out", default="training/tracknet/datasets/tracknet_v1")
     ap.add_argument("--val", nargs="*", default=["test9", "test19", "test26"])
     ap.add_argument("--holdout", nargs="*", default=["test7", "test12", "test17"])
     ap.add_argument("--max-gap", type=int, default=3)

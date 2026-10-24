@@ -7,7 +7,7 @@ the detector.
     python -m tools.dump_detections tests/test42.MP4
     python -m tools.dump_detections tests/*.mov tests/*.MP4 --conf 0.05
 
-Writes output/detections/<stem>_dets.json:
+Writes output/<stem>/cache/dets.json (see core.paths):
     {"schema": "vv-dets/1", "fps", "width", "height", "imgsz", "conf",
      "frames": [[[cx, cy, w, h, conf], ...], ...],      # one list per frame
      "dup": [false, true, ...]}                          # frame repeats the previous image
@@ -23,7 +23,7 @@ import cv2
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
-def dump(video: str, model, out_dir: Path, conf: float, imgsz: int) -> Path:
+def dump(video: str, model, out_path: Path, conf: float, imgsz: int) -> Path:
     cap = cv2.VideoCapture(video)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -46,7 +46,8 @@ def dump(video: str, model, out_dir: Path, conf: float, imgsz: int) -> Path:
         if i % 100 == 0:
             print(f"  {Path(video).name}: {i}/{total}  [{time.time() - t0:.0f}s]", flush=True)
 
-    out = out_dir / f"{Path(video).stem}_dets.json"
+    out = Path(out_path)
+    out.parent.mkdir(parents=True, exist_ok=True)
     with open(out, "w") as fh:
         json.dump({"schema": "vv-dets/1", "video": video, "fps": fps, "width": w, "height": h,
                    "imgsz": imgsz, "conf": conf, "frames": frames, "dup": dup}, fh, separators=(",", ":"))
@@ -61,19 +62,19 @@ def main():
     ap.add_argument("--model", default="models/best4.pt")
     ap.add_argument("--conf", type=float, default=0.05)
     ap.add_argument("--imgsz", type=int, default=1280)
-    ap.add_argument("--out", default="output/detections")
+    ap.add_argument("--output", default="output", help="output root (files go to <root>/<clip>/cache/dets.json)")
     ap.add_argument("--skip-existing", action="store_true")
     args = ap.parse_args()
 
     from ultralytics import YOLO
     model = YOLO(args.model)
-    out_dir = Path(args.out)
-    out_dir.mkdir(parents=True, exist_ok=True)
+    from core import paths
     for v in args.videos:
-        if args.skip_existing and (out_dir / f"{Path(v).stem}_dets.json").exists():
+        out = paths.dets(Path(v).stem, args.output)
+        if args.skip_existing and out.exists():
             continue
         try:
-            dump(v, model, out_dir, args.conf, args.imgsz)
+            dump(v, model, out, args.conf, args.imgsz)
         except Exception as e:  # keep going on a bad file
             print(f"[dump] {v}: FAILED {e}", file=sys.stderr)
 

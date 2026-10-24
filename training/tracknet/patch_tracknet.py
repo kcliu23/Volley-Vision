@@ -7,6 +7,7 @@
   - .cuda() -> .to(DEVICE) so the same code runs on GPU (Colab) or CPU (smoke test)
   - train.py: start from the checkpoint in env INIT_CKPT (fine-tuning) unless resuming
   - train.py: data-loader workers capped at the CPU count (Colab has 2)
+  - dataset.py / test.py: test-split detection by folder, not by "test" anywhere in the path
   - dataset.py: faster training loader (cached background, preallocated float32 arrays);
     output identical to the original for our setup (heatmap, bg concat, no frame mixup)
 Idempotent: running it twice is harmless.
@@ -74,6 +75,9 @@ Shuttlecock_Trajectory_Dataset.__getitem__ = _vv_getitem
 d = repo / "dataset.py"
 s = d.read_text()
 s = re.sub(r"^data_dir = .*$", f"data_dir = '{data}'", s, count=1, flags=re.M)
+# upstream picks the test-set label folder whenever "test" appears ANYWHERE in the path
+# (our clips are named testN): check the split folder instead
+s = s.replace("if 'test' in rally_dir:", "if os.sep + 'test' + os.sep in rally_dir.replace(self.root_dir, ''):")
 if "_vv_getitem" not in s:
     s += FAST
 d.write_text(s)
@@ -86,6 +90,11 @@ for name in ("train.py", "test.py"):
         s = DEV + s
     s = s.replace(".cuda()", ".to(DEVICE)")
     p.write_text(s)
+
+tp = repo / "test.py"
+s = tp.read_text()
+s = s.replace("if 'test' in rally_dir else", "if os.sep + 'test' + os.sep in rally_dir else")
+tp.write_text(s)
 
 t = repo / "train.py"
 s = t.read_text()
