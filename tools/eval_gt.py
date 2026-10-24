@@ -54,7 +54,9 @@ def tracks_for(stem):
         t = rule_link(merged("zoom"), a["fps"], d["width"], d["height"], dup_flags=a["dup_flags"],
                       content=a["content"], times=a["times"])
         sizes0 = [max(c[2], c[3]) for f in d["frames"] for c in f if c[4] >= 0.4]
-        tracknet_fill(t, json.load(open(tp))["frames"], float(np.median(sizes0)) if sizes0 else 30.0)
+        from core.tracknet import correct
+        bpx = float(np.median(sizes0)) if sizes0 else 30.0
+        tracknet_fill(t, correct(json.load(open(tp))["frames"], bpx), bpx)
         out["rule+tn"] = (t.pos, t.state)
     sizes = [max(c[2], c[3]) for f in d["frames"] for c in f if c[4] >= 0.4]
     return out, float(np.median(sizes)) if sizes else 30.0

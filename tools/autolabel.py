@@ -82,8 +82,10 @@ def propose(video: str, out_dir: str = "data/proposals", tracknet: str | None = 
     contacts = json.load(open(cpath))["contacts"] if cpath.exists() else []
     dets = json.load(open(paths.dets(stem, output_dir)))
     tpath = paths.tracknet(stem, output_dir)
-    tn = json.load(open(tpath))["frames"] if (tracknet and tpath.exists()) else None
     prof = dets.get("profile") or {}
+    from core.tracknet import correct
+    tn = correct(json.load(open(tpath))["frames"], float(prof.get("ball_px") or 30.0)) \
+        if (tracknet and tpath.exists()) else None
     fps = prof.get("fps") or track.get("fps") or 60.0
     ball = float(prof.get("ball_px") or 30.0)
     W, H = track["width"], track["height"]
