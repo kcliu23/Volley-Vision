@@ -31,11 +31,15 @@ import numpy as np
 class FlightParams:
     min_pts: int = 4            # a flight needs at least this many observed points
     max_len_s: float = 3.0      # longest flight considered
-    penalty: float = 40.0       # cost of an extra flight (in σ² units): higher = fewer contacts
-    sigma_px: float = 3.0       # base position noise
+    penalty: float = 40.0       # cost of an extra flight at 60 fps (in σ² units): higher = fewer contacts.
+                                #   Scaled by fps/60: same real-time evidence needed at any frame rate
+    sigma_bw: float = 0.1       # base position noise, ball-widths
     sigma_size: float = 0.08    # + this fraction of the ball size
-    sigma_speed: float = 0.35   # + this fraction of the per-frame speed (timing jitter)
+    jitter_s: float = 0.006     # + timing jitter: speed × this many seconds (real timestamps are used,
+                                #   so this is just residual jitter; ~0.35 of a frame at 60 fps)
     meet_sizes: float = 2.0     # parabolas must meet within this many ball-widths to call it a contact
+    tracknet_sigma_bw: float = 0.35  # extra noise on TrackNet points (measured: median error 0.37 ball-widths
+                                     #   vs 0.14 for YOLO detections on the labelled clips)
     # bounce classification
     bounce_keep_dir: float = 0.3    # |vx| must be at least this fraction of the incoming |vx| (same sign)
     bounce_max_gain: float = 1.10   # outgoing speed at most this × incoming (a bounce loses energy)
@@ -47,17 +51,25 @@ class Flight:
     f0: int                     # first observed frame
     f1: int                     # last observed frame
     n: int                      # observed points
-    cx: list                    # x(t) = cx[0] + cx[1]·t + cx[2]·t², t = frame - f0
+    cx: list                    # x(t) = cx[0] + cx[1]·t + cx[2]·t², t = real time since f0, in nominal frames
     cy: list
     rms: float                  # fit residual, px
+    tau: object = None          # time axis of the clip (frame -> real time in nominal frames)
+
+    def _t(self, f):
+        if self.tau is None:
+            return f - self.f0
+        ax = np.arange(len(self.tau))
+        return float(np.interp(f, ax, self.tau) - self.tau[self.f0])
 
     def at(self, f):
-        t = f - self.f0
+        t = self._t(f)
         return (self.cx[0] + self.cx[1] * t + self.cx[2] * t * t,
                 self.cy[0] + self.cy[1] * t + self.cy[2] * t * t)
 
     def vel(self, f):
-        t = f - self.f0
+        """px per nominal frame"""
+        t = self._t(f)
         return (self.cx[1] + 2 * self.cx[2] * t, self.cy[1] + 2 * self.cy[2] * t)
 
 
@@ -90,11 +102,15 @@ def _fit(t, v):
     return c, v - A @ c
 
 
-def segment(frames, xs, ys, sizes, fps, params: FlightParams | None = None):
+def segment(frames, xs, ys, sizes, fps, params: FlightParams | None = None, tau=None, extra_bw=None):
     """frames/xs/ys/sizes: observed ball points (no repeated frames), sorted by frame.
+    tau: the clip's time axis (real time per frame, in nominal frames); fits use real time.
+    extra_bw: optional extra position noise per point, ball-widths (noisier sources count less).
     Returns (flights, contacts)."""
     P = params or FlightParams()
     F = np.asarray(frames, float)
+    TA = np.asarray(tau, float) if tau is not None and len(tau) else None
+    T = TA[np.asarray(frames, int)] if TA is not None else F      # real time of each point
     X = np.asarray(xs, float)
     Y = np.asarray(ys, float)
     S = np.asarray(sizes, float)
@@ -107,8 +123,12 @@ def segment(frames, xs, ys, sizes, fps, params: FlightParams | None = None):
     for i in range(N):
         j0, j1 = max(0, i - 2), min(N - 1, i + 2)
         if j1 > j0:
-            sp[i] = np.hypot(X[j1] - X[j0], Y[j1] - Y[j0]) / max(F[j1] - F[j0], 1)
-    sig = P.sigma_px + P.sigma_size * S + P.sigma_speed * sp
+            sp[i] = np.hypot(X[j1] - X[j0], Y[j1] - Y[j0]) / max(T[j1] - T[j0], 1)
+    ball_med = float(np.median(S)) if len(S) else 30.0
+    sig = P.sigma_bw * ball_med + P.sigma_size * S + P.jitter_s * sp * fps   # sp: px per nominal frame
+    if extra_bw is not None:
+        sig = np.sqrt(sig ** 2 + (np.asarray(extra_bw, float) * ball_med) ** 2)
+    penalty = P.penalty * fps / 60.0
     w = 1.0 / sig ** 2
     max_len = P.max_len_s * fps
 
@@ -120,15 +140,15 @@ def segment(frames, xs, ys, sizes, fps, params: FlightParams | None = None):
     fits = {}
     for j in range(P.min_pts, N + 1):
         for i in range(j - P.min_pts, -1, -1):
-            if F[j - 1] - F[i] > max_len:
+            if T[j - 1] - T[i] > max_len:
                 break
             if best[i] == INF:
                 continue
-            t = F[i:j] - F[i]
+            t = T[i:j] - T[i]
             cx, rx = _fit(t, X[i:j])
             cy, ry = _fit(t, Y[i:j])
             cost = float(np.sum(w[i:j] * (rx * rx + ry * ry)))
-            tot = best[i] + cost + P.penalty
+            tot = best[i] + cost + penalty
             if tot < best[j]:
                 best[j], arg[j] = tot, i
                 fits[(i, j)] = (cx, cy, float(np.sqrt(np.mean(rx * rx + ry * ry))))
@@ -145,7 +165,8 @@ def segment(frames, xs, ys, sizes, fps, params: FlightParams | None = None):
     flights = []
     for i, j in segs:
         cx, cy, rms = fits[(i, j)]
-        flights.append(Flight(int(F[i]), int(F[j - 1]), j - i, list(map(float, cx)), list(map(float, cy)), rms))
+        flights.append(Flight(int(F[i]), int(F[j - 1]), j - i, list(map(float, cx)), list(map(float, cy)), rms,
+                              TA))
 
     # contacts between consecutive flights
     ylo, yhi = np.percentile(Y, 2), np.percentile(Y, 98)       # image y grows downward
@@ -172,7 +193,9 @@ def segment(frames, xs, ys, sizes, fps, params: FlightParams | None = None):
         is_bounce = vin[1] > 0 and vout[1] < 0 and ratio <= P.bounce_max_gain and low
         near_obs = np.any(np.abs(F - tc) <= 2)
         contacts.append(Contact(
-            frame=round(tc, 2), t=tc / fps, x=float(x), y=float(y),
+            frame=round(tc, 2),
+            t=(float(np.interp(tc, np.arange(len(TA)), TA)) if TA is not None else tc) / fps,
+            x=float(x), y=float(y),
             kind="bounce" if is_bounce else "touch",
             vx_in=float(vin[0]), vy_in=float(vin[1]), vx_out=float(vout[0]), vy_out=float(vout[1]),
             angle_deg=float(np.degrees(np.arccos(np.clip(cosang, -1, 1)))), speed_ratio=float(ratio),
@@ -182,11 +205,12 @@ def segment(frames, xs, ys, sizes, fps, params: FlightParams | None = None):
 
 
 def from_track(track, params: FlightParams | None = None):
-    """Segment a linker Track: uses detected + weak points (filled frames are guesses),
+    """Segment a linker Track: uses detected, weak and tracknet points (filled frames are guesses),
     skips repeated frames."""
-    fr, xs, ys, ss = [], [], [], []
+    P = params or FlightParams()
+    fr, xs, ys, ss, ex = [], [], [], [], []
     for f, (st, p) in enumerate(zip(track.state, track.pos)):
-        if p is None or st not in ("detected", "weak"):
+        if p is None or st not in ("detected", "weak", "tracknet"):
             continue
         if track.dup and track.dup[f]:
             continue
@@ -199,4 +223,57 @@ def from_track(track, params: FlightParams | None = None):
         xs.append(p[0])
         ys.append(p[1])
         ss.append(track.size[f] if getattr(track, 'size', None) and track.size[f] else 30.0)
-    return segment(fr, xs, ys, ss, track.fps, params)
+        ex.append(P.tracknet_sigma_bw if st == "tracknet" else 0.0)
+    return segment(fr, xs, ys, ss, track.fps, P, getattr(track, "tau", None), extra_bw=ex)
+
+
+def apply_flights(track, flights, contacts, max_dev_sizes: float = 1.5, smooth_observed: bool = False):
+    """Physics gap filling: frames without a detection take their flight's parabola.
+
+    - observed frames (detected/weak) keep their detected position (with
+      smooth_observed=True they're replaced by the fit when within max_dev_sizes)
+    - unobserved frames inside a flight (filled/none) get the fitted position, state
+      "filled" — gaps follow the real arc instead of a smooth guess
+    - between two flights that meet at a contact, frames before the contact follow the
+      incoming flight and frames after it the outgoing one
+    - fitted positions outside the picture area are not drawn (ball left the frame)
+    Returns new (pos, state) lists; the track object is not modified.
+    """
+    n = len(track.pos)
+    pos, state = list(track.pos), list(track.state)
+    x0, y0, x1, y1 = track.content or (0, 0, track.width, track.height)
+    inside = lambda p: x0 <= p[0] <= x1 and y0 <= p[1] <= y1
+
+    def put(f, fl):
+        p = fl.at(f)
+        sz = track.size[f] if getattr(track, "size", None) and track.size[f] else 30.0
+        if state[f] in ("detected", "weak", "tracknet"):
+            # real detections are more accurate than the fit (measured on the labelled
+            # clips: replacing them raised the median error 4.8 -> 5.5 px), so keep them
+            if smooth_observed and track.pos[f] is not None and \
+                    np.hypot(p[0] - track.pos[f][0], p[1] - track.pos[f][1]) <= max_dev_sizes * sz:
+                pos[f] = (float(p[0]), float(p[1]))
+        elif inside(p):
+            pos[f], state[f] = (float(p[0]), float(p[1])), "filled"
+        else:
+            pos[f], state[f] = None, "none"
+
+    for fl in flights:
+        for f in range(max(0, fl.f0), min(n, fl.f1 + 1)):
+            put(f, fl)
+    cmap = {}
+    for c in contacts:
+        cmap.setdefault(int(np.floor(c.frame)), c)
+    for a, b in zip(flights, flights[1:]):
+        # a contact between them?
+        c = next((c for c in contacts if a.f1 - 1 <= c.frame <= b.f0 + 1), None)
+        if c is None:
+            continue
+        for f in range(a.f1 + 1, b.f0):
+            put(f, a if f <= c.frame else b)
+    # repeated frames show the previous image
+    if track.dup:
+        for f in range(1, n):
+            if track.dup[f] and pos[f - 1] is not None:
+                pos[f], state[f] = pos[f - 1], state[f - 1]
+    return pos, state

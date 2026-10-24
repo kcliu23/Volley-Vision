@@ -176,6 +176,7 @@ def run(
     show_preview: bool = False,
     touches: bool = True,
     ring: bool = False,
+    tracknet: str | None = "models/tracknet/FT_TrackNet_best.pt",
 ) -> str:
     from ultralytics import YOLO
     from core.linker import link as rule_link, LinkParams
@@ -215,28 +216,35 @@ def run(
         track = link_with_zoom(dets, input_path, model, LinkParams(), linker=linker,
                                log=lambda m: print("[VolleyVision]" + m))
     else:
-        if len(dets.get("dup") or []) != len(dets["frames"]):
-            dets["dup"] = video_dup_flags(input_path)
-        if not dets.get("content"):
-            dets["content"] = content_box(input_path)
+        from core.profile import get as get_profile, link_args
+        get_profile(input_path, dets)
+        a = link_args(dets)
         if linker == "cost":
             from core.cost_linker import link as cost_link
-            track = cost_link(dets["frames"], dets["fps"], dets["width"], dets["height"],
-                              dup_flags=dets["dup"], content=dets["content"])
+            track = cost_link(dets["frames"], a["fps"], dets["width"], dets["height"],
+                              dup_flags=a["dup_flags"], content=a["content"], times=a["times"])
         else:
-            track = rule_link(dets["frames"], dets["fps"], dets["width"], dets["height"],
-                              dup_flags=dets["dup"], content=dets["content"])
+            track = rule_link(dets["frames"], a["fps"], dets["width"], dets["height"], **{k: v for k, v in a.items() if k != "fps"})
     with open(det_path, "w") as fh:                       # keep zoom finds / repeat flags cached
         json.dump(dets, fh, separators=(",", ":"))
+
+    # 2b. TrackNet (multi-frame model): fills gaps and extends track ends where YOLO saw
+    #     nothing, inside the corridor physics predicts. Never overrides a YOLO detection.
+    if tracknet:
+        from core.tracknet import candidates as tracknet_candidates
+        from core.tracknet_fill import apply as tracknet_fill
+        tn = tracknet_candidates(input_path, dets, tracknet, cache_dir=str(det_dir),
+                                 log=lambda m: print(m))
+        if tn is not None:
+            ball_px = (dets.get("profile") or {}).get("ball_px") or float(np.median(
+                [max(c[2], c[3]) for f in dets["frames"] for c in f if c[4] >= 0.4] or [30.0]))
+            got = tracknet_fill(track, tn, ball_px)
+            print(f"[VolleyVision] TrackNet filled {got['gap']} gap frames, extended track ends by {got['end']} frames")
+
     s = track.summary()
     print(f"[VolleyVision] ball tracked in {s['coverage']:.1%} of frames "
-          f"(detected {s['detected']}, weak {s['weak']}, filled {s['filled']}, none {s['none']})")
+          f"(detected {s['detected']}, weak {s['weak']}, tracknet {s['tracknet']}, filled {s['filled']}, none {s['none']})")
     os.makedirs(output_dir, exist_ok=True)
-    track_path = os.path.join(output_dir, f"{stem}_track.json")
-    with open(track_path, "w") as fh:
-        json.dump({"schema": "vv-track/2", "video": str(input_path), "fps": fps, "width": width,
-                   "height": height, "linker": linker, "frames": track.to_rows()}, fh)
-    print(f"[VolleyVision] trajectory  →  {track_path}")
 
     # 3. contacts: split the track into flights (one parabola each); each boundary is a
     #    contact, classified touch / bounce / other using where the people are
@@ -258,11 +266,20 @@ def run(
                                     "cx": [round(v, 5) for v in fl.cx], "cy": [round(v, 5) for v in fl.cy]}
                                    for fl in flights],
                        "contacts": [c.to_dict() for c in found]}, fh, indent=1)
+        # gaps inside a flight follow that flight's parabola (real detections are kept)
+        from core.flights import apply_flights
+        track.pos, track.state = apply_flights(track, flights, found)
         kinds = {k: sum(c.kind == k for c in found) for k in ("touch", "bounce", "other")}
         print(f"[VolleyVision] {len(flights)} flights, {kinds['touch']} touches, {kinds['bounce']} bounces, "
               f"{kinds['other']} other contacts  →  {contact_path}")
         for c in found:
             print(f"    {c.t:6.2f}s  frame {c.frame:7.1f}  {c.kind:6s}{'  (ball hidden at contact)' if c.in_gap else ''}")
+
+    track_path = os.path.join(output_dir, f"{stem}_track.json")
+    with open(track_path, "w") as fh:
+        json.dump({"schema": "vv-track/2", "video": str(input_path), "fps": fps, "width": width,
+                   "height": height, "linker": linker, "frames": track.to_rows()}, fh)
+    print(f"[VolleyVision] trajectory  →  {track_path}")
 
     # 4. render
     out_path = os.path.join(output_dir, f"{stem}_tracked.mp4")

@@ -8,7 +8,8 @@ For each labelled frame:
                          MISS if the track has no position
   ball not visible    -> OK if the track has no position (or only a filled guess),
                          FALSE if it reports a detected/weak ball somewhere
-Uses cached detections + zoom finds (no YOLO). Linkers compared: old tracker, rule, cost.
+Uses cached detections + zoom finds (no YOLO). Linkers compared: old tracker, rule, cost, and
+rule+tn (rule linker + the TrackNet stage, when output/detections/<clip>_tracknet.json exists).
 """
 import argparse
 import glob
@@ -38,10 +39,22 @@ def tracks_for(stem):
     out = {}
     _, old_pos = run_old(d["frames"], with_pos=True)
     out["old"] = (old_pos, ["detected" if p is not None else "none" for p in old_pos])
-    t = rule_link(merged("zoom"), d["fps"], d["width"], d["height"], dup_flags=dup, content=d.get("content"))
+    from core.profile import link_args
+    a = link_args(d)
+    t = rule_link(merged("zoom"), a["fps"], d["width"], d["height"], dup_flags=a["dup_flags"],
+                  content=a["content"], times=a["times"])
     out["rule"] = (t.pos, t.state)
-    t = cost_link(merged("zoom_cost"), d["fps"], d["width"], d["height"], dup_flags=dup, content=d.get("content"))
+    t = cost_link(merged("zoom_cost"), a["fps"], d["width"], d["height"], dup_flags=a["dup_flags"],
+                  content=a["content"], times=a["times"])
     out["cost"] = (t.pos, t.state)
+    tp = Path(f"output/detections/{stem}_tracknet.json")
+    if tp.exists():
+        from core.tracknet_fill import apply as tracknet_fill
+        t = rule_link(merged("zoom"), a["fps"], d["width"], d["height"], dup_flags=a["dup_flags"],
+                      content=a["content"], times=a["times"])
+        sizes0 = [max(c[2], c[3]) for f in d["frames"] for c in f if c[4] >= 0.4]
+        tracknet_fill(t, json.load(open(tp))["frames"], float(np.median(sizes0)) if sizes0 else 30.0)
+        out["rule+tn"] = (t.pos, t.state)
     sizes = [max(c[2], c[3]) for f in d["frames"] for c in f if c[4] >= 0.4]
     return out, float(np.median(sizes)) if sizes else 30.0
 
@@ -55,7 +68,7 @@ def main():
     if not files:
         print("no labels yet: run python -m tools.label_gt --suggested")
         return
-    names = ["old", "rule", "cost"]
+    names = ["old", "rule", "cost", "rule+tn"]
     tot = {n: {"hit": 0, "wrong": 0, "miss": 0, "ok": 0, "false": 0, "err": []} for n in names}
     print(f"{'clip':8s} {'vis':>4s} {'hid':>4s} | " + " | ".join(f"{n:>4s} hit  wrong miss false" for n in names))
     for fp in files:
@@ -86,7 +99,7 @@ def main():
                         else:
                             row[n]["wrong"] += 1
                 else:
-                    if p is not None and s in ("detected", "weak"):
+                    if p is not None and s in ("detected", "weak", "tracknet"):
                         row[n]["false"] += 1
                     else:
                         row[n]["ok"] += 1

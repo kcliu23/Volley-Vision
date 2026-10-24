@@ -31,7 +31,7 @@ DETECTED, WEAK, FILLED, NONE = "detected", "weak", "filled", "none"
 
 # Bump whenever linking behaviour changes: cached zoom searches were steered by the
 # old track, so they are discarded when this changes.
-LINKER_VERSION = 7
+LINKER_VERSION = 8
 
 
 @dataclass
@@ -41,23 +41,28 @@ class LinkParams:
     size_lo: float = 0.25         # box size must be within [lo, hi] x clip median (far balls are small)
     size_hi: float = 2.5
     tol_size: float = 0.8         # acceptance radius = tol_size * ball size ...
-    tol_min_px: float = 14.0      # ... at least this ...
+    tol_min_bw: float = 0.4       # ... at least this many ball-widths ...
     tol_speed: float = 0.6        # ... + this * per-frame motion (timing jitter)
     gate_growth: float = 0.5      # radius grows by this fraction per missed frame
     max_miss_s: float = 0.15      # extension/linking gives up after this long without a hit
     fit_pts: int = 6              # points used for local prediction
     min_tracklet: int = 3         # strong tracklets shorter than this are dropped
     static_s: float = 0.5         # same spot for this long = stationary object, not the ball in play
-    static_min_frames: int = 8    # ... and seen in at least this many frames
-    vmax_sizes: float = 3.0       # fastest plausible ball motion, in ball-widths per frame (hard spike near camera)
+    static_min_s: float = 0.13    # ... and seen for at least this long in total (>= 4 frames)
+    vmax_bw_s: float = 180.0      # fastest plausible ball motion, ball-widths per second (~38 m/s: a hard spike)
     jump_margin: float = 1.0      # + this many ball-widths of slack (detection jitter)
     size_jump: float = 0.4        # box size may change by up to e^0.4 = 1.5x between nearby points ...
-    size_jump_rate: float = 0.01  # ... plus this (log) per frame apart
+    size_jump_rate_s: float = 0.6 # ... plus this (log) per second apart
     min_aspect: float = 0.4       # box short side / long side (blur elongates; boxes cut off at the picture edge are exempt)
-    weak_chain_min: int = 5     # weak-only chain: min points (repeated frames don't count)
+    weak_chain_min: int = 5     # weak-only chain: min points at 60 fps (repeated frames don't count) ...
+    weak_chain_min_s: float = 0.07  # ... or this long at low frame rates (never fewer than 3 points)
     weak_chain_conf: float = 0.6  # ... and min summed confidence
     max_bridge_s: float = 0.5     # longest gap filled by interpolation
     edge_margin: float = 0.0      # bridged path must stay this far inside the frame (px)
+    min_fit_span_s: float = 0.05  # local arc fits need at least this much time for curvature
+    # derived per clip from the frame rate (not set by hand): per-frame equivalents
+    vmax_sizes: float = 0.0       # vmax_bw_s / fps
+    size_jump_rate: float = 0.0   # size_jump_rate_s / fps
 
 
 @dataclass
@@ -70,6 +75,7 @@ class Track:
     conf: list[float | None]
     dup: list[bool] = field(default_factory=list)
     content: tuple = ()                             # picture area (x0, y0, x1, y1) inside the frame
+    tau: list = field(default_factory=list)         # real time per frame, in nominal frames (times * fps)
     size: list = field(default_factory=list)        # ball box size (px) per frame where observed
     tentative: list = field(default_factory=list)   # [[(frame, x, y), ...], ...] unconfirmed weak chains
 
@@ -77,7 +83,7 @@ class Track:
         from collections import Counter
         c = Counter(self.state)
         n = len(self.state)
-        return {"frames": n, **{k: c.get(k, 0) for k in (DETECTED, WEAK, FILLED, NONE)},
+        return {"frames": n, **{k: c.get(k, 0) for k in (DETECTED, WEAK, "tracknet", FILLED, NONE)},
                 "coverage": round(1 - c.get(NONE, 0) / max(n, 1), 3)}
 
     def to_rows(self) -> list[dict]:
@@ -96,14 +102,17 @@ class Track:
 
 # ── helpers ──────────────────────────────────────────────────────────────────
 
-def _predict(ts, xs, ys, t):
-    """Quadratic (or lower order with few points) extrapolation to time t."""
+def _predict(ts, xs, ys, t, tau=None, min_span=3.0):
+    """Quadratic (or lower order with few points) extrapolation to time t.
+    ts/t are frame indices; with tau, they're mapped to real time (in nominal frames)."""
+    if tau is not None:
+        ts, t = np.asarray(tau)[np.asarray(ts, int)], float(np.interp(t, np.arange(len(tau)), tau))
     ts = np.asarray(ts, float)
     deg = 2 if len(ts) >= 4 else (1 if len(ts) >= 2 else 0)
     if deg == 0:
         return xs[0], ys[0], 0.0
     span = ts.max() - ts.min()
-    if deg == 2 and span < 3:          # too short a baseline for curvature
+    if deg == 2 and span < min_span:   # too short a baseline for curvature
         deg = 1
     px = np.polyfit(ts - t, xs, deg)
     py = np.polyfit(ts - t, ys, deg)
@@ -112,10 +121,12 @@ def _predict(ts, xs, ys, t):
     return float(px[-1]), float(py[-1]), float(np.hypot(vx, vy))
 
 
-def _velocity(ts, xs, ys, t):
-    """Local velocity (px/frame) at time t from a quadratic/linear fit."""
+def _velocity(ts, xs, ys, t, tau=None, min_span=3.0):
+    """Local velocity (px per nominal frame) at time t from a quadratic/linear fit."""
+    if tau is not None:
+        ts, t = np.asarray(tau)[np.asarray(ts, int)], float(np.interp(t, np.arange(len(tau)), tau))
     ts = np.asarray(ts, float)
-    deg = 2 if len(ts) >= 4 and (ts.max() - ts.min()) >= 3 else 1
+    deg = 2 if len(ts) >= 4 and (ts.max() - ts.min()) >= min_span else 1
     if len(ts) < 2:
         return 0.0, 0.0
     px = np.polyfit(ts - t, xs, deg)
@@ -126,14 +137,23 @@ def _velocity(ts, xs, ys, t):
 # ── main entry ───────────────────────────────────────────────────────────────
 
 def link(frames: list, fps: float, width: int, height: int, params: LinkParams | None = None,
-         dup_flags: list[bool] | None = None, content: list | None = None) -> Track:
+         dup_flags: list[bool] | None = None, content: list | None = None,
+         times: list | None = None) -> Track:
     """frames: list (one per video frame) of candidate lists [cx, cy, w, h, conf].
 
     dup_flags: per-frame "this video frame repeats the previous image" (from the
     detection pass, image-based). Without it, repeats are guessed from identical
     candidate positions, which misses repeats where nothing was detected."""
+    from dataclasses import replace as _replace
     P = params or LinkParams()
+    P = _replace(P, vmax_sizes=P.vmax_bw_s / fps, size_jump_rate=P.size_jump_rate_s / fps)
     n = len(frames)
+    # time axis: real timestamps in nominal frames (= frame index for evenly timed video)
+    TAU = np.asarray(times, float) * fps if times is not None and len(times) == n else np.arange(n, dtype=float)
+    min_span = max(3.0, P.min_fit_span_s * fps)
+
+    def pred(fs, xs, ys, t):
+        return _predict(fs, xs, ys, t, TAU, min_span)
     # the actual picture inside the video frame (black side/top bars excluded)
     cx0, cy0, cx1, cy1 = content if content else (0, 0, width, height)
     C = [np.asarray(f, float).reshape(-1, 5) for f in frames]
@@ -165,10 +185,10 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
         drop = set()
         span_need = P.static_s * fps
         for j, (i, k, c) in enumerate(pts_all):
-            r = max(0.3 * max(c[2], c[3]), 6.0)
+            r = max(0.3 * max(c[2], c[3]), 0.1 * med)
             near = arr[np.hypot(arr[:, 1] - c[0], arr[:, 2] - c[1]) <= r]
             fr = np.unique(near[:, 0])
-            if len(fr) >= P.static_min_frames and fr.max() - fr.min() >= span_need:
+            if len(fr) >= max(4, int(round(P.static_min_s * fps))) and fr.max() - fr.min() >= span_need:
                 drop.add((i, k))
         if drop:
             for i in range(n):
@@ -180,9 +200,11 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
                     C[i] = C[i - 1].copy()
     usable = [i for i in range(n) if not dup[i]]
     max_miss = max(2, int(round(P.max_miss_s * fps)))
+    # point-count minimums shrink at low frame rates (same duration, fewer frames)
+    chain_min = max(3, min(P.weak_chain_min, int(round(P.weak_chain_min_s * fps))))
 
     def tol(size, speed, missed=0):
-        r = max(P.tol_size * size, P.tol_min_px) + P.tol_speed * speed
+        r = max(P.tol_size * size, P.tol_min_bw * med) + P.tol_speed * speed
         return r * (1 + P.gate_growth * missed)
 
     # b. backbone from strong candidates ──────────────────────────────────────
@@ -196,7 +218,7 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
             fs = sorted(tr["pts"])[-P.fit_pts:]
             xs = [tr["pts"][f][0] for f in fs]
             ys = [tr["pts"][f][1] for f in fs]
-            px, py, sp = _predict(fs, xs, ys, i)
+            px, py, sp = pred(fs, xs, ys, i)
             missed = i - fs[-1] - 1
             best, bd = None, None
             for k, c in enumerate(strong):
@@ -258,7 +280,7 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
                 xs = [owner[g][0] for g in near]
                 ys = [owner[g][1] for g in near]
                 sz = float(np.median([owner[g][2] for g in near]))
-                px, py, sp = _predict(near, xs, ys, f)
+                px, py, sp = pred(near, xs, ys, f)
                 r = tol(sz, sp, missed)
                 best, bd = None, None
                 for c in C[f]:
@@ -295,7 +317,7 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
         claimed = set()
         for ch in sorted(alive, key=lambda t: -len(t["pts"])):
             fs = sorted(ch["pts"])[-P.fit_pts:]
-            px, py, sp = _predict(fs, [ch["pts"][f][0] for f in fs], [ch["pts"][f][1] for f in fs], i)
+            px, py, sp = pred(fs, [ch["pts"][f][0] for f in fs], [ch["pts"][f][1] for f in fs], i)
             missed = i - fs[-1] - 1
             best, bd = None, None
             for k, c in enumerate(cands):
@@ -322,7 +344,7 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
     tentative = []                         # short smooth moving chains: worth a closer look (zoom search)
     for ch in chains:
         pts = ch["pts"]
-        if 3 <= len(pts) < P.weak_chain_min or (len(pts) >= P.weak_chain_min and
+        if 3 <= len(pts) < chain_min or (len(pts) >= chain_min and
                                                   sum(p[3] for p in pts.values()) < P.weak_chain_conf):
             fs_ = sorted(pts)
             xs_ = np.array([pts[f][0] for f in fs_]); ys_ = np.array([pts[f][1] for f in fs_])
@@ -330,9 +352,9 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
             if np.hypot(xs_[-1] - xs_[0], ys_[-1] - ys_[0]) >= 1.5 * sz_:
                 ff = np.array(fs_, float) - fs_[0]
                 rr = np.hypot(xs_ - np.polyval(np.polyfit(ff, xs_, 1), ff), ys_ - np.polyval(np.polyfit(ff, ys_, 1), ff))
-                if np.sqrt(np.mean(rr ** 2)) <= max(0.35 * sz_, 6.0):
+                if np.sqrt(np.mean(rr ** 2)) <= max(0.35 * sz_, 0.2 * med):
                     tentative.append([(f, pts[f][0], pts[f][1]) for f in fs_])
-        if len(pts) < P.weak_chain_min:
+        if len(pts) < chain_min:
             continue
         fs = np.array(sorted(pts), float)
         xs = np.array([pts[f][0] for f in sorted(pts)])
@@ -345,7 +367,7 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
         deg = 2 if len(fs) >= 5 else 1
         rx = xs - np.polyval(np.polyfit(fs - fs[0], xs, deg), fs - fs[0])
         ry = ys - np.polyval(np.polyfit(fs - fs[0], ys, deg), fs - fs[0])
-        if np.sqrt(np.mean(rx ** 2 + ry ** 2)) > max(0.35 * sz, 6.0):
+        if np.sqrt(np.mean(rx ** 2 + ry ** 2)) > max(0.35 * sz, 0.2 * med):
             continue                       # jittery: not one object on a ballistic path
         for f, p in pts.items():
             if f not in owner:
@@ -413,7 +435,7 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
     # real hit, then keep stretches strongest-first, accepting one only if it can
     # be reached from the already-kept stretches before and after it.
     def reachable(fa, pa, fb, pb, size):
-        return reachable_pts(P, fa, pa, fb, pb, size)
+        return reachable_pts(P, fa, pa, fb, pb, size, TAU)
 
     def pt(f):
         return owner[f]
@@ -475,16 +497,16 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
                 break
 
     tentative = [t for t in tentative if not any(f in owner for f, _, _ in t)]
-    return finalize(owner, n, fps, width, height, P, dup, (cx0, cy0, cx1, cy1), tentative)
+    return finalize(owner, n, fps, width, height, P, dup, (cx0, cy0, cx1, cy1), tentative, TAU)
 
 
-def reachable_pts(P: LinkParams, fa, pa, fb, pb, size) -> bool:
+def reachable_pts(P: LinkParams, fa, pa, fb, pb, size, tau=None) -> bool:
     """Can one ball get from point a (frame fa) to point b (frame fb)? pa/pb: (x, y, size, ...).
 
     Two checks: distance (speed limit) and apparent size. A ball's box grows or
     shrinks gradually as it moves toward/away from the camera; a sudden jump in
     size over a short time means a different ball (e.g. another court's)."""
-    gap = abs(fb - fa)
+    gap = abs(tau[fb] - tau[fa]) if tau is not None else abs(fb - fa)
     if np.hypot(pb[0] - pa[0], pb[1] - pa[1]) > (P.vmax_sizes * gap + P.jump_margin) * size:
         return False
     if len(pa) > 2 and len(pb) > 2 and pa[2] > 0 and pb[2] > 0:
@@ -494,15 +516,21 @@ def reachable_pts(P: LinkParams, fa, pa, fb, pb, size) -> bool:
 
 
 def finalize(owner: dict, n: int, fps: float, width: int, height: int, P: LinkParams,
-             dup: list, content: tuple, tentative: list | None = None) -> Track:
+             dup: list, content: tuple, tentative: list | None = None, TAU=None) -> Track:
     """Shared last step for any linker: turn the chosen points into per-frame states,
     copy repeated frames, and bridge short on-screen gaps (smooth arc, or a corner
     where a touch happened inside the gap). owner: frame -> (x, y, size, conf, state)."""
     cx0, cy0, cx1, cy1 = content
+    if not P.vmax_sizes:                   # called directly (cost linker): derive per-frame values
+        from dataclasses import replace as _replace
+        P = _replace(P, vmax_sizes=P.vmax_bw_s / fps, size_jump_rate=P.size_jump_rate_s / fps)
+    if TAU is None:
+        TAU = np.arange(n, dtype=float)
+    min_span = max(3.0, P.min_fit_span_s * fps)
     max_miss = max(2, int(round(P.max_miss_s * fps)))
 
     def reachable(fa, pa, fb, pb, size):
-        return reachable_pts(P, fa, pa, fb, pb, size)
+        return reachable_pts(P, fa, pa, fb, pb, size, TAU)
 
     # d. bridge short on-screen gaps ──────────────────────────────────────────
     state = [NONE] * n
@@ -537,15 +565,15 @@ def finalize(owner: dict, n: int, fps: float, width: int, height: int, P: LinkPa
                     x + s / 2 >= cx1 - 2 or y + s / 2 >= cy1 - 2)
         if gap > 3 and (at_edge(a) or at_edge(b)):
             continue
-        vxa, vya = _velocity(left, [owner[g][0] for g in left], [owner[g][1] for g in left], a)
-        vxb, vyb = _velocity(right, [owner[g][0] for g in right], [owner[g][1] for g in right], b)
+        vxa, vya = _velocity(left, [owner[g][0] for g in left], [owner[g][1] for g in left], a, TAU, min_span)
+        vxb, vyb = _velocity(right, [owner[g][0] for g in right], [owner[g][1] for g in right], b, TAU, min_span)
         xa, ya = owner[a][0], owner[a][1]
         xb, yb = owner[b][0], owner[b][1]
-        T = b - a
+        T = float(TAU[b] - TAU[a])
         lx, ly = [owner[g][0] for g in left], [owner[g][1] for g in left]
         rx, ry = [owner[g][0] for g in right], [owner[g][1] for g in right]
-        L = {f: _predict(left, lx, ly, f)[:2] for f in range(a + 1, b + 1)}
-        R = {f: _predict(right, rx, ry, f)[:2] for f in range(a, b)}
+        L = {f: _predict(left, lx, ly, f, TAU, min_span)[:2] for f in range(a + 1, b + 1)}
+        R = {f: _predict(right, rx, ry, f, TAU, min_span)[:2] for f in range(a, b)}
         sz = float(np.median([owner[g][2] for g in left + right]))
         # Same arc on both sides? (left arc lands on b and right arc lands on a)
         same_arc = (np.hypot(L[b][0] - xb, L[b][1] - yb) <= 1.5 * sz and
@@ -561,7 +589,7 @@ def finalize(owner: dict, n: int, fps: float, width: int, height: int, P: LinkPa
                 path = [(f, *(L[f] if f <= k else R[f])) for f in range(a + 1, b)]
         if not path:
             for f in range(a + 1, b):
-                u = (f - a) / T
+                u = (TAU[f] - TAU[a]) / T
                 h00, h10 = 2 * u**3 - 3 * u**2 + 1, u**3 - 2 * u**2 + u
                 h01, h11 = -2 * u**3 + 3 * u**2, u**3 - u**2
                 x = h00 * xa + h10 * T * vxa + h01 * xb + h11 * T * vxb
@@ -579,4 +607,5 @@ def finalize(owner: dict, n: int, fps: float, width: int, height: int, P: LinkPa
             state[i], pos[i] = FILLED, pos[i - 1]
 
     return Track(fps=fps, width=width, height=height, state=state, pos=pos, conf=conf, dup=dup,
-                 content=(cx0, cy0, cx1, cy1), tentative=tentative or [], size=size)
+                 content=(cx0, cy0, cx1, cy1), tentative=tentative or [], size=size,
+                 tau=[float(x) for x in TAU])
