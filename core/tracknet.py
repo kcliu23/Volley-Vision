@@ -179,6 +179,38 @@ def ball_sizes(dets: dict, fps: float) -> list[float]:
     return out
 
 
+def offset_path(ckpt: str | Path = DEFAULT_CKPT) -> Path:
+    """Where a checkpoint's measured position offset is kept: next to the checkpoint."""
+    return Path(ckpt).with_suffix(".offset.json")
+
+
+def load_offset(ckpt: str | Path = DEFAULT_CKPT) -> tuple[float, float]:
+    """Temporary workaround for a model defect: this checkpoint's measured position offset
+    (TrackNet - true ball, ball-widths), from tools.tracknet_offset. Used only if it was
+    measured for exactly this checkpoint (fingerprint match), so a retrained model starts
+    uncorrected. (0, 0) otherwise."""
+    p = offset_path(ckpt)
+    try:
+        o = json.load(open(p))
+        if Path(ckpt).exists() and o.get("checkpoint_key") == _ckpt_key(str(ckpt)):
+            return float(o["offset_bw"][0]), float(o["offset_bw"][1])
+    except Exception:
+        pass
+    return (0.0, 0.0)
+
+
+def correct(frames: list, ball_px: float, offset_bw: tuple[float, float] | None = None,
+            ckpt: str | Path = DEFAULT_CKPT) -> list:
+    """TrackNet candidates with the checkpoint's measured offset removed (a new list; the
+    cache keeps raw positions). The current fine-tuned model places the ball ~0.35
+    ball-widths too high on new clips; retraining is the real fix."""
+    dx, dy = offset_bw if offset_bw is not None else load_offset(ckpt)
+    if not dx and not dy:
+        return frames
+    ox, oy = dx * ball_px, dy * ball_px
+    return [[[c[0] - ox, c[1] - oy, *c[2:]] for c in fr] for fr in frames]
+
+
 def _ckpt_key(ckpt: str) -> str:
     """Identifies the checkpoint by content (size + hash of its first and last MB), so the
     cache stays valid when the file is copied between machines."""

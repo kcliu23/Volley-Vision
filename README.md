@@ -79,7 +79,8 @@ python -m tools.export_training --name v2 \
   guesses, TrackNet-only, picture edge, jumps, YOLO/TrackNet disagreement, odd contacts), and
   the clip split into rallies.
 - **review** plays each rally with the proposal drawn on it: accept it with Enter, or pause and
-  click the ball / `n` no ball / `h` hidden / `i` fill a straight line between two clicks.
+  click the ball / `n` no ball / `h` hidden / `i` fill a straight line between two clicks /
+  `I` fill between all your clicks in the rally (held or slow ball: click every 10-20 frames).
   Saves to `data/verified/<clip>.json` after every action. `--test` (or `t`) makes a clip a
   test clip: it is never exported for training. `?` prints all keys.
 - **export_training** writes versioned sets, never overwriting: `training/datasets/yolo_<name>/`
@@ -87,6 +88,15 @@ python -m tools.export_training --name v2 \
   label = no ball; frames already in `volleyball_combined` are skipped; `data_with_combined.yaml`
   trains on old + new) and `training/tracknet/datasets/tracknet_<name>/` (every frame; hidden =
   not visible). For Colab, tar the TrackNet folder and use it in place of `tracknet_data.tar`.
+- `python -m tools.tracknet_offset` (after reviewing clips): **temporary workaround for a
+  model defect**. The current fine-tuned TrackNet places the ball ~0.35 ball-widths too high on
+  new clips; this measures the offset on your checked clips and saves it next to the
+  checkpoint (`models/tracknet/<ckpt>.offset.json`, tied to that exact checkpoint). Every
+  TrackNet position from that checkpoint is shifted by it, so autolabel proposals need fewer
+  fixes. A retrained checkpoint starts uncorrected; `--check` shows whether the defect is gone.
+- `python -m tools.calibrate`: score calibration for the experimental joint linker — maps each
+  source's score (YOLO / zoom / TrackNet) to a comparable probability, fit on your checked
+  clips (`models/score_calibration.json`).
 - Fine-tune from the current checkpoint on old + new data; keep a new model only if it beats
   the current one on `data/gt` (`tools.eval_gt`) and passes `tools.regression --tracknet`.
 

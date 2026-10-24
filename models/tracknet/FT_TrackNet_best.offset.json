@@ -1,0 +1,16 @@
+{
+ "schema": "vv-tracknet-offset/1",
+ "checkpoint": "models/tracknet/FT_TrackNet_best.pt",
+ "checkpoint_key": "136207167:912ca46826150ac9:v1",
+ "offset_bw": [
+  -0.039,
+  -0.351
+ ],
+ "frames": 2281,
+ "measured_on": [
+  "test45",
+  "test46"
+ ],
+ "created": "2026-10-24 13:56",
+ "note": "temporary workaround for a model defect; retraining should remove it"
+}

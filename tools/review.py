@@ -3,20 +3,24 @@
     python -m tools.review tests/test40.mov          # needs data/proposals/test40.json (tools.autolabel)
     python -m tools.review tests/test40.mov --test   # mark this clip as a test clip (never trained on)
 
-Watch each rally with the proposed ball drawn on it. Where the circle is on the ball, do
-nothing; where it isn't, pause and fix those frames. Then press Enter to accept the rally:
-every frame you didn't touch takes the proposal (circle = ball visible there, no circle =
-no ball visible). Saves after every action to data/verified/<clip>.json — quit any time,
+Press space and watch the clip with the proposed ball drawn on it (it plays through the
+whole video). Where the circle is on the ball, do nothing; where it isn't, pause and fix
+those frames. Accept with Enter (the segment you're in) or y (the whole clip): every frame
+you didn't touch takes the proposal (circle = ball visible there, no circle = no ball). Saves after every action to data/verified/<clip>.json — quit any time,
 it resumes where you left off.
 
-  play           space  play / pause          w / s  faster / slower (¼× … 4×)
+  play           space  play / pause (through the whole clip)   w / s  faster / slower (¼× … 4×)
                  d / a  next / previous frame  D / A  ±10 frames
   fix a frame    click  the ball is here       n      no ball visible
                  h      hidden: in play but covered (behind a player, …)
                  x      can't tell (skip)      c      clear my edit (back to the proposal)
                  i      fill the frames between your last two clicks (straight line)
-  move           Enter  accept this rally and go to the next unchecked one
-                 f      next flagged frame     j / k  previous / next segment
+                 I      fill between ALL your clicks in this segment (held / slow ball:
+                        click it every 10-20 frames, then press I once)
+  accept         Enter  accept the segment you're in and go to the next unchecked one
+                 y      accept the whole clip (after watching it all)
+  move           f      next flagged frame     j / k  previous / next segment
+                 click the timeline to jump there
   other          u      undo                   t      toggle train / test clip
                  ?      help                   q/Esc  save and quit
 
@@ -99,7 +103,7 @@ class Review:
     def set_ball(self, f: int, xy):
         self._push([f])
         self._set(f, [round(float(xy[0]), 1), round(float(xy[1]), 1)], "fixed")
-        self.clicks = (self.clicks + [f])[-2:]
+        self.clicks = ([c for c in self.clicks if c != f] + [f])[-2:]   # re-clicking a frame just updates it
 
     def set_mark(self, f: int, value: str):
         assert value in ("none", "hidden", "skip")
@@ -124,6 +128,23 @@ class Review:
         self._push(todo)
         for f in todo:
             w = (f - a) / (b - a)
+            self._set(f, [round(pa[0] + w * (pb[0] - pa[0]), 1), round(pa[1] + w * (pb[1] - pa[1]), 1)], "interp")
+        return len(todo)
+
+    def interpolate_all(self, f0: int, f1: int, max_gap: int = 60) -> int:
+        """Fill between every pair of consecutive frames you clicked in f0..f1 (straight line),
+        for gaps up to max_gap frames. For a held or slow ball: click every 10-20 frames, then
+        fill once. Frames you set yourself (click / n / h / x) are never overwritten."""
+        keys = [f for f in range(f0, f1 + 1) if self.src.get(f) == "fixed" and isinstance(self.labels.get(f), list)]
+        todo = []
+        for a, b in zip(keys, keys[1:]):
+            if 1 < b - a <= max_gap:
+                todo += [(f, a, b) for f in range(a + 1, b) if self.src.get(f) != "fixed"]
+        if not todo:
+            return 0
+        self._push([f for f, _, _ in todo])
+        for f, a, b in todo:
+            pa, pb, w = self.labels[a], self.labels[b], (f - a) / (b - a)
             self._set(f, [round(pa[0] + w * (pb[0] - pa[0]), 1), round(pa[1] + w * (pb[1] - pa[1]), 1)], "interp")
         return len(todo)
 
@@ -254,10 +275,12 @@ def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, pl
     lab = R.label(f)
     src = R.src.get(f, "proposal")
     col = {"fixed": (60, 220, 60), "interp": (150, 230, 150), "auto": (255, 220, 0), "proposal": (255, 220, 0)}[src]
-    ball = R.P.get("ball_px", 30) * scale
-    rad = max(10, int(ball * 0.9))
+    box = R.boxes.get(f) or R.proposal_box(f)                  # this frame's ball size (from nearby YOLO boxes)
+    rad = max(6, int(0.5 * max(box) * scale) + 3)             # just outside the ball
     if isinstance(lab, list):
-        cv2.circle(img, (int(lab[0] * scale), T + int(lab[1] * scale)), rad, col, 2, cv2.LINE_AA)
+        cx, cy = int(lab[0] * scale), T + int(lab[1] * scale)
+        cv2.circle(img, (cx, cy), rad, col, 1, cv2.LINE_AA)
+        cv2.circle(img, (cx, cy), 2, col, -1, cv2.LINE_AA)       # exact labelled point
     else:
         txt = {"none": "NO BALL", "hidden": "HIDDEN", "skip": "SKIP"}[lab]
         cv2.putText(img, txt, (W // 2 - 60, T + 50), cv2.FONT_HERSHEY_SIMPLEX, 1.1, col, 3, cv2.LINE_AA)
@@ -350,7 +373,7 @@ def review(video: str, test: bool = False):
     last_step = time.time()
     while True:
         seg = P["segments"][seg_i]
-        src.load(seg["f0"], seg["f1"])
+        src.load(max(0, f - 60), min(R.n - 1, f + 90), pad=0)    # a window around the current frame
         img = src.get(f)
         if img is None:
             img = np.zeros((int(P["height"] * scale), int(P["width"] * scale), 3), np.uint8)
@@ -371,10 +394,12 @@ def review(video: str, test: bool = False):
         if key == 255:
             if playing and time.time() - last_step >= 1.0 / (P["fps"] * SPEEDS[speed_i]):
                 last_step = time.time()
-                if f < seg["f1"]:
+                if f < R.n - 1:
                     f += 1
+                    seg_i = R.segment_of(f)
                 else:
                     playing = False
+                    msg, msg_t = "end of clip - Enter / y to accept, q to quit", time.time()
             continue
         k = chr(key) if key < 128 else ""
         if k == " ":
@@ -402,15 +427,20 @@ def review(video: str, test: bool = False):
         elif k == "i":
             m = R.interpolate(); save()
             msg, msg_t = (f"filled {m} frames" if m else "click the ball in two frames first"), time.time()
+        elif k == "I":
+            m = R.interpolate_all(seg["f0"], seg["f1"]); save()
+            msg, msg_t = (f"filled {m} frames between your clicks" if m else "click the ball in at least two frames first"), time.time()
         elif key in (13, 10):
             m = R.accept(seg["f0"], seg["f1"]); save()
             nxt = R.next_unreviewed_segment(seg_i)
             msg, msg_t = f"accepted segment {seg_i + 1} ({m} frames from the proposal)", time.time()
             if nxt is None:
-                msg = "all segments checked - q to quit"
-            else:
+                msg = "all segments checked - q to quit"; playing = False
+            elif nxt != seg_i + 1 or not playing:          # keep playing straight on into the next segment
                 seg_i = nxt; f = P["segments"][seg_i]["f0"]
-            playing = False
+        elif k == "y":
+            m = sum(R.accept(s["f0"], s["f1"]) for s in P["segments"]); save()
+            msg, msg_t, playing = f"accepted the whole clip ({m} frames from the proposal) - q to quit", time.time(), False
         elif k == "f":
             g = R.next_doubt(f)
             if g is None:

@@ -241,7 +241,8 @@ def run(
         if tn is not None:
             ball_px = (dets.get("profile") or {}).get("ball_px") or float(np.median(
                 [max(c[2], c[3]) for f in dets["frames"] for c in f if c[4] >= 0.4] or [30.0]))
-            got = tracknet_fill(track, tn, ball_px)
+            from core.tracknet import correct
+            got = tracknet_fill(track, correct(tn, ball_px, ckpt=tracknet), ball_px)
             print(f"[VolleyVision] TrackNet filled {got['gap']} gap frames, extended track ends by {got['end']} frames")
 
     s = track.summary()

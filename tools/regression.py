@@ -110,7 +110,9 @@ def run(linker_name="rule", verbose=True, tracknet=False):
             if tracknet and tp.exists():
                 from core.tracknet_fill import apply as tracknet_fill
                 sz = [max(c[2], c[3]) for f in d["frames"] for c in f if c[4] >= 0.4]
-                tracknet_fill(cache[stem], json.load(open(tp))["frames"], sorted(sz)[len(sz) // 2] if sz else 30.0)
+                from core.tracknet import correct
+                bpx = sorted(sz)[len(sz) // 2] if sz else 30.0
+                tracknet_fill(cache[stem], correct(json.load(open(tp))["frames"], bpx), bpx)
             elif tracknet:
                 print(f"  (no TrackNet cache for {stem}: run main.py on it first)")
         ok, detail = check(cache[stem])
