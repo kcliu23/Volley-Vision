@@ -1,6 +1,6 @@
 """Benchmark TrackNet candidates against GT, alone and combined with YOLO through the rule linker.
 
-    python -m tools.eval_tracknet --tag vb            # needs output/detections/<stem>_tracknet_vb.json
+    python -m tools.eval_tracknet --tag vb            # needs output/<clip>/cache/tracknet_vb.json
     python -m tools.eval_tracknet --tag vb --scale 0.7
 
 Reports
@@ -72,12 +72,13 @@ def main():
         stem = Path(g).name.replace("_gt.json", "")
         if a.clips and stem not in a.clips:
             continue
-        tp = Path(f"output/detections/{stem}_tracknet_{a.tag}.json")
+        from core import paths
+        tp = paths.tracknet(stem, tag=a.tag)
         if not tp.exists():
             print(f"{stem}: no TrackNet cache ({tp}), skipped")
             continue
         labels = json.load(open(g))["labels"]
-        d = json.load(open(f"output/detections/{stem}_dets.json"))
+        d = json.load(open(paths.dets(stem)))
         tn = json.load(open(tp))["frames"]
         n = len(d["frames"])
         yo = [list(f) for f in d["frames"]]

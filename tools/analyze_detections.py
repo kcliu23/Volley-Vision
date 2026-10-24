@@ -1,7 +1,7 @@
 """Look at raw YOLO candidates (output of tools.dump_detections) before any tracking.
 
-    python -m tools.analyze_detections output/detections/test42_dets.json \
-        --track output/test42_track.json --video tests/test42.MP4
+    python -m tools.analyze_detections output/test42/cache/dets.json \
+        --track output/test42/track.json --video tests/test42.MP4
 
 Reports:
   - candidates per frame, confidence and box-size distributions

@@ -7,7 +7,7 @@ fade into the background, so it finds balls YOLO misses (see core.tracknet_fill)
 
 Each heatmap blob becomes a candidate [cx, cy, w, h, peak] in full-resolution pixels.
 TrackNet gives no ball size, so w = h = the ball size YOLO saw nearby in time.
-Cached as output/detections/<stem>_tracknet.json, keyed by the checkpoint file.
+Cached as output/<stem>/cache/tracknet.json (core.paths), keyed by the checkpoint contents.
 
 The network definition below is from TrackNetV3 (model.py), MIT License,
 Copyright (c) 2024 qaz812345 — see the license text at the end of this file.
@@ -193,15 +193,16 @@ def _ckpt_key(ckpt: str) -> str:
     return f"{size}:{h.hexdigest()[:16]}:v{TRACKNET_CACHE_VERSION}"
 
 
-def candidates(video: str, dets: dict, ckpt: str = DEFAULT_CKPT, cache_dir: str = "output/detections",
+def candidates(video: str, dets: dict, ckpt: str = DEFAULT_CKPT, cache_path: str | Path | None = None,
                thr: float = 0.1, log=print, redo: bool = False) -> list[list] | None:
     """TrackNet candidates per frame for this clip (cached). None if no checkpoint."""
     if not ckpt or not Path(ckpt).exists():
         if log:
             log(f"[VolleyVision] TrackNet checkpoint not found ({ckpt}); skipping TrackNet")
         return None
+    from core import paths
     stem = Path(video).stem
-    cp = Path(cache_dir) / f"{stem}_tracknet.json"
+    cp = Path(cache_path) if cache_path else paths.tracknet(stem)
     key = _ckpt_key(ckpt)
     n = len(dets["frames"])
     if cp.exists() and not redo:

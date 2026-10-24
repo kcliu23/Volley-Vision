@@ -41,9 +41,11 @@ def run_legacy(
 
     print(f"[VolleyVision] {Path(input_path).name}  {width}x{height}  {fps:.1f}fps  {total} frames")
 
-    os.makedirs(output_dir, exist_ok=True)
+    from core import paths
     stem     = Path(input_path).stem
-    out_path = os.path.join(output_dir, f"{stem}_tracked.mp4")
+    cdir     = paths.clip_dir(stem, output_dir)
+    cdir.mkdir(parents=True, exist_ok=True)
+    out_path = str(cdir / "legacy_tracked.mp4")
 
     # Always render to a temp file first: touches are only known after the
     # whole clip is tracked, so they're overlaid in a second (cheap, no-YOLO)
@@ -88,7 +90,7 @@ def run_legacy(
 
     render_path = tmp_path
     if not raw:
-        track_path = os.path.join(output_dir, f"{stem}_track.json")
+        track_path = str(cdir / "legacy_track.json")
         with open(track_path, "w") as fh:
             json.dump({"schema": "vv-track/1", "video": str(input_path), "fps": fps,
                        "width": width, "height": height, "frames": track_rows}, fh)
@@ -97,7 +99,7 @@ def run_legacy(
         if touches:
             pts = [(r["f"], *r["det"]) for r in track_rows if "det" in r]
             found = detect_touches(*map(np.array, zip(*pts)), fps, height) if pts else []
-            touch_path = os.path.join(output_dir, f"{stem}_touches.json")
+            touch_path = str(cdir / "legacy_touches.json")
             with open(touch_path, "w") as fh:
                 json.dump({"schema": "vv-touches/1", "video": str(input_path), "fps": fps,
                            "touches": [t.to_dict() for t in found]}, fh, indent=1)
@@ -177,12 +179,14 @@ def run(
     touches: bool = True,
     ring: bool = False,
     tracknet: str | None = "models/tracknet/FT_TrackNet_best.pt",
+    render: bool = True,
 ) -> str:
     from ultralytics import YOLO
     from core.linker import link as rule_link, LinkParams
     from core.refine import link_with_zoom, video_dup_flags, content_box
     from core.render import draw_trail, draw_ball, draw_touch_rings, finish_video
     from tools.dump_detections import dump
+    from core import paths
 
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
@@ -196,16 +200,15 @@ def run(
     t0 = time.time()
 
     # 1. detection pass (cached)
-    det_dir = Path(output_dir) / "detections"
-    det_dir.mkdir(parents=True, exist_ok=True)
-    det_path = det_dir / f"{stem}_dets.json"
+    det_path = paths.ensure(paths.dets(stem, output_dir))
+    det_dir = det_path.parent
     model = YOLO(model_path)
     dets = json.load(open(det_path)) if det_path.exists() else None
     stale = (dets is None or redetect or dets.get("imgsz") != imgsz or dets.get("conf", det_conf) > det_conf
              or dets.get("model", model_path) != model_path)
     if stale:
         print(f"[VolleyVision] detection pass (YOLO on every frame, cached afterwards)...")
-        dump(input_path, model, det_dir, det_conf, imgsz)
+        dump(input_path, model, det_path, det_conf, imgsz)
         dets = json.load(open(det_path))
         dets["model"] = model_path
     else:
@@ -233,7 +236,7 @@ def run(
     if tracknet:
         from core.tracknet import candidates as tracknet_candidates
         from core.tracknet_fill import apply as tracknet_fill
-        tn = tracknet_candidates(input_path, dets, tracknet, cache_dir=str(det_dir),
+        tn = tracknet_candidates(input_path, dets, tracknet, cache_path=paths.tracknet(stem, output_dir),
                                  log=lambda m: print(m))
         if tn is not None:
             ball_px = (dets.get("profile") or {}).get("ball_px") or float(np.median(
@@ -244,7 +247,8 @@ def run(
     s = track.summary()
     print(f"[VolleyVision] ball tracked in {s['coverage']:.1%} of frames "
           f"(detected {s['detected']}, weak {s['weak']}, tracknet {s['tracknet']}, filled {s['filled']}, none {s['none']})")
-    os.makedirs(output_dir, exist_ok=True)
+    clip_dir = paths.clip_dir(stem, output_dir)
+    clip_dir.mkdir(parents=True, exist_ok=True)
 
     # 3. contacts: split the track into flights (one parabola each); each boundary is a
     #    contact, classified touch / bounce / other using where the people are
@@ -259,7 +263,7 @@ def run(
             classify(found, track, input_path, person_model, dets.setdefault("persons", {}))
             with open(det_path, "w") as fh:               # cache person boxes too
                 json.dump(dets, fh, separators=(",", ":"))
-        contact_path = os.path.join(output_dir, f"{stem}_contacts.json")
+        contact_path = str(paths.contacts(stem, output_dir))
         with open(contact_path, "w") as fh:
             json.dump({"schema": "vv-contacts/1", "video": str(input_path), "fps": fps,
                        "flights": [{"f0": fl.f0, "f1": fl.f1, "n": int(fl.n), "rms": round(fl.rms, 2),
@@ -275,14 +279,17 @@ def run(
         for c in found:
             print(f"    {c.t:6.2f}s  frame {c.frame:7.1f}  {c.kind:6s}{'  (ball hidden at contact)' if c.in_gap else ''}")
 
-    track_path = os.path.join(output_dir, f"{stem}_track.json")
+    track_path = str(paths.track(stem, output_dir))
     with open(track_path, "w") as fh:
         json.dump({"schema": "vv-track/2", "video": str(input_path), "fps": fps, "width": width,
                    "height": height, "linker": linker, "frames": track.to_rows()}, fh)
     print(f"[VolleyVision] trajectory  →  {track_path}")
 
     # 4. render
-    out_path = os.path.join(output_dir, f"{stem}_tracked.mp4")
+    if not render:
+        print(f"[VolleyVision] Done in {time.time() - t0:.1f}s (no render)")
+        return track_path
+    out_path = str(paths.video(stem, output_dir))
     tmp_path = os.path.join(tempfile.gettempdir(), f"{stem}_render.mp4")
     writer = cv2.VideoWriter(tmp_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
     cap = cv2.VideoCapture(input_path)

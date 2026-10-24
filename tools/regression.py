@@ -4,7 +4,7 @@
     python -m tools.regression --linker cost        # cost-based linker (core.cost_linker)
     python -m tools.regression --tracknet           # rule linker + TrackNet stage
 
-Uses the cached detections + zoom finds in output/detections (no YOLO), so it runs
+Uses the cached detections + zoom finds in output/<clip>/cache (no YOLO), so it runs
 in seconds. Each case came from a real bug; a linker change that re-breaks one fails here.
 """
 import argparse
@@ -17,7 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def _load(stem, zkey="zoom"):
-    d = json.load(open(f"output/detections/{stem}_dets.json"))
+    from core import paths
+    d = json.load(open(paths.dets(stem)))
     fr = [list(f) for f in d["frames"]]
     zoom = d.get(zkey) or d.get("zoom", {})            # each linker's own zoom finds, if cached
     for k, v in zoom.items():
@@ -104,7 +105,8 @@ def run(linker_name="rule", verbose=True, tracknet=False):
             a = link_args(d)
             cache[stem] = linkf(fr, a["fps"], d["width"], d["height"], dup_flags=a["dup_flags"],
                                 content=a["content"], times=a["times"])
-            tp = Path(f"output/detections/{stem}_tracknet.json")
+            from core import paths
+            tp = paths.tracknet(stem)
             if tracknet and tp.exists():
                 from core.tracknet_fill import apply as tracknet_fill
                 sz = [max(c[2], c[3]) for f in d["frames"] for c in f if c[4] >= 0.4]

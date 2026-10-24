@@ -6,8 +6,8 @@
     python -m tools.try_linker tests/test10.mov --linker cost   # cost-based linker instead of the rule-based one
 
 For each video:
-  1. YOLO detection pass (skipped if output/detections/<clip>_dets.json exists)
-  2. linker + zoom search  ->  output/<clip>_link.json
+  1. YOLO detection pass (skipped if output/<clip>/cache/dets.json exists)
+  2. linker + zoom search  ->  output/dev/<clip>_link_<linker>.json
   3. side-by-side video    ->  output/dev/<clip>_compare.mp4
      left: current tracker (same detections, conf >= 0.40)   right: linker
 Prints old vs new coverage (share of frames with a ball position).
@@ -84,22 +84,21 @@ def main():
 
     from ultralytics import YOLO
     model = YOLO(args.model)
-    det_dir = Path("output/detections")
-    det_dir.mkdir(parents=True, exist_ok=True)
+    from core import paths
     rows = []
     for v in args.videos:
         stem = Path(v).stem
-        dpath = det_dir / f"{stem}_dets.json"
+        dpath = paths.ensure(paths.dets(stem))
         if not dpath.exists():
             from tools.dump_detections import dump
             print(f"[{stem}] detection pass (first time only)...")
-            dump(v, model, det_dir, 0.05, 1280)
+            dump(v, model, dpath, 0.05, 1280)
         dets = json.load(open(dpath))
         print(f"[{stem}] linking...")
         track = link_with_zoom(dets, v, model, LinkParams(), linker=args.linker)
         json.dump(dets, open(dpath, "w"), separators=(",", ":"))       # caches zoom + repeat-frame flags
         json.dump({"schema": "vv-link/1", "video": v, "fps": dets["fps"], "width": dets["width"],
-                   "height": dets["height"], "frames": track.to_rows()}, open(f"output/{stem}_link_{args.linker}.json", "w"))
+                   "height": dets["height"], "frames": track.to_rows()}, open(paths.ensure(paths.dev() / f"{stem}_link_{args.linker}.json"), "w"))
         old_state, old_pos = run_old(dets["frames"], with_pos=True)
         o_cov = 1 - old_state.count("none") / len(old_state)
         s = track.summary()

@@ -9,7 +9,7 @@ For each labelled frame:
   ball not visible    -> OK if the track has no position (or only a filled guess),
                          FALSE if it reports a detected/weak ball somewhere
 Uses cached detections + zoom finds (no YOLO). Linkers compared: old tracker, rule, cost, and
-rule+tn (rule linker + the TrackNet stage, when output/detections/<clip>_tracknet.json exists).
+rule+tn (rule linker + the TrackNet stage, when output/<clip>/cache/tracknet.json exists).
 """
 import argparse
 import glob
@@ -27,7 +27,8 @@ def tracks_for(stem):
     from core.linker import link as rule_link
     from core.cost_linker import link as cost_link
     from tools.compare_tracking import run_old
-    d = json.load(open(f"output/detections/{stem}_dets.json"))
+    from core import paths
+    d = json.load(open(paths.dets(stem)))
     dup = d.get("dup") if len(d.get("dup") or []) == len(d["frames"]) else None
 
     def merged(zkey):
@@ -47,7 +48,7 @@ def tracks_for(stem):
     t = cost_link(merged("zoom_cost"), a["fps"], d["width"], d["height"], dup_flags=a["dup_flags"],
                   content=a["content"], times=a["times"])
     out["cost"] = (t.pos, t.state)
-    tp = Path(f"output/detections/{stem}_tracknet.json")
+    tp = paths.tracknet(stem)
     if tp.exists():
         from core.tracknet_fill import apply as tracknet_fill
         t = rule_link(merged("zoom"), a["fps"], d["width"], d["height"], dup_flags=a["dup_flags"],
@@ -74,7 +75,8 @@ def main():
     for fp in files:
         gt = json.load(open(fp))
         stem = Path(fp).name.replace("_gt.json", "")
-        if not Path(f"output/detections/{stem}_dets.json").exists():
+        from core import paths
+        if not paths.dets(stem).exists():
             print(f"{stem}: no detections cached, skipped")
             continue
         tracks, ball = tracks_for(stem)

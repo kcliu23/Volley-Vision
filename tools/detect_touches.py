@@ -1,11 +1,11 @@
 """Run touch detection on a saved trajectory, without re-running YOLO.
 
-    python -m tools.detect_touches output/test10_track.json
-    python -m tools.detect_touches output/*.clip.json          # old May exports work too
-    python -m tools.detect_touches output/test10_track.json --frames tests/test10.mov
+    python -m tools.detect_touches output/test10/track.json
+    python -m tools.detect_touches output/archive/*.clip.json  # old May exports work too
+    python -m tools.detect_touches output/test10/track.json --frames tests/test10.mov
 
 --frames writes a contact sheet per touch (frames -6..+6 cropped around the
-ball) to output/touch_sheets/ so you can eyeball whether each one is real.
+ball) to output/dev/touch_sheets/ so you can eyeball whether each one is real.
 """
 import argparse
 import json
@@ -63,12 +63,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("tracks", nargs="+")
     ap.add_argument("--frames", help="source video, to write contact sheets (single track only)")
-    ap.add_argument("--json", action="store_true", help="also write <stem>_touches.json next to the track")
+    ap.add_argument("--json", action="store_true", help="also write output/dev/<clip>_touches.json")
     args = ap.parse_args()
 
     for p in args.tracks:
         f, x, y, fps, w, h, d = load_track(p)
-        stem = Path(p).name.split(".")[0].replace("_track", "")
+        stem = Path(p).parent.name if Path(p).name == "track.json" else Path(p).name.split(".")[0].replace("_track", "")
         touches = detect_touches(f, x, y, fps, h, TouchParams())
         print(f"\n{stem}: {len(f)} detections, {len(touches)} touches")
         print("   frame      t   ang  imp   rel  gain  v_in→v_out (px/s)   gap")
@@ -76,11 +76,12 @@ def main():
             print(f"  {t.frame:5d} {t.t:6.2f} {t.angle_deg:5.0f} {t.impulse:4.2f} {t.rel_impulse:5.2f} {t.gain:5.0f}"
                   f"  {t.speed_in:6.0f}→{t.speed_out:<6.0f}   {'gap' if t.in_gap else ''}")
         if args.json:
-            out = Path(p).with_name(f"{stem}_touches.json")
+            out = Path("output/dev") / f"{stem}_touches.json"
+            out.parent.mkdir(parents=True, exist_ok=True)
             json.dump({"schema": "vv-touches/1", "fps": fps, "touches": [t.to_dict() for t in touches]},
                       open(out, "w"), indent=1)
         if args.frames:
-            contact_sheet(args.frames, touches, Path(p).parent / "touch_sheets", stem)
+            contact_sheet(args.frames, touches, Path("output/dev/touch_sheets"), stem)
 
 
 if __name__ == "__main__":

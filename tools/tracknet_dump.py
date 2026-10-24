@@ -9,7 +9,7 @@ heatmap per frame. Each heatmap blob becomes a candidate [cx, cy, w, h, conf]:
   conf    blob peak (0..1)
   w, h    TrackNet gives no box size, so we use the ball size YOLO saw nearby in time
           (median of strong detections within ±1 s), else the clip's typical ball size
-Cached as output/detections/<stem>_tracknet_<tag>.json: {"frames": [[cand, ...], ...], ...}
+Cached as output/<clip>/cache/tracknet_<tag>.json: {"frames": [[cand, ...], ...], ...}
 
 Needs the TrackNetV3 code (github.com/qaz812345/TrackNetV3, MIT) on --repo.
 """
@@ -112,7 +112,8 @@ def ball_sizes(dets, fps):
 
 def dump(video, ckpt, tag, repo, thr=0.1, log=print):
     stem = Path(video).stem
-    dpath = Path(f"output/detections/{stem}_dets.json")
+    from core import paths
+    dpath = paths.dets(stem)
     dets = json.load(open(dpath))
     model, L = load_model(ckpt, repo)
     frames = read_frames(video)
@@ -132,7 +133,7 @@ def dump(video, ckpt, tag, repo, thr=0.1, log=print):
                            for x, y, p in blobs(hms[f].astype(np.float32), thr)])
     res = {"video": str(video), "ckpt": str(ckpt), "tag": tag, "thr": thr, "seq_len": L,
            "mode": "nonoverlap", "frames": out_frames}
-    op = Path(f"output/detections/{stem}_tracknet_{tag}.json")
+    op = paths.tracknet(stem, tag=tag)
     json.dump(res, open(op, "w"))
     log(f"{stem}: {sum(len(f) > 0 for f in out_frames)}/{n} frames with a candidate -> {op}")
     return res

@@ -1,6 +1,6 @@
 """Compare the current online tracker with the offline linker on saved detections.
 
-    python -m tools.compare_tracking output/detections/*_dets.json
+    python -m tools.compare_tracking output/*/cache/dets.json
 
 The old tracker is run exactly as main.py runs it (BallTracker, conf >= 0.40 from
 YOLO), fed from the saved candidates instead of re-running YOLO.
@@ -52,7 +52,7 @@ def run_old(frames, model="models/best4.pt", conf=0.40, with_pos=False):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("dets", nargs="+")
-    ap.add_argument("--save", action="store_true", help="write output/<stem>_link.json")
+    ap.add_argument("--save", action="store_true", help="write output/dev/<clip>_link.json")
     args = ap.parse_args()
     tot = {"old": 0, "new": 0, "n": 0}
     print(f"{'clip':10s} {'frames':>6s} | {'old det':>7s} {'coast':>5s} {'cover':>6s} | "
@@ -64,14 +64,15 @@ def main():
         o_cov = 1 - old.count("none") / len(old)
         t = link(frames, d["fps"], d["width"], d["height"], LinkParams())
         s = t.summary()
-        stem = Path(p).name.replace("_dets.json", "")
+        stem = Path(p).parent.parent.name if Path(p).name == "dets.json" else Path(p).name.replace("_dets.json", "")
         print(f"{stem:10s} {len(frames):6d} | {old.count('det'):7d} {old.count('coast'):5d} {o_cov:6.1%} | "
               f"{s['detected']:5d} {s['weak']:5d} {s['filled']:5d} {s['coverage']:6.1%} | {s['coverage'] - o_cov:+5.1%}")
         tot["old"] += o_cov * len(old)
         tot["new"] += s["coverage"] * len(old)
         tot["n"] += len(old)
         if args.save:
-            out = Path("output") / f"{stem}_link.json"
+            out = Path("output") / "dev" / f"{stem}_link.json"
+            out.parent.mkdir(parents=True, exist_ok=True)
             json.dump({"schema": "vv-link/1", "fps": d["fps"], "width": d["width"], "height": d["height"],
                        "frames": t.to_rows()}, open(out, "w"))
     if tot["n"]:
