@@ -1,7 +1,7 @@
 """Benchmark TrackNet candidates against GT, alone and combined with YOLO through the rule linker.
 
-    python -m tools.eval_tracknet --tag vb            # needs output/<clip>/cache/tracknet_vb.json
-    python -m tools.eval_tracknet --tag vb --scale 0.7
+    python -m tools.dev.eval_tracknet --tag vb            # needs output/<clip>/cache/tracknet_vb.json
+    python -m tools.dev.eval_tracknet --tag vb --scale 0.7
 
 Reports
   candidate recall  share of visible-ball GT frames where a source has ANY candidate within

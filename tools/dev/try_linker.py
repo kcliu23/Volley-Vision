@@ -1,9 +1,9 @@
 """Try the two-pass tracker (detect -> link -> zoom search) on any video.
 
-    python -m tools.try_linker videos/test10.mov
-    python -m tools.try_linker videos/test2*.MP4 videos/test3*.mov
-    python -m tools.try_linker videos/test10.mov --ring          # hollow marker, ball stays visible
-    python -m tools.try_linker videos/test10.mov --linker cost   # cost-based linker instead of the rule-based one
+    python -m tools.dev.try_linker videos/test10.mov
+    python -m tools.dev.try_linker videos/test2*.MP4 videos/test3*.mov
+    python -m tools.dev.try_linker videos/test10.mov --ring          # hollow marker, ball stays visible
+    python -m tools.dev.try_linker videos/test10.mov --linker cost   # cost-based linker instead of the rule-based one
 
 For each video:
   1. YOLO detection pass (skipped if output/<clip>/cache/dets.json exists)
@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from core.linker import LinkParams  # noqa: E402
 from core.refine import link_with_zoom  # noqa: E402
 from tools.compare_tracking import run_old  # noqa: E402
-from tools.render_link import draw_trail  # noqa: E402
+from tools.dev.render_link import draw_trail  # noqa: E402
 
 
 def marker(img, p, ring, color=(0, 255, 255)):
