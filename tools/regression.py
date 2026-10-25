@@ -92,6 +92,20 @@ def _cases():
     ]
 
 
+def _hybrid(stem, d, a):
+    """Tracklets + joint linker on cached candidates (saved score calibration, offset-corrected TrackNet)."""
+    from core.tracklet_linker import link_hybrid
+    from core.calibration import Calibration
+    from core.tracknet import correct
+    from tools.calibrate import ball_px
+    from core import paths
+    ball = ball_px(d)
+    tp = paths.tracknet(stem)
+    tn = correct(json.load(open(tp))["frames"], ball) if tp.exists() else None
+    return link_hybrid(d, tn, Calibration.load(), a["fps"], d["width"], d["height"], ball,
+                       dup_flags=a["dup_flags"], content=a["content"], times=a["times"])
+
+
 def run(linker_name="rule", verbose=True, tracknet=False):
     if linker_name == "cost":
         from core.cost_linker import link as linkf
@@ -103,11 +117,17 @@ def run(linker_name="rule", verbose=True, tracknet=False):
             d, fr, dup = _load(stem, "zoom" if linker_name == "rule" else f"zoom_{linker_name}")
             from core.profile import link_args
             a = link_args(d)
-            cache[stem] = linkf(fr, a["fps"], d["width"], d["height"], dup_flags=a["dup_flags"],
-                                content=a["content"], times=a["times"])
-            from core import paths
-            tp = paths.tracknet(stem)
-            if tracknet and tp.exists():
+            if linker_name == "hybrid":                 # TrackNet is already part of the hybrid
+                cache[stem] = _hybrid(stem, d, a)
+                tp = None
+            else:
+                cache[stem] = linkf(fr, a["fps"], d["width"], d["height"], dup_flags=a["dup_flags"],
+                                    content=a["content"], times=a["times"])
+                from core import paths
+                tp = paths.tracknet(stem)
+            if tp is None:
+                pass
+            elif tracknet and tp.exists():
                 from core.tracknet_fill import apply as tracknet_fill
                 sz = [max(c[2], c[3]) for f in d["frames"] for c in f if c[4] >= 0.4]
                 from core.tracknet import correct
@@ -127,7 +147,7 @@ def run(linker_name="rule", verbose=True, tracknet=False):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--linker", choices=["rule", "cost"], default="rule")
+    ap.add_argument("--linker", choices=["rule", "cost", "hybrid"], default="rule")
     ap.add_argument("--tracknet", action="store_true", help="apply the TrackNet stage (needs <clip>_tracknet.json)")
     a = ap.parse_args()
     run(a.linker, tracknet=a.tracknet)

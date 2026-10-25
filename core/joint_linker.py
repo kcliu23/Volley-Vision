@@ -44,11 +44,13 @@ class JointParams(CostParams):
     miss: float = 1.0           # per usable frame with no point chosen
     touch: float = 3.0          # a hit (velocity restart)
     agree_bonus: float = 1.5    # YOLO/zoom and TrackNet on the same spot
+    vlim_bw_s: float = 180.0    # speed prior free up to this (a hard spike reaches ~34 m/s ≈ 160 bw/s)
     merge_bw: float = 1.0       # candidates closer than this (ball-widths) are one point (TrackNet's own
                                 #   position error is up to ~0.7 ball-widths)
     p_min: float = 0.03         # candidates less likely than this are dropped (speed)
     top_k: int = 4              # at most this many points per frame
     logit_clip: float = 6.0
+    tn_only_bias: float = 0.0   # logit shift for TrackNet-only points (no YOLO/zoom support)
     size_near_bw: float = 1.5   # TrackNet point size = YOLO boxes within this distance ...
     size_near_s: float = 0.25   # ... and this time (TrackNet itself gives no size)
 
@@ -113,7 +115,7 @@ def build_points(dets: dict, tn_frames, cal, ball: float, P: JointParams, fps: f
                                src != "tracknet", src == "tracknet", src])
         res = []
         for x, y, s, l, hy, ht, src in merged[:P.top_k]:
-            lg = l + (P.agree_bonus if (hy and ht) else 0.0)
+            lg = l + (P.agree_bonus if (hy and ht) else 0.0) - (P.tn_only_bias if (ht and not hy) else 0.0)
             p = 1 / (1 + math.exp(-lg))
             state = (DETECTED if p >= 0.5 else WEAK) if hy else "tracknet"
             res.append((x, y, s, lg, state, p))
@@ -123,7 +125,9 @@ def build_points(dets: dict, tn_frames, cal, ball: float, P: JointParams, fps: f
 
 def link(dets: dict, tn_frames, cal, fps: float, width: int, height: int, ball: float,
          params: JointParams | None = None, dup_flags=None, content=None, times=None,
-         link_params: LinkParams | None = None):
+         link_params: LinkParams | None = None, exclude: dict | None = None, pts_by_frame=None):
+    """exclude: {frame: [(x, y), ...]} points to drop (e.g. rival objects found by the
+    tracklet step); pts_by_frame: precomputed build_points output (saves recomputing)."""
     C = params or JointParams()
     LP = link_params or LinkParams()
     n = len(dets["frames"])
@@ -136,7 +140,13 @@ def link(dets: dict, tn_frames, cal, fps: float, width: int, height: int, ball: 
     def u_between(fa, fb):
         return max(0, int(upre[fb] - upre[fa + 1]))
 
-    pts_by_frame = build_points(dets, tn_frames, cal, ball, C, fps)
+    if pts_by_frame is None:
+        pts_by_frame = build_points(dets, tn_frames, cal, ball, C, fps)
+    if exclude:
+        r = 0.5 * ball
+        pts_by_frame = [[q for q in pts_by_frame[f] if not any(math.hypot(q[0] - x, q[1] - y) <= r
+                                                                for x, y in exclude.get(f, ()))]
+                        for f in range(len(pts_by_frame))]
     pts = [(x, y, s, lg, st, p, f) for f in range(n) if not dup[f] for (x, y, s, lg, st, p) in pts_by_frame[f]]
     if not pts:
         return finalize({}, n, fps, width, height, LP, dup, content, [])
@@ -144,6 +154,10 @@ def link(dets: dict, tn_frames, cal, fps: float, width: int, height: int, ball: 
     KNOWN = np.array([p[2] is not None for p in pts])
     S = np.array([p[2] if p[2] is not None else ball for p in pts], float)   # unknown size: clip ball for speed units
     LG = np.array([p[3] for p in pts]); F = np.array([p[6] for p in pts])
+    # real time in nominal frames (uneven phone timing): motion, speed and size use TAU,
+    # counting frames (miss costs, search window) uses F
+    TAUF = (np.asarray(times, float) * fps) if times is not None and len(times) == n else np.arange(n, dtype=float)
+    TA = TAUF[F]
     det = -C.w_det * LG
     med = ball
     gy = _gravity({f: [(x, y, s, 1 / (1 + math.exp(-lg)), 1.0) for (x, y, s, lg, st, p) in pts_by_frame[f] if st == DETECTED]
@@ -165,7 +179,7 @@ def link(dets: dict, tn_frames, cal, fps: float, width: int, height: int, ball: 
         best, arg = C.start + C.miss * int(upre[fc]), ("start",)
         earlier = np.nonzero(F < fc - G)[0]
         if len(earlier):
-            gaps = fc - F[earlier]
+            gaps = np.maximum(TA[c] - TA[earlier], 1e-3)
             dist = np.hypot(X[c] - X[earlier], Y[c] - Y[earlier])
             sz = np.maximum(S[earlier], S[c])
             v = dist / np.maximum(gaps, 1) / sz
@@ -188,7 +202,7 @@ def link(dets: dict, tn_frames, cal, fps: float, width: int, height: int, ball: 
                 continue
             if fb < lo:
                 break
-            gap = fc - fb
+            gap = max(float(TA[c] - TA[b]), 1e-3)
             dist = float(np.hypot(X[c] - X[b], Y[c] - Y[b]))
             size = max(S[b], S[c])
             sp = speed_cost(dist, gap, size)
@@ -205,7 +219,7 @@ def link(dets: dict, tn_frames, cal, fps: float, width: int, height: int, ball: 
                 if a == -1:
                     cost = prev + sp
                 else:
-                    dt = fb - int(F[a])
+                    dt = max(float(TA[b] - TA[a]), 1e-3)
                     vx = (X[b] - X[a]) / dt
                     vy = (Y[b] - Y[a]) / dt + 0.5 * gy * dt
                     px = X[b] + vx * gap
@@ -249,4 +263,7 @@ def link(dets: dict, tn_frames, cal, fps: float, width: int, height: int, ball: 
         owner[int(f)] = (float(x), float(y), float(s if s is not None else ball), float(p), state)
     track = finalize(owner, n, fps, width, height, LP, dup, content, [])
     track.touch_frames = sorted(set(touches))
+    if getattr(C, "_debug", False):
+        track._debug = {"D": D, "back": back, "F": F, "X": X, "Y": Y, "LG": LG, "det": det, "bend": bend,
+                        "bend_state": bend_state, "chosen": chosen[::-1]}
     return track

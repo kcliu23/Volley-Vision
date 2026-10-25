@@ -119,7 +119,7 @@ def export_yolo(clips, out: Path, every: int, neg_every: int, skip_existing: set
     return stats
 
 
-def export_tracknet(clips, out: Path, base: Path | None, log=print) -> dict:
+def export_tracknet(clips, out: Path, base: Path | None, log=print, size=(512, 288)) -> dict:
     from tools.build_tracknet_data import build_clip
     stats = {"frames": 0, "rallies": 0, "base_matches": 0}
     count = {"train": 0, "val": 0}
@@ -149,7 +149,7 @@ def export_tracknet(clips, out: Path, base: Path | None, log=print) -> dict:
             continue
         split = "val" if c["split"] == "valid" else "train"
         count[split] += 1
-        kept = build_clip(c["video"], runs, str(out / split / f"match{count[split]}"))
+        kept = build_clip(c["video"], runs, str(out / split / f"match{count[split]}"), size)
         stats["frames"] += kept
         stats["rallies"] += len(runs)
         log(f"  tracknet {c['stem']:10s} -> {split}/match{count[split]}: {len(runs)} runs, {kept} frames")
@@ -168,6 +168,11 @@ def main():
                     help="existing YOLO set: its frames are skipped, and data_with_combined.yaml includes it")
     ap.add_argument("--tracknet-base", default=None, help="existing TrackNet set to start from (old + new)")
     ap.add_argument("--only", choices=["yolo", "tracknet"], default=None)
+    ap.add_argument("--archive", action="store_true",
+                    help="also write yolo_<name>.zip and tracknet_<name>.tar next to the sets, ready to upload to Drive")
+    ap.add_argument("--tracknet-size", default="512x288",
+                    help="stored frame size WxH for the TrackNet set (e.g. 640x288 = your clips' shape, less squeezed); "
+                         "frames from --tracknet-base keep their size and are resized when loaded")
     a = ap.parse_args()
 
     gt = set(paths.gt_stems())
@@ -213,15 +218,22 @@ def main():
         json.dump({**manifest, "stats": st}, open(out / "manifest.json", "w"), indent=1)
         print(f"YOLO     -> {out}: {st['images']} images ({st['ball']} ball, {st['no_ball']} no-ball, "
               f"{st['hand_fixed']} hand-fixed; {st['skipped_existing']} already in {comb.name})")
+        if a.archive:
+            z = shutil.make_archive(str(out), "zip", root_dir=out.parent, base_dir=out.name)
+            print(f"         -> {z}")
 
     if a.only in (None, "tracknet"):
         out = paths.TRACKNET_DATASETS / f"tracknet_{a.name}"
         if out.exists():
             sys.exit(f"{out} exists: pick a new --name (datasets are versioned, never overwritten)")
-        st = export_tracknet(clips, out, Path(a.tracknet_base) if a.tracknet_base else None)
+        tw, th = (int(v) for v in a.tracknet_size.lower().split("x"))
+        st = export_tracknet(clips, out, Path(a.tracknet_base) if a.tracknet_base else None, size=(tw, th))
         json.dump({**manifest, "base": a.tracknet_base, "stats": st}, open(out / "manifest.json", "w"), indent=1)
         print(f"TrackNet -> {out}: {st['frames']} new frames in {st['rallies']} runs"
               + (f", plus {st['base_matches']} clips from {a.tracknet_base}" if a.tracknet_base else ""))
+        if a.archive:
+            t = shutil.make_archive(str(out), "tar", root_dir=out.parent, base_dir=out.name)
+            print(f"         -> {t}")
 
 
 if __name__ == "__main__":

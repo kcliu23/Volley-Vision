@@ -2,7 +2,7 @@
 
     python -m tools.autolabel tests/test40.mov tests/test41.mov
     python -m tools.autolabel --dir ~/Videos/games            # every video in a folder
-    python -m tools.autolabel tests/test40.mov --no-tracknet
+    python -m tools.autolabel tests/test40.mov --tracknet     # also use TrackNet (off by default)
 
 Runs the full pipeline (YOLO, linker + zoom, TrackNet, flights; no video render), then
 writes data/proposals/<clip>.json:
@@ -71,7 +71,7 @@ def _box_sizes(track_rows, dets, ball_px):
     return out
 
 
-def propose(video: str, out_dir: str = "data/proposals", tracknet: str | None = "models/tracknet/FT_TrackNet_best.pt",
+def propose(video: str, out_dir: str = "data/proposals", tracknet: str | None = None,
             output_dir: str = "output", model_path: str = "models/best4.pt") -> Path:
     from core.video_pipeline import run
     from core import paths
@@ -183,8 +183,11 @@ def main():
     ap.add_argument("--dir", help="propose labels for every video in this folder")
     ap.add_argument("--out", default="data/proposals")
     ap.add_argument("--model", default="models/best4.pt")
-    ap.add_argument("--tracknet", default="models/tracknet/FT_TrackNet_best.pt")
-    ap.add_argument("--no-tracknet", action="store_true")
+    # TrackNet is off by default for labeling: its points run ~0.35 ball-widths off (right
+    # direction, wrong spot), which costs more fixing than the gaps it fills. Turn it on with
+    # --tracknet (bare flag = the current checkpoint) once a retrained model is more precise.
+    ap.add_argument("--tracknet", nargs="?", const="models/tracknet/FT_TrackNet_best.pt", default=None)
+    ap.add_argument("--no-tracknet", action="store_true", help="(default; kept for old commands)")
     ap.add_argument("--include-gt", action="store_true", help="also process clips that have ground truth (test set)")
     ap.add_argument("--redo", action="store_true", help="re-propose clips that already have a proposals file")
     a = ap.parse_args()

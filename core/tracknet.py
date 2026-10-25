@@ -22,7 +22,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-H, W = 288, 512
+H, W = 288, 512          # default input size; a checkpoint trained at another size says so (param_dict["input_hw"])
 TRACKNET_CACHE_VERSION = 1
 DEFAULT_CKPT = "models/tracknet/FT_TrackNet_best.pt"
 
@@ -106,13 +106,15 @@ def load_model(ckpt_path: str):
     m = _build((L + 1) * 3, L)
     m.load_state_dict(ck["model"])
     dev = _device()
+    m.input_hw = tuple(pd.get("input_hw") or (H, W))     # (height, width) the model was trained at
     return m.eval().to(dev), L, dev
 
 
 # ── inference ────────────────────────────────────────────────────────────────
 
-def read_frames(path: str, n: int | None = None) -> np.ndarray:
-    """All frames as RGB 512x288 (PIL bicubic, as TrackNetV3 resizes)."""
+def read_frames(path: str, n: int | None = None, hw: tuple = (H, W)) -> np.ndarray:
+    """All frames as RGB at the model's input size (PIL bicubic, as TrackNetV3 resizes)."""
+    H, W = hw
     from PIL import Image
     cap = cv2.VideoCapture(path)
     out = []
@@ -129,6 +131,7 @@ def heatmaps(model, L: int, dev, frames: np.ndarray, batch: int = 4, log=None) -
     """(N, H, W) heatmaps, non-overlapping 8-frame windows (each frame predicted once)."""
     import torch
     n = len(frames)
+    H, W = frames.shape[1:3]
     idx = np.linspace(0, n - 1, min(n, 1800)).astype(int)
     med = np.moveaxis(np.median(frames[idx], 0).astype(np.uint8), -1, 0).astype(np.float32) / 255.0
     starts = list(range(0, n, L))
@@ -248,9 +251,10 @@ def candidates(video: str, dets: dict, ckpt: str = DEFAULT_CKPT, cache_path: str
     model, L, dev = load_model(ckpt)
     if log:
         log(f"[VolleyVision] TrackNet on {dev} ({Path(ckpt).name})")
-    frames = read_frames(video, n)
+    hw = getattr(model, "input_hw", (H, W))
+    frames = read_frames(video, n, hw)
     hms = heatmaps(model, L, dev, frames, log=log)
-    sx, sy = dets["width"] / W, dets["height"] / H
+    sx, sy = dets["width"] / hw[1], dets["height"] / hw[0]
     sizes = ball_sizes(dets, dets.get("fps") or 60)
     out = []
     for f in range(n):

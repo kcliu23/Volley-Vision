@@ -50,10 +50,18 @@ def _score(pos, state, labels, ball):
 
 
 def _cal_without(hold: str):
+    """Score calibration fit on every labelled clip except `hold` (test or checked)."""
     from core.calibration import fit
     from tools.calibrate import collect, train_clips
-    clips = [(s, "gt") for s in paths.gt_stems() if s != hold and paths.dets(s).exists()] + train_clips()
+    clips = [(s, "gt") for s in paths.gt_stems() if s != hold and paths.dets(s).exists()] + \
+            [(s, k) for s, k in train_clips() if s != hold]
     return fit(collect(clips))
+
+
+def _labels(stem: str):
+    if paths.gt(stem).exists():
+        return json.load(open(paths.gt(stem)))["labels"]
+    return json.load(open(paths.verified(stem)))["labels"]
 
 
 def _run_clip(args):
@@ -64,7 +72,7 @@ def _run_clip(args):
     from core.profile import link_args
     from tools.calibrate import ball_px
     d = json.load(open(paths.dets(stem)))
-    labels = json.load(open(paths.gt(stem)))["labels"]
+    labels = _labels(stem)
     ball = ball_px(d)
     from core.tracknet import correct
     tn = correct(json.load(open(paths.tracknet(stem)))["frames"], ball) if paths.tracknet(stem).exists() else None
@@ -79,9 +87,17 @@ def _run_clip(args):
         tracknet_fill(t, tn, ball)
     out["rule+tn"] = _score(t.pos, t.state, labels, ball)
     for name, kw in params_list:
-        P = JointParams(**kw)
-        t = link(d, tn, cal, a["fps"], d["width"], d["height"], ball, P,
-                 dup_flags=a["dup_flags"], content=a["content"], times=a["times"])
+        if name.startswith("hybrid"):
+            from core.tracklet_linker import link_hybrid, AssocParams
+            t = link_hybrid(d, tn, cal, a["fps"], d["width"], d["height"], ball, AssocParams(**kw),
+                            dup_flags=a["dup_flags"], content=a["content"], times=a["times"])
+        elif name.startswith("tracklet"):
+            from core.tracklet_linker import link as tlink, AssocParams
+            t = tlink(d, tn, cal, a["fps"], d["width"], d["height"], ball, AssocParams(**kw),
+                      dup_flags=a["dup_flags"], content=a["content"], times=a["times"])
+        else:
+            t = link(d, tn, cal, a["fps"], d["width"], d["height"], ball, JointParams(**kw),
+                     dup_flags=a["dup_flags"], content=a["content"], times=a["times"])
         out[name] = _score(t.pos, t.state, labels, ball)
     return stem, out
 
@@ -99,19 +115,25 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--grid", action="store_true")
     ap.add_argument("--workers", type=int, default=2)
+    ap.add_argument("--checked", action="store_true", help="score on your checked clips (data/verified, every frame) instead of the test clips")
     a = ap.parse_args()
-    configs = [("joint", {})]
+    configs = [("joint", {}), ("hybrid", {})]
     if a.grid:
         configs = [(f"joint w{w} m{m} t{t} g{g}", {"w_det": w, "miss": m, "touch": t, "agree_bonus": g})
                    for w, m, t, g in itertools.product((0.7, 1.0, 1.5), (0.0, 0.5, 1.0), (3.0, 6.0), (0.5, 1.5))]
-    clips = [s for s in paths.gt_stems() if paths.dets(s).exists()]
+    if a.checked:
+        from tools.calibrate import train_clips
+        clips = [s for s, _ in train_clips()]
+    else:
+        clips = [s for s in paths.gt_stems() if paths.dets(s).exists()]
     with Pool(a.workers) as pool:
         results = dict(pool.map(_run_clip, [(s, configs) for s in clips]))
     names = ["rule+tn"] + [n for n, _ in configs]
     rows = summarize(results, names)
     base = rows[0]
     rows = [base] + sorted(rows[1:], key=lambda r: -(r[1] - 0.5 * max(0, r[4] - base[4])))
-    print(f"{'':28s} on-ball  wrong  missed  false-when-hidden   (leave-one-clip-out, {len(clips)} test clips)")
+    print(f"{'':28s} on-ball  wrong  missed  false-when-hidden   (leave-one-clip-out, {len(clips)} "
+          f"{'checked clips, every frame' if a.checked else 'test clips'})")
     for n, h, w, m, fa in rows[:12]:
         print(f"{n:28s} {h:7.1%} {w:6.1%} {m:7.1%} {fa:10.1%}")
     if len(configs) == 1:
