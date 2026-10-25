@@ -59,7 +59,9 @@ def rallies(lab, max_gap, min_len):
     return [r for r in runs if len(r) >= min_len]
 
 
-def build_clip(video, runs, out_match):
+def build_clip(video, runs, out_match, size=None):
+    """size: (width, height) of the stored frames (default 512x288, TrackNet's standard input)."""
+    W, H = size or (globals()["W"], globals()["H"])
     need = {f for r in runs for f, _ in r}
     cap = cv2.VideoCapture(video)
     n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))

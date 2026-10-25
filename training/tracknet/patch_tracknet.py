@@ -3,6 +3,8 @@
     python patch_tracknet.py /path/to/TrackNetV3 /path/to/tracknet_data
 
   - IMG_FORMAT png -> jpg (our frames are JPEG)
+  - input size from env TN_HEIGHT / TN_WIDTH (default 288 x 512), recorded in the checkpoint
+    as param_dict["input_hw"] so core.tracknet runs the model at the size it was trained at
   - dataset root -> the given data dir
   - .cuda() -> .to(DEVICE) so the same code runs on GPU (Colab) or CPU (smoke test)
   - train.py: start from the checkpoint in env INIT_CKPT (fine-tuning) unless resuming
@@ -21,6 +23,12 @@ repo, data = Path(sys.argv[1]), Path(sys.argv[2]).resolve()
 g = repo / "utils/general.py"
 s = g.read_text()
 s = s.replace("IMG_FORMAT = 'png'", "IMG_FORMAT = 'jpg'")
+# input size from env TN_HEIGHT / TN_WIDTH (multiples of 8; default 288 x 512)
+import os
+h, w = int(os.environ.get("TN_HEIGHT", 288)), int(os.environ.get("TN_WIDTH", 512))
+assert h % 8 == 0 and w % 8 == 0, "TN_HEIGHT / TN_WIDTH must be multiples of 8"
+s = re.sub(r"^HEIGHT = \d+", f"HEIGHT = {h}", s, count=1, flags=re.M)
+s = re.sub(r"^WIDTH = \d+", f"WIDTH = {w}", s, count=1, flags=re.M)
 g.write_text(s)
 
 FAST = '''
@@ -103,6 +111,8 @@ inject = ("    if os.environ.get('INIT_CKPT') and not args.resume_training:\n"
           "        _ck = torch.load(os.environ['INIT_CKPT'], map_location=DEVICE, weights_only=False)\n"
           "        model.load_state_dict(_ck['model'])\n"
           "        print(f\"Fine-tuning from {os.environ['INIT_CKPT']}\")\n")
+if "input_hw" not in s:                               # record the input size in the checkpoint
+    s = s.replace("    param_dict = vars(args)\n", "    param_dict = vars(args)\n    param_dict['input_hw'] = [HEIGHT, WIDTH]\n", 1)
 if "INIT_CKPT" not in s:
     assert anchor in s, "train.py layout changed; patch by hand"
     s = s.replace(anchor, inject + anchor)
