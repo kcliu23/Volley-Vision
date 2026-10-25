@@ -44,7 +44,7 @@ Outputs, one folder per clip (`output/<clip>/`; all paths are defined in `core/p
 - `cache/tracknet.json` — TrackNet candidates (the caches are rebuilt automatically if deleted)
 
 `output/dev/` holds comparison videos and experiments; `output/archive/` holds files from older
-versions. `python -m tools.organize_output --apply` moves an old flat `output/` into this layout.
+versions. `python -m tools.archive.organize_output --apply` moves an old flat `output/` into this layout.
 
 ## Any video
 
@@ -87,7 +87,7 @@ python -m tools.export_training --name v2 \
   in the same Roboflow layout as `volleyball_combined` (`<clip>_<frame>.jpg`, class 0, empty
   label = no ball; frames already in `volleyball_combined` are skipped; `data_with_combined.yaml`
   trains on old + new) and `training/tracknet/datasets/tracknet_<name>/` (every frame; hidden =
-  not visible). For Colab, tar the TrackNet folder and use it in place of `tracknet_data.tar`.
+  not visible). For Colab, tar the TrackNet folder and use it in place of `training/tracknet/datasets/tracknet_v1.tar`.
 - `python -m tools.tracknet_offset` (after reviewing clips): **temporary workaround for a
   model defect**. The current fine-tuned TrackNet places the ball ~0.35 ball-widths too high on
   new clips; this measures the offset on your checked clips and saves it next to the
@@ -105,13 +105,13 @@ python -m tools.export_training --name v2 \
 ```bash
 python -m tools.regression [--linker cost] [--tracknet]   # 11 known-tricky moments, seconds, no YOLO
 python -m tools.eval_gt                          # score old / rule / cost / rule+TrackNet on data/gt labels
-python -m tools.eval_tracknet --tag ft           # TrackNet alone / pooled with YOLO, per clip
+python -m tools.dev.eval_tracknet --tag ft           # TrackNet alone / pooled with YOLO, per clip
 python -m tools.label_gt --suggested             # label ground truth (click the ball every 5th frame)
-python -m tools.try_linker videos/x.mov --ring    # side-by-side video: old tracker vs linker
+python -m tools.dev.try_linker videos/x.mov --ring    # side-by-side video: old tracker vs linker
 python -m tools.dump_detections videos/*.mov      # pre-compute the YOLO pass for many clips
-python -m tools.analyze_detections output/x/cache/dets.json --track output/x/track.json --video videos/x.mov
-python -m tools.detect_touches output/x/track.json --frames videos/x.mov   # touch contact sheets
-python -m tools.tracknet_dump --gt --ckpt <ckpt> --tag <tag>               # TrackNet candidates for benchmarking
+python -m tools.dev.analyze_detections output/x/cache/dets.json --track output/x/track.json --video videos/x.mov
+python -m tools.dev.detect_touches output/x/track.json --frames videos/x.mov   # touch contact sheets
+python -m tools.dev.tracknet_dump --gt --ckpt <ckpt> --tag <tag>               # TrackNet candidates for benchmarking
 ```
 
 ## Layout
@@ -130,16 +130,32 @@ core/
   refine.py             zoom search, repeated-frame detection, picture-area detection
   flights.py            split the track into flights (parabola each, dynamic programming); contacts between them
   contacts.py           classify contacts touch / bounce / other using person boxes (YOLOv8n, contact frames only)
-  touch_detector.py     older touch detector (used by --legacy)
+  touch_detector.py     older touch detector (used by --legacy and tools/dev/detect_touches)
   render.py             trail / marker / touch rings, ffmpeg encode
   ball_tracker.py       legacy single-pass YOLO + Kalman tracker
-tools/                  autolabel / review / export_training, evaluation and dev tools above
-data/gt/                test labels, every 5th frame (committed; never trained on)
+  other_balls.py        other volleyballs in the picture (suggestions for the review tool)
+  calibration.py        detection score -> probability, per source
+  joint_linker.py, tracklets.py, tracklet_linker.py   joint / tracklet / hybrid linkers (experimental)
+  tn_zoom.py            TrackNet finds, YOLO pinpoints (experimental)
+tools/                  the workflow: autolabel, review, export_training, label_gt, build_tracknet_data,
+                        scoreboard, regression, eval_gt, eval_joint, calibrate, tracknet_offset,
+                        dump_detections, compare_tracking
+tools/dev/              debugging / visualisation (try_linker, render_link, analyze_detections, ...)
+tools/archive/          one-off scripts kept for reference (organize_output, old Roboflow upload)
+videos/                 your clip pool: everything labelled for training (not in git)
+holdout/                test clips: never trained on, only scored (not in git)
+data/gt/                old dev labels, every 5th frame (10 clips)
 data/proposals/         autolabel proposals            data/verified/   your checked labels (commit these)
 models/best4.pt         trained ball weights; models/yolov8n.pt: COCO person detector
-models/tracknet/        TrackNet checkpoint (FT_TrackNet_best.pt: fine-tuned on 17 of your clips)
-training/               YOLO notebook + datasets; training/tracknet/: Colab fine-tune notebook,
-                        patch script, datasets (tracknet_v1, ...)
+models/score_calibration.json   detection score calibration (tools.calibrate)
+models/tracknet/        FT_TrackNet_best.pt (fine-tuned) + .offset.json; pretrained_TrackNet_best.pt
+models/archive/         downloads kept for reference (not in git)
+training/yolo/          YOLO fine-tuning notebook (Colab)
+training/tracknet/      TrackNet notebooks, patch script; datasets/ (tracknet_v1.tar, exports; not in git)
+training/datasets/      volleyball_combined (old training set), yolo_<name> exports;
+                        sources/ = the Roboflow sets merged into volleyball_combined (not in git)
+training/legacy/        the old auto-label -> Roboflow -> merge scripts and training notebook
+output/<clip>/          pipeline outputs; output/dev/ experiments; output/archive/ old files
 ```
 
 Earlier work on court calibration, 3D height estimation and a web dashboard lives on the `wip/court-calibration` branch.

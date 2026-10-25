@@ -31,3 +31,9 @@ venv/
 .vscode/
 .idea/
 *.swp
+# big data / archives (never commit)
+training/tracknet/datasets/
+models/archive/
+*.tar
+*.zip
+.DS_Store

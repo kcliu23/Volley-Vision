@@ -1,7 +1,7 @@
 """Move output/ from the old flat layout into per-clip folders (see core/paths.py).
 
-    python -m tools.organize_output            # show what would move (nothing changes)
-    python -m tools.organize_output --apply    # do it
+    python -m tools.archive.organize_output            # show what would move (nothing changes)
+    python -m tools.archive.organize_output --apply    # do it
 
     output/detections/<clip>_dets.json         -> output/<clip>/cache/dets.json
     output/detections/<clip>_tracknet*.json    -> output/<clip>/cache/tracknet*.json

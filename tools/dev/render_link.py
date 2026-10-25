@@ -1,6 +1,6 @@
 """Render a video from a link result (same trail style as BallTracker.draw).
 
-    python -m tools.render_link output/dev/test42_link_rule.json videos/test42.MP4 out.mp4 [--side-by-side old_tracked.mp4]
+    python -m tools.dev.render_link output/dev/test42_link_rule.json videos/test42.MP4 out.mp4 [--side-by-side old_tracked.mp4]
 Filled (interpolated) frames are drawn the same as detected ones; pass --mark-filled
 to draw them as a hollow marker instead, for debugging.
 """

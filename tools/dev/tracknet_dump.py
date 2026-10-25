@@ -1,7 +1,7 @@
 """Run a TrackNetV3 checkpoint on a clip and cache ball candidates in YOLO's format.
 
-    python -m tools.tracknet_dump videos/test42.MP4 --ckpt models/tracknet/TrackNet_best.pt --tag bad
-    python -m tools.tracknet_dump --gt --ckpt ... --tag vb      # every clip with GT labels
+    python -m tools.dev.tracknet_dump videos/test42.MP4 --ckpt models/tracknet/TrackNet_best.pt --tag bad
+    python -m tools.dev.tracknet_dump --gt --ckpt ... --tag vb      # every clip with GT labels
 
 TrackNet sees 8 frames (+ the clip's median background image) at 512x288 and outputs one
 heatmap per frame. Each heatmap blob becomes a candidate [cx, cy, w, h, conf]:

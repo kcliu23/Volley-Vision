@@ -1,7 +1,7 @@
 """
 Run from the Volley-Vision folder:
-    python bbox_stats.py tests/test.MP4
-    python bbox_stats.py tests/test2.MP4   # run on a few for better coverage
+    python -m tools.dev.bbox_stats videos/test.MP4
+    python -m tools.dev.bbox_stats videos/test2.MP4   # run on a few for better coverage
 
 Prints bbox size distribution across all detections so you can pick
 good _MIN_BALL_PX / _MAX_BALL_PX values for the size filter.
