@@ -5,9 +5,13 @@
 
 Writes, in the same formats as the existing data:
 
-  training/datasets/yolo_<name>/          Roboflow/YOLO layout, like volleyball_combined
-      train|valid/images/<clip>_<frame>.jpg   full-resolution frames
-      train|valid/labels/<clip>_<frame>.txt   "0 cx cy w h" (normalized); empty file = no ball
+  training/datasets/yolo_<name>/          same layout AND processing as volleyball_combined:
+      train|valid|test/images/<clip>_<frame>_jpg.rf.vv<k>.jpg   resized to fit within 1280
+      train|valid|test/labels/...txt          "0 cx cy w h" (normalized); empty file = no ball
+      train: 3 augmented versions per frame (crop 0-15%, rotate +-6 deg, brightness +-25%),
+      exactly what Roboflow did to the old data; valid and test: 1 plain copy
+      every volleyball in the picture is labelled, like the old data: the game ball (your
+      checked label) + the other balls you confirmed in the review tool (shift+click)
       data.yaml                               this set alone
       data_with_combined.yaml                 this set + volleyball_combined (old + new, for fine-tuning)
   training/tracknet/datasets/tracknet_<name>/   TrackNetV3 layout (train|val/match<k>/...), every frame,
@@ -15,15 +19,16 @@ Writes, in the same formats as the existing data:
   manifest.json in each: which clips, how many frames, from which verified files
 
 What goes where:
-  - only clips with role "train" (review --test / "t" marks a clip as a test clip) and no
-    data/gt labels; test clips never enter training
+  - splits are by WHOLE CLIP, never frame by frame (neighbouring frames are near-duplicates,
+    so a frame split leaks): train = clips in videos/; valid = --valid clips, else every 5th
+    training clip; test = your holdout/ clips (checked, role "test"), never trained on
+  - data/gt clips (old dev set) are left out of every split
   - YOLO: every --yolo-every'th visible frame, plus every frame you fixed by hand (the hard
     ones), plus every --neg-every'th "no ball" frame as an empty label; "hidden" and "skip"
     frames are left out (ambiguous for a single image). Frames already in
     volleyball_combined are skipped.
   - TrackNet: every checked frame, in runs of >= 8 consecutive frames; "none" and "hidden"
     are Visibility 0 (no ball visible), "skip" breaks a run
-  - validation split by clip: --valid clips, else every 5th clip
 """
 from __future__ import annotations
 
@@ -70,14 +75,93 @@ def write_yaml(path: Path, train, val):
     path.write_text(f"train: {fmt(train)}\nval: {fmt(val)}\n\nnc: 1\nnames: ['volleyball']\n")
 
 
-def export_yolo(clips, out: Path, every: int, neg_every: int, skip_existing: set, log=print) -> dict:
-    stats = {"images": 0, "ball": 0, "no_ball": 0, "hand_fixed": 0, "skipped_existing": 0}
+# ── same processing as the Roboflow versions behind volleyball_combined (README.roboflow.txt) ──
+#   pre-processing: resize to fit within 1280x1280
+#   augmentation (train only): 3 versions of each image, each with a random crop of 0-15%,
+#   rotation of -6..+6 degrees and brightness -25..+25%; valid / test: 1 plain copy
+FIT = 1280
+AUG_VERSIONS = 3
+AUG_CROP = 0.15
+AUG_ROT_DEG = 6.0
+AUG_BRIGHT = 0.25
+
+
+def fit_within(img, size: int = FIT):
+    h, w = img.shape[:2]
+    s = min(size / w, size / h, 1.0)
+    # rounded down, like Roboflow (2622x1206 -> 1280x588, 2532x1170 -> 1280x591)
+    return img if s == 1.0 else cv2.resize(img, (int(w * s), int(h * s)), interpolation=cv2.INTER_AREA)
+
+
+def augment(img, balls, rng):
+    """One Roboflow-style version: crop 0-15% (then back to the same size), rotate +-6 deg, brightness +-25%.
+    balls: [(cx, cy, w, h), ...] in pixels. Returns (image, the balls still (mostly) in the picture).
+    The box keeps its size (a ball is round; rotating it doesn't make it bigger), scaled by the crop."""
+    import numpy as np
+    h, w = img.shape[:2]
+    p = rng.uniform(0, AUG_CROP)
+    cw, ch = w * (1 - p), h * (1 - p)
+    x0, y0 = rng.uniform(0, w - cw), rng.uniform(0, h - ch)
+    sx, sy = w / cw, h / ch
+    ang = rng.uniform(-AUG_ROT_DEG, AUG_ROT_DEG)
+    # crop+resize, then rotate about the centre: one affine warp
+    A = np.array([[sx, 0, -x0 * sx], [0, sy, -y0 * sy], [0, 0, 1]])
+    R = np.vstack([cv2.getRotationMatrix2D((w / 2, h / 2), ang, 1.0), [0, 0, 1]])
+    M = (R @ A)[:2]
+    out = cv2.warpAffine(img, M, (w, h), flags=cv2.INTER_LINEAR, borderMode=cv2.BORDER_CONSTANT, borderValue=0)
+    b = 1 + rng.uniform(-AUG_BRIGHT, AUG_BRIGHT)
+    out = np.clip(out.astype(np.float32) * b, 0, 255).astype(np.uint8)
+    kept = []
+    for cx, cy, bw, bh in balls:
+        nx, ny = M @ [cx, cy, 1]
+        nw, nh = bw * sx, bh * sy
+        # clip the box to the picture; keep it while at least half the ball is still visible
+        x1, y1, x2, y2 = max(nx - nw / 2, 0), max(ny - nh / 2, 0), min(nx + nw / 2, w), min(ny + nh / 2, h)
+        if x2 <= x1 or y2 <= y1 or (x2 - x1) * (y2 - y1) < 0.5 * nw * nh:
+            continue                             # (mostly) cropped or rotated out of the picture
+        kept.append(((x1 + x2) / 2, (y1 + y2) / 2, x2 - x1, y2 - y1))
+    return out, kept
+
+
+def write_label(path: Path, balls, w: int, h: int):
+    with open(path, "w") as fh:                  # empty file = no ball (same as Roboflow)
+        for cx, cy, bw, bh in balls:
+            fh.write(f"0 {cx / w:.6f} {cy / h:.6f} {bw / w:.6f} {bh / h:.6f}\n")
+
+
+def export_yolo(clips, out: Path, every: int, neg_every: int, skip_existing: set, log=print,
+                versions: int = AUG_VERSIONS, seed: int = 0) -> dict:
+    """Images named like Roboflow's (<clip>_<frame>_jpg.rf.<tag>.jpg) so every tool that reads
+    volleyball_combined reads these the same way."""
+    import random
+    from core.other_balls import auto as auto_others
+    stats = {"images": 0, "frames": 0, "ball": 0, "no_ball": 0, "hand_fixed": 0, "skipped_existing": 0,
+             "ball_left_picture": 0, "other_balls": 0, "other_balls_checked": 0}
     for c in clips:
         V, video, split = c["V"], c["video"], c["split"]
         W, H = V["width"], V["height"]
         labels = {int(k): x for k, x in V["labels"].items()}
         boxes = {int(k): x for k, x in V.get("boxes", {}).items()}
         src = {int(k): x for k, x in V.get("src", {}).items()}
+        others_edit = {int(k): x for k, x in V.get("others", {}).items()}
+        dp = paths.dets(c["stem"])
+        det_frames = json.load(open(dp))["frames"] if dp.exists() else None
+        if det_frames is None:
+            log(f"  yolo   {c['stem']:10s}: no YOLO cache ({dp}), can't count unconfirmed suggestions")
+        sizes = sorted(max(b) for b in boxes.values()) or [V.get("ball_px", 30)]
+        ball_px = sizes[len(sizes) // 2]
+
+        def others(f):
+            # only other balls you confirmed in the review tool: YOLO's own suggestions are often
+            # wall clocks or lights, and labelling those as balls would teach YOLO the wrong thing
+            return others_edit.get(f, [])
+
+        def unconfirmed(f):
+            if det_frames is None or f >= len(det_frames):
+                return 0
+            lab = labels.get(f)
+            sug = auto_others(det_frames[f], lab if isinstance(lab, list) else None, ball_px)
+            return sum(1 for o in sug if not any(abs(o[0] - m[0]) + abs(o[1] - m[1]) <= ball_px for m in others(f)))
         pick = {}
         vis = [f for f in sorted(labels) if isinstance(labels[f], list)]
         none = [f for f in sorted(labels) if labels[f] == "none"]
@@ -101,21 +185,40 @@ def export_yolo(clips, out: Path, every: int, neg_every: int, skip_existing: set
             if not ok:
                 break
             if f in pick:
-                name = f"{c['stem']}_{f}"
-                cv2.imwrite(str(idir / f"{name}.jpg"), img, [cv2.IMWRITE_JPEG_QUALITY, 95])
-                with open(ldir / f"{name}.txt", "w") as fh:
-                    if pick[f] == "ball":
-                        x, y = labels[f]
-                        w, h = boxes.get(f) or [V.get("ball_px", 30)] * 2
-                        fh.write(f"0 {x / W:.6f} {y / H:.6f} {w / W:.6f} {h / H:.6f}\n")
-                        stats["ball"] += 1
-                        stats["hand_fixed"] += src.get(f) in ("fixed", "interp")
-                    else:
-                        stats["no_ball"] += 1
-                stats["images"] += 1
+                small = fit_within(img)
+                s = small.shape[1] / img.shape[1]
+                h, w = small.shape[:2]
+                balls = []
+                if pick[f] == "ball":
+                    x, y = labels[f]
+                    bw, bh = boxes.get(f) or [ball_px] * 2
+                    balls.append((x * s, y * s, bw * s, bh * s))
+                    stats["ball"] += 1
+                    stats["hand_fixed"] += src.get(f) in ("fixed", "interp")
+                else:
+                    stats["no_ball"] += 1
+                oth = others(f)                  # every other volleyball too, like the old labels
+                balls += [(o[0] * s, o[1] * s, o[2] * s, o[3] * s) for o in oth]
+                stats["other_balls"] += len(oth)
+                stats["other_balls_checked"] += unconfirmed(f)
+                stats["frames"] += 1
+                base = f"{c['stem']}_{f}_jpg.rf."
+                if split == "train" and versions > 0:
+                    for k in range(versions):
+                        rng = random.Random(f"{seed}:{c['stem']}:{f}:{k}")
+                        im2, b2 = augment(small, balls, rng)
+                        stats["ball_left_picture"] += len(balls) - len(b2)
+                        cv2.imwrite(str(idir / f"{base}vv{k}.jpg"), im2, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                        write_label(ldir / f"{base}vv{k}.txt", b2, w, h)
+                        stats["images"] += 1
+                else:
+                    cv2.imwrite(str(idir / f"{base}vv.jpg"), small, [cv2.IMWRITE_JPEG_QUALITY, 95])
+                    write_label(ldir / f"{base}vv.txt", balls, w, h)
+                    stats["images"] += 1
             f += 1
         cap.release()
-        log(f"  yolo   {c['stem']:10s} -> {split}: {len(pick)} images")
+        n_img = len(pick) * (versions if split == "train" and versions > 0 else 1)
+        log(f"  yolo   {c['stem']:10s} -> {split}: {len(pick)} frames, {n_img} images")
     return stats
 
 
@@ -162,7 +265,9 @@ def main():
     ap.add_argument("--verified", default=str(paths.VERIFIED))
     ap.add_argument("--video-dir", action="append", default=["videos"], help="where to find videos (repeatable)")
     ap.add_argument("--valid", nargs="*", default=None, help="clips for the validation split (default: every 5th)")
-    ap.add_argument("--yolo-every", type=int, default=4, help="every Nth visible frame (consecutive frames are near-duplicates)")
+    ap.add_argument("--yolo-every", type=int, default=2,
+                    help="every Nth visible frame (default 2: about the density of the old Roboflow labels)")
+    ap.add_argument("--versions", type=int, default=3, help="augmented versions per training frame (Roboflow used 3)")
     ap.add_argument("--neg-every", type=int, default=10, help="every Nth no-ball frame, as an empty label")
     ap.add_argument("--combined", default=str(paths.YOLO_DATASETS / "volleyball_combined"),
                     help="existing YOLO set: its frames are skipped, and data_with_combined.yaml includes it")
@@ -176,30 +281,33 @@ def main():
     a = ap.parse_args()
 
     gt = set(paths.gt_stems())
-    clips, skipped = [], []
+    hold = set(paths.holdout_stems())
+    clips, tests, skipped = [], [], []
     for vp in sorted(Path(a.verified).glob("*.json")):
         V = json.load(open(vp))
         stem = vp.stem
-        if V.get("role") == "test" or paths.is_test(stem):
-            skipped.append(f"{stem} (test clip)")
+        if stem in gt:
+            skipped.append(f"{stem} (old dev clip, data/gt)")
             continue
+        is_test = V.get("role") == "test" or stem in hold
         if not V.get("labels"):
             skipped.append(f"{stem} (nothing checked yet)")
             continue
-        video = find_video(V, stem, a.video_dir)
+        video = find_video(V, stem, a.video_dir + [str(paths.HOLDOUT)])
         if not video:
             skipped.append(f"{stem} (video not found: --video-dir)")
             continue
-        clips.append({"stem": stem, "V": V, "video": video, "file": str(vp)})
+        (tests if is_test else clips).append({"stem": stem, "V": V, "video": video, "file": str(vp), "split": "test"})
     if not clips:
         sys.exit("no checked training clips in " + a.verified + (f"  (skipped: {', '.join(skipped)})" if skipped else ""))
     for i, c in enumerate(clips):
         c["split"] = "valid" if (c["stem"] in a.valid if a.valid is not None else i % 5 == 4) else "train"
-    print(f"{len(clips)} clips ({sum(c['split'] == 'valid' for c in clips)} for validation)"
+    print(f"{len(clips)} training clips ({sum(c['split'] == 'valid' for c in clips)} for validation), "
+          f"{len(tests)} holdout clips for test"
           + (f"; skipped: {', '.join(skipped)}" if skipped else ""))
     manifest = {"created": time.strftime("%Y-%m-%d %H:%M"), "name": a.name,
                 "clips": [{"clip": c["stem"], "split": c["split"], "verified": c["file"],
-                           "checked_frames": len(c["V"]["labels"])} for c in clips]}
+                           "checked_frames": len(c["V"]["labels"])} for c in clips + tests]}
 
     if a.only in (None, "yolo"):
         out = paths.YOLO_DATASETS / f"yolo_{a.name}"
@@ -207,8 +315,11 @@ def main():
             sys.exit(f"{out} exists: pick a new --name (datasets are versioned, never overwritten)")
         comb = Path(a.combined)
         have = existing_yolo_frames(comb) if comb.is_dir() else set()
-        st = export_yolo(clips, out, a.yolo_every, a.neg_every, have)
+        st = export_yolo(clips + tests, out, a.yolo_every, a.neg_every, have, versions=a.versions)
         write_yaml(out / "data.yaml", "../train/images", "../valid/images")
+        if tests:
+            with open(out / "data.yaml", "a") as fh:
+                fh.write("test: ../test/images\n")
         if comb.is_dir():
             # list entries are resolved relative to this yaml's folder (no Roboflow "../" quirk)
             rel = lambda p: str(Path("..") / p.relative_to(paths.YOLO_DATASETS))
@@ -216,8 +327,11 @@ def main():
                        ["train/images", rel(comb / "train" / "images")],
                        ["valid/images", rel(comb / "valid" / "images")])
         json.dump({**manifest, "stats": st}, open(out / "manifest.json", "w"), indent=1)
-        print(f"YOLO     -> {out}: {st['images']} images ({st['ball']} ball, {st['no_ball']} no-ball, "
-              f"{st['hand_fixed']} hand-fixed; {st['skipped_existing']} already in {comb.name})")
+        print(f"YOLO     -> {out}: {st['frames']} frames -> {st['images']} images ({st['ball']} ball, "
+              f"{st['no_ball']} no-ball, {st['hand_fixed']} hand-fixed; {st['skipped_existing']} already in "
+              f"{comb.name}; ball cropped out in {st['ball_left_picture']} augmented images)\n"
+              f"         + {st['other_balls']} other balls you confirmed; {st['other_balls_checked']} YOLO suggestions "
+              f"left unlabelled (not confirmed in the review tool)")
         if a.archive:
             z = shutil.make_archive(str(out), "zip", root_dir=out.parent, base_dir=out.name)
             print(f"         -> {z}")

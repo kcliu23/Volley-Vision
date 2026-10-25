@@ -21,13 +21,22 @@ it resumes where you left off.
                  y      accept the whole clip (after watching it all)
   move           f      next flagged frame     j / k  previous / next segment
                  click the timeline to jump there
+  other balls    the training labels mark EVERY volleyball in the picture (spare balls, a ball
+                 resting on the sideline), not just the game ball. Only balls you confirm count:
+                 grey squares   = suggestions (confident YOLO boxes away from the game ball;
+                                  often a wall clock or a light: then just ignore them)
+                 orange squares = other balls you confirmed
+                 shift+click (or e, then click) a grey square: yes, a ball (follows it to the end
+                 of the segment); on an orange one: remove it (same); elsewhere: a ball here
+                 o      jump to the next frame with a grey suggestion (quick pass over a checked clip)
   other          u      undo                   t      toggle train / test clip
                  ?      help                   q/Esc  save and quit
 
 Red ticks on the timeline are frames autolabel flagged for a closer look (the reason shows
 at the top); green = accepted, yellow = your edits. Ball labels: data/verified/<clip>.json
   {"labels": {"<frame>": [x, y] | "none" | "hidden" | "skip"}, "boxes": {"<frame>": [w, h]},
-   "src": {"<frame>": "auto" | "fixed" | "interp"}, "role": "train" | "test", "reviewed": [[f0, f1], ...]}
+   "src": {"<frame>": "auto" | "fixed" | "interp"}, "role": "train" | "test", "reviewed": [[f0, f1], ...],
+   "others": {"<frame>": [[x, y, w, h], ...]}}   other balls you confirmed (only these are exported)
 """
 from __future__ import annotations
 
@@ -52,10 +61,14 @@ TOP_H = 58          # info bar above the picture (never covers the ball)
 # ── review state (no GUI: testable on its own) ───────────────────────────────
 
 class Review:
-    def __init__(self, proposals: dict, verified: dict | None = None):
+    def __init__(self, proposals: dict, verified: dict | None = None, dets_frames: list | None = None):
         self.P = proposals
         self.n = proposals["n"]
         v = verified or {}
+        self.dets = dets_frames                  # YOLO boxes per frame (for the other-ball suggestions)
+        sizes = sorted(max(fr["box"]) for fr in proposals["frames"] if fr.get("xy") is not None and fr.get("box"))
+        self.ball = sizes[len(sizes) // 2] if sizes else 30.0
+        self.others_edit: dict[int, list] = {int(k): x for k, x in v.get("others", {}).items()}
         self.labels: dict[int, object] = {int(k): x for k, x in v.get("labels", {}).items()}
         self.boxes: dict[int, list] = {int(k): x for k, x in v.get("boxes", {}).items()}
         self.src: dict[int, str] = {int(k): x for k, x in v.get("src", {}).items()}
@@ -86,8 +99,80 @@ class Review:
     def is_reviewed(self, f: int) -> bool:
         return any(a <= f <= b for a, b in self.reviewed)
 
+    # other balls
+    def game_xy(self, f: int):
+        lab = self.label(f)
+        if isinstance(lab, list):
+            return lab
+        p = self.proposal(f)
+        return p if isinstance(p, list) else None
+
+    def others(self, f: int) -> list:
+        """Other balls you confirmed in this frame (these go into the training labels)."""
+        return self.others_edit.get(f, [])
+
+    def suggestions(self, f: int) -> list:
+        """Confident YOLO boxes away from the game ball that you haven't confirmed."""
+        if not self.dets or f >= len(self.dets):
+            return []
+        from core.other_balls import auto
+        mine = self.others(f)
+        return [o for o in auto(self.dets[f], self.game_xy(f), self.ball)
+                if not any(((o[0] - m[0]) ** 2 + (o[1] - m[1]) ** 2) ** 0.5 <= self.ball for m in mine)]
+
+    @staticmethod
+    def _nearest(boxes, xy, r: float):
+        best = None
+        for i, o in enumerate(boxes):
+            d = ((o[0] - xy[0]) ** 2 + (o[1] - xy[1]) ** 2) ** 0.5
+            if d <= r and (best is None or d < best[1]):
+                best = (i, d)
+        return None if best is None else best[0]
+
+    def toggle_other(self, f: int, xy, until: int) -> str:
+        """On a confirmed ball: remove it (here and onward while it's there, up to `until`).
+        On a suggestion: confirm it (here and onward while YOLO keeps seeing it there).
+        Elsewhere: add a ball in this frame."""
+        r = max(self.ball, 12.0)
+        i = self._nearest(self.others(f), xy, r)
+        if i is not None:                                  # remove a confirmed ball
+            spot, frames, g = self.others(f)[i][:2], [], f
+            while g <= until and (j := self._nearest(self.others(g), spot, self.ball)) is not None:
+                frames.append((g, j)); spot = self.others(g)[j][:2]; g += 1
+            self._push([g for g, _ in frames])
+            for g, j in frames:
+                cur = list(self.others(g)); cur.pop(j)
+                if cur:
+                    self.others_edit[g] = cur
+                else:
+                    self.others_edit.pop(g, None)
+            return f"removed the other ball from {len(frames)} frame{'s' if len(frames) != 1 else ''}"
+        i = self._nearest(self.suggestions(f), xy, r)
+        if i is not None:                                  # confirm a suggestion, following it
+            spot, frames, g = self.suggestions(f)[i][:2], [], f
+            while g <= until and (j := self._nearest(self.suggestions(g), spot, self.ball)) is not None:
+                frames.append((g, self.suggestions(g)[j])); spot = frames[-1][1][:2]; g += 1
+            self._push([g for g, _ in frames])
+            for g, box in frames:
+                self.others_edit[g] = self.others(g) + [box]
+            return f"confirmed another ball in {len(frames)} frame{'s' if len(frames) != 1 else ''}"
+        self._push([f])
+        self.others_edit[f] = self.others(f) + [[round(float(xy[0]), 1), round(float(xy[1]), 1), self.ball, self.ball]]
+        return "added another ball (this frame)"
+
+    def next_suggestion(self, f: int) -> int | None:
+        """Next frame with an unconfirmed suggestion, skipping the rest of the current run of them."""
+        g = f + 1
+        while g < self.n and self.suggestions(g) and self.suggestions(f):
+            g += 1
+        for h in range(g, self.n):
+            if self.suggestions(h):
+                return h
+        return None
+
     def _push(self, frames):
-        self.undo_stack.append(([(f, self.labels.get(f), self.boxes.get(f), self.src.get(f)) for f in frames],
+        self.undo_stack.append(([(f, self.labels.get(f), self.boxes.get(f), self.src.get(f), self.others_edit.get(f))
+                                 for f in frames],
                                 [list(r) for r in self.reviewed], list(self.clicks)))
         if len(self.undo_stack) > 200:
             self.undo_stack.pop(0)
@@ -162,8 +247,8 @@ class Review:
         if not self.undo_stack:
             return False
         saved, reviewed, clicks = self.undo_stack.pop()
-        for f, lab, box, src in saved:
-            for d, v in ((self.labels, lab), (self.boxes, box), (self.src, src)):
+        for f, lab, box, src, oth in saved:
+            for d, v in ((self.labels, lab), (self.boxes, box), (self.src, src), (self.others_edit, oth)):
                 if v is None:
                     d.pop(f, None)
                 else:
@@ -207,6 +292,7 @@ class Review:
                 "boxes": {str(f): self.boxes[f] for f in sorted(keep) if f in self.boxes},
                 "src": {str(f): self.src[f] for f in sorted(keep) if f in self.src},
                 "reviewed": self.reviewed,
+                "others": {str(f): self.others_edit[f] for f in sorted(self.others_edit)},
                 "proposals": {"pipeline": P.get("pipeline"), "file": str(paths.proposals(Path(video).stem))}}
 
 
@@ -287,6 +373,10 @@ def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, pl
         p = R.proposal(f)
         if lab == "hidden" and isinstance(p, list):      # where the ball would be
             cv2.circle(img, (int(p[0] * scale), T + int(p[1] * scale)), rad, (120, 120, 120), 1, cv2.LINE_AA)
+    for boxes, col_, th in ((R.suggestions(f), (150, 150, 150), 1), (R.others(f), (0, 150, 255), 2)):
+        for o in boxes:                                        # grey = suggestion, orange = confirmed other ball
+            ox_, oy_, hw = int(o[0] * scale), T + int(o[1] * scale), max(5, int(0.5 * max(o[2], o[3]) * scale) + 3)
+            cv2.rectangle(img, (ox_ - hw, oy_ - hw), (ox_ + hw, oy_ + hw), col_, th, cv2.LINE_AA)
     # magnifier
     if mouse is not None and T <= mouse[1] < H - TIMELINE_H:
         mx, my = mouse
@@ -350,7 +440,8 @@ def review(video: str, test: bool = False):
     P = json.load(open(pp))
     vp = paths.verified(stem)
     V = json.load(open(vp)) if vp.exists() else None
-    R = Review(P, V)
+    dp = paths.dets(stem)
+    R = Review(P, V, json.load(open(dp))["frames"] if dp.exists() else None)
     if test or Path(video).resolve().parent.name == paths.HOLDOUT.name:   # holdout/ clips are always test clips
         R.role = "test"
     scale = min(MAX_W / P["width"], (MAX_H - TIMELINE_H - TOP_H) / P["height"], 1.0)
@@ -365,7 +456,7 @@ def review(video: str, test: bool = False):
         seg_i = 0
     f = P["segments"][seg_i]["f0"]
     playing, speed_i = False, SPEEDS.index(1.0)
-    state = {"mouse": None, "click": None}
+    state = {"mouse": None, "click": None, "extra": False}
     msg, msg_t = "", 0.0
 
     WIN = "VolleyVision review"
@@ -374,7 +465,7 @@ def review(video: str, test: bool = False):
     def on_mouse(ev, x, y, flags, param):
         state["mouse"] = (x, y)
         if ev == cv2.EVENT_LBUTTONDOWN:
-            state["click"] = (x, y)
+            state["click"] = (x, y, bool(flags & cv2.EVENT_FLAG_SHIFTKEY))
     cv2.setMouseCallback(WIN, on_mouse)
 
     last_step = time.time()
@@ -391,10 +482,15 @@ def review(video: str, test: bool = False):
         key = cv2.waitKey(5) & 0xFF
 
         if state["click"] is not None:
-            x, y = state["click"]
+            x, y, shift = state["click"]
             state["click"] = None
             if TOP_H <= y < TOP_H + img.shape[0]:
-                R.set_ball(f, (x / scale, (y - TOP_H) / scale)); save(); playing = False
+                if shift or state["extra"]:
+                    m = R.toggle_other(f, (x / scale, (y - TOP_H) / scale), seg["f1"]); save()
+                    msg, msg_t, state["extra"] = m, time.time(), False
+                else:
+                    R.set_ball(f, (x / scale, (y - TOP_H) / scale)); save()
+                playing = False
             elif y >= TOP_H + img.shape[0]:                    # click on the timeline: jump there
                 f = int(round(x / max(canvas.shape[1] - 1, 1) * (R.n - 1)))
                 seg_i = R.segment_of(f); playing = False
@@ -431,6 +527,15 @@ def review(video: str, test: bool = False):
             R.set_mark(f, "skip"); save()
         elif k == "c":
             R.clear(f); save()
+        elif k == "o":
+            g = R.next_suggestion(f); playing = False
+            if g is None:
+                msg, msg_t = "no more grey suggestions in this clip", time.time()
+            else:
+                f = g; seg_i = R.segment_of(f)
+        elif k == "e":
+            state["extra"] = not state["extra"]; playing = False
+            msg, msg_t = ("next click: another ball (on a square: remove it)" if state["extra"] else "back to normal clicks"), time.time()
         elif k == "i":
             m = R.interpolate(); save()
             msg, msg_t = (f"filled {m} frames" if m else "click the ball in two frames first"), time.time()
