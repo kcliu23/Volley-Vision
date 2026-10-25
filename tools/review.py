@@ -1,7 +1,7 @@
 """Check autolabel proposals rally by rally; what you accept becomes training (or test) data.
 
-    python -m tools.review tests/test40.mov          # needs data/proposals/test40.json (tools.autolabel)
-    python -m tools.review tests/test40.mov --test   # mark this clip as a test clip (never trained on)
+    python -m tools.review videos/test40.mov          # needs data/proposals/test40.json (tools.autolabel)
+    python -m tools.review videos/test40.mov --test   # mark this clip as a test clip (never trained on)
 
 Press space and watch the clip with the proposed ball drawn on it (it plays through the
 whole video). Where the circle is on the ball, do nothing; where it isn't, pause and fix
@@ -351,7 +351,7 @@ def review(video: str, test: bool = False):
     vp = paths.verified(stem)
     V = json.load(open(vp)) if vp.exists() else None
     R = Review(P, V)
-    if test:
+    if test or Path(video).resolve().parent.name == paths.HOLDOUT.name:   # holdout/ clips are always test clips
         R.role = "test"
     scale = min(MAX_W / P["width"], (MAX_H - TIMELINE_H - TOP_H) / P["height"], 1.0)
     src = FrameSource(video, scale)
@@ -462,7 +462,8 @@ def review(video: str, test: bool = False):
         elif k == "u":
             msg, msg_t = ("undone" if R.undo() else "nothing to undo"), time.time(); save()
         elif k == "t":
-            R.role = "test" if R.role == "train" else "train"; save()
+            if Path(video).resolve().parent.name != paths.HOLDOUT.name:   # holdout/ clips stay test
+                R.role = "test" if R.role == "train" else "train"; save()
             msg, msg_t = f"clip role: {R.role}", time.time()
         elif k == "?":
             print(__doc__)

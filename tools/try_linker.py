@@ -1,9 +1,9 @@
 """Try the two-pass tracker (detect -> link -> zoom search) on any video.
 
-    python -m tools.try_linker tests/test10.mov
-    python -m tools.try_linker tests/test2*.MP4 tests/test3*.mov
-    python -m tools.try_linker tests/test10.mov --ring          # hollow marker, ball stays visible
-    python -m tools.try_linker tests/test10.mov --linker cost   # cost-based linker instead of the rule-based one
+    python -m tools.try_linker videos/test10.mov
+    python -m tools.try_linker videos/test2*.MP4 videos/test3*.mov
+    python -m tools.try_linker videos/test10.mov --ring          # hollow marker, ball stays visible
+    python -m tools.try_linker videos/test10.mov --linker cost   # cost-based linker instead of the rule-based one
 
 For each video:
   1. YOLO detection pass (skipped if output/<clip>/cache/dets.json exists)

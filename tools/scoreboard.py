@@ -7,7 +7,8 @@
 Runs the full pipeline (main.py without the video render) with the current models and with
 the candidate, each in its own folder under output/dev/scoreboard/ (your real outputs are
 untouched), and compares:
-  - test clips (data/gt, every 5th frame; never trained on)
+  - holdout clips (holdout/, checked every frame): the real test; decide on these
+  - dev clips (data/gt, every 5th frame; test7/12/17 were in best4's training)
   - your checked clips (data/verified, every frame; marked train, so a model trained on them
     has seen them: read these as "did it learn them", the test clips as "does it generalize")
   - the 11 regression cases
@@ -83,7 +84,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--yolo", default=None, help="candidate YOLO weights (default: keep the current)")
     ap.add_argument("--tracknet", default=None, help="candidate TrackNet checkpoint (default: keep the current)")
-    ap.add_argument("--video-dir", action="append", default=["tests"])
+    ap.add_argument("--video-dir", action="append", default=["videos", "holdout"])
     ap.add_argument("--clips", nargs="*", help="only these clips")
     a = ap.parse_args()
     if not a.yolo and not a.tracknet:
@@ -96,9 +97,10 @@ def main():
     models = {"current": (CUR_YOLO, CUR_TN), "candidate": (cand_yolo, cand_tn)}
 
     gt = paths.gt_stems()
-    checked = [p.stem for p in sorted(paths.VERIFIED.glob("*.json")) if p.stem not in gt]
+    hold = [s for s in paths.holdout_stems() if paths.verified(s).exists() and s not in gt]
+    checked = [p.stem for p in sorted(paths.VERIFIED.glob("*.json")) if p.stem not in gt and p.stem not in hold]
     reg = sorted({c[0] for c in _cases()})
-    clips = [c for c in dict.fromkeys(gt + checked + reg) if not a.clips or c in a.clips]
+    clips = [c for c in dict.fromkeys(hold + gt + checked + reg) if not a.clips or c in a.clips]
     tracks = {"current": {}, "candidate": {}}
     for stem in clips:
         video = find_video(stem, a.video_dir)
@@ -112,7 +114,9 @@ def main():
                                          reuse_yolo=(y == CUR_YOLO), reuse_tn=(t == CUR_TN))
 
     print(f"\ncandidate: YOLO {cand_yolo}   TrackNet {cand_tn}\n")
-    for title, group, src in (("test clips (never trained on)", gt, "gt"), ("your checked clips", checked, "verified")):
+    for title, group, src in (("HOLDOUT clips (real test: never trained on, every frame)", hold, "verified"),
+                              ("dev clips (data/gt; test7/12/17 were in best4's training)", gt, "gt"),
+                              ("your checked training clips", checked, "verified")):
         tot = {n: {"hit": 0, "wrong": 0, "miss": 0, "ok": 0, "false": 0} for n in tracks}
         per = []
         for stem in group:

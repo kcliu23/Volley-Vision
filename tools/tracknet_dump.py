@@ -1,6 +1,6 @@
 """Run a TrackNetV3 checkpoint on a clip and cache ball candidates in YOLO's format.
 
-    python -m tools.tracknet_dump tests/test42.MP4 --ckpt models/tracknet/TrackNet_best.pt --tag bad
+    python -m tools.tracknet_dump videos/test42.MP4 --ckpt models/tracknet/TrackNet_best.pt --tag bad
     python -m tools.tracknet_dump --gt --ckpt ... --tag vb      # every clip with GT labels
 
 TrackNet sees 8 frames (+ the clip's median background image) at 512x288 and outputs one
@@ -146,7 +146,7 @@ def main():
     ap.add_argument("--ckpt", required=True)
     ap.add_argument("--tag", required=True)
     ap.add_argument("--repo", default="../tn/TrackNetV3")
-    ap.add_argument("--video-dir", default="/mnt/user-data/uploads/Volley-Vision/tests")
+    ap.add_argument("--video-dir", default="videos")
     ap.add_argument("--thr", type=float, default=0.1)
     a = ap.parse_args()
     import torch

@@ -4,8 +4,8 @@ No confidence floor beyond --conf, no size filter, no gating — those are
 decisions for the linking step, which can then be tuned without re-running
 the detector.
 
-    python -m tools.dump_detections tests/test42.MP4
-    python -m tools.dump_detections tests/*.mov tests/*.MP4 --conf 0.05
+    python -m tools.dump_detections videos/test42.MP4
+    python -m tools.dump_detections videos/*.mov videos/*.MP4 --conf 0.05
 
 Writes output/<stem>/cache/dets.json (see core.paths):
     {"schema": "vv-dets/1", "fps", "width", "height", "imgsz", "conf",

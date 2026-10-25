@@ -92,7 +92,7 @@ def train_clips() -> list[tuple[str, str]]:
     out = []
     for p in sorted(paths.VERIFIED.glob("*.json")):
         V = json.load(open(p))
-        if V.get("role") != "test" and p.stem not in gt and paths.dets(p.stem).exists():
+        if V.get("role") != "test" and not paths.is_test(p.stem) and paths.dets(p.stem).exists():
             out.append((p.stem, "verified"))
     return out
 

@@ -14,7 +14,7 @@ from where the players are.
 
 ```bash
 pip install -r requirements.txt
-python main.py tests/test42.MP4
+python main.py videos/test42.MP4
 ```
 
 The first run of a clip includes the YOLO pass (minutes on CPU); re-runs reuse the cached
@@ -68,8 +68,8 @@ frames where the track is within one ball-width of the labelled ball:
 ## More training data: autolabel → review → export
 
 ```bash
-python -m tools.autolabel tests/test40.mov            # or --dir <folder>: propose labels for every frame
-python -m tools.review tests/test40.mov               # check rally by rally; Enter accepts, click fixes
+python -m tools.autolabel videos/test40.mov            # or --dir <folder>: propose labels for every frame
+python -m tools.review videos/test40.mov               # check rally by rally; Enter accepts, click fixes
 python -m tools.export_training --name v2 \
     --tracknet-base training/tracknet/datasets/tracknet_v1   # YOLO + TrackNet training sets (old + new)
 ```
@@ -107,10 +107,10 @@ python -m tools.regression [--linker cost] [--tracknet]   # 11 known-tricky mome
 python -m tools.eval_gt                          # score old / rule / cost / rule+TrackNet on data/gt labels
 python -m tools.eval_tracknet --tag ft           # TrackNet alone / pooled with YOLO, per clip
 python -m tools.label_gt --suggested             # label ground truth (click the ball every 5th frame)
-python -m tools.try_linker tests/x.mov --ring    # side-by-side video: old tracker vs linker
-python -m tools.dump_detections tests/*.mov      # pre-compute the YOLO pass for many clips
-python -m tools.analyze_detections output/x/cache/dets.json --track output/x/track.json --video tests/x.mov
-python -m tools.detect_touches output/x/track.json --frames tests/x.mov   # touch contact sheets
+python -m tools.try_linker videos/x.mov --ring    # side-by-side video: old tracker vs linker
+python -m tools.dump_detections videos/*.mov      # pre-compute the YOLO pass for many clips
+python -m tools.analyze_detections output/x/cache/dets.json --track output/x/track.json --video videos/x.mov
+python -m tools.detect_touches output/x/track.json --frames videos/x.mov   # touch contact sheets
 python -m tools.tracknet_dump --gt --ckpt <ckpt> --tag <tag>               # TrackNet candidates for benchmarking
 ```
 

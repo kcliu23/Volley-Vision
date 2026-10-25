@@ -2,7 +2,7 @@
 
     python -m tools.detect_touches output/test10/track.json
     python -m tools.detect_touches output/archive/*.clip.json  # old May exports work too
-    python -m tools.detect_touches output/test10/track.json --frames tests/test10.mov
+    python -m tools.detect_touches output/test10/track.json --frames videos/test10.mov
 
 --frames writes a contact sheet per touch (frames -6..+6 cropped around the
 ball) to output/dev/touch_sheets/ so you can eyeball whether each one is real.

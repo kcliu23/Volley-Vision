@@ -1,7 +1,7 @@
 """Label ground-truth ball positions, every Nth frame, by clicking.
 
-    python -m tools.label_gt tests/test34.mov
-    python -m tools.label_gt tests/test34.mov --every 5
+    python -m tools.label_gt videos/test34.mov
+    python -m tools.label_gt videos/test34.mov --every 5
     python -m tools.label_gt --suggested            # the 10 clips picked for variety, one after another
 
 Controls (window must be focused):
@@ -145,7 +145,7 @@ def main():
     ap.add_argument("--out", default="data/gt")
     ap.add_argument("--suggested", action="store_true", help="label the 10 suggested clips in turn")
     args = ap.parse_args()
-    vids = args.videos or ([f"tests/{v}" for v in SUGGESTED] if args.suggested else [])
+    vids = args.videos or ([f"videos/{v}" for v in SUGGESTED] if args.suggested else [])
     if not vids:
         ap.error("give video paths, or --suggested")
     for v in vids:
