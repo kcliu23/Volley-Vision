@@ -8,7 +8,11 @@
     output/dev/                        comparison videos, contact sheets, experiments
     output/archive/                    files from older versions of the pipeline
 
-    data/gt/<clip>_gt.json             test labels (every 5th frame; never trained on)
+    videos/                            your clip pool: everything you label for TRAINING
+    holdout/                           test clips: never trained on, only scored (name them
+                                       holdout1, holdout2, ... so they never clash with testN)
+
+    data/gt/<clip>_gt.json             old test labels (every 5th frame; the 10 dev clips)
     data/proposals/<clip>.json         autolabel proposals, waiting for review
     data/verified/<clip>.json          human-checked labels (every frame)
 
@@ -85,6 +89,29 @@ def verified(stem: str) -> Path:
 
 def gt_stems() -> list[str]:
     return sorted(p.name.replace("_gt.json", "") for p in GT.glob("*_gt.json"))
+
+
+VIDEOS = Path("videos")
+HOLDOUT = Path("holdout")
+VIDEO_EXT = (".mp4", ".mov", ".m4v", ".avi", ".mkv")
+
+
+def holdout_stems() -> list[str]:
+    """Test clips: every video in holdout/, plus any checked clip marked "test" in the review tool."""
+    out = {p.stem for p in HOLDOUT.glob("*") if p.suffix.lower() in VIDEO_EXT}
+    import json
+    for p in VERIFIED.glob("*.json"):
+        try:
+            if json.load(open(p)).get("role") == "test":
+                out.add(p.stem)
+        except (OSError, ValueError):
+            pass
+    return sorted(out)
+
+
+def is_test(stem: str) -> bool:
+    """Never train on this clip: it's in holdout/, marked test, or has old data/gt labels."""
+    return stem in holdout_stems() or stem in gt_stems()
 
 
 def ensure(p: Path) -> Path:

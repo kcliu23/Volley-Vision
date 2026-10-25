@@ -3,7 +3,7 @@
     python -m tools.build_tracknet_data --labels training/tracknet/dataset_labels.json --out training/tracknet/datasets/tracknet_v1
 
 Labels come from training/datasets/volleyball_combined (Roboflow export, files named
-testN_<frame>_jpg.rf.*): image N of a clip is decoded frame N of tests/testN.* and its
+testN_<frame>_jpg.rf.*): image N of a clip is decoded frame N of videos/testN.* and its
 normalized YOLO box/polygon gives the ball center. Frames are taken from the original
 video (no Roboflow resizing/augmentation), resized to TrackNet's 512x288 and saved as JPEG.
 
@@ -104,7 +104,7 @@ def build_clip(video, runs, out_match, size=None):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--labels", default="training/tracknet/dataset_labels.json")
-    ap.add_argument("--video-dir", default="/mnt/user-data/uploads/Volley-Vision/tests")
+    ap.add_argument("--video-dir", default="videos")
     ap.add_argument("--out", default="training/tracknet/datasets/tracknet_v1")
     ap.add_argument("--val", nargs="*", default=["test9", "test19", "test26"])
     ap.add_argument("--holdout", nargs="*", default=["test7", "test12", "test17"])

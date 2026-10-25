@@ -160,7 +160,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--name", required=True, help="dataset version, e.g. v2")
     ap.add_argument("--verified", default=str(paths.VERIFIED))
-    ap.add_argument("--video-dir", action="append", default=["tests"], help="where to find videos (repeatable)")
+    ap.add_argument("--video-dir", action="append", default=["videos"], help="where to find videos (repeatable)")
     ap.add_argument("--valid", nargs="*", default=None, help="clips for the validation split (default: every 5th)")
     ap.add_argument("--yolo-every", type=int, default=4, help="every Nth visible frame (consecutive frames are near-duplicates)")
     ap.add_argument("--neg-every", type=int, default=10, help="every Nth no-ball frame, as an empty label")
@@ -180,7 +180,7 @@ def main():
     for vp in sorted(Path(a.verified).glob("*.json")):
         V = json.load(open(vp))
         stem = vp.stem
-        if V.get("role") == "test" or stem in gt:
+        if V.get("role") == "test" or paths.is_test(stem):
             skipped.append(f"{stem} (test clip)")
             continue
         if not V.get("labels"):

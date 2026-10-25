@@ -1,8 +1,8 @@
 """Propose ball labels for every frame of new videos, for a human to check in tools.review.
 
-    python -m tools.autolabel tests/test40.mov tests/test41.mov
+    python -m tools.autolabel videos/test40.mov videos/test41.mov
     python -m tools.autolabel --dir ~/Videos/games            # every video in a folder
-    python -m tools.autolabel tests/test40.mov --tracknet     # also use TrackNet (off by default)
+    python -m tools.autolabel videos/test40.mov --tracknet     # also use TrackNet (off by default)
 
 Runs the full pipeline (YOLO, linker + zoom, TrackNet, flights; no video render), then
 writes data/proposals/<clip>.json:

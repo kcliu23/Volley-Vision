@@ -6,7 +6,8 @@ training/runs/
 output/
 
 # Raw footage & model weights
-tests/
+videos/
+holdout/
 # models/
 
 # Python
