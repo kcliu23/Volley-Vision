@@ -299,6 +299,13 @@ def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, pl
             ox = 8 if mx > 300 else W - zw - 8                     # keep it away from the cursor
             img[T + 8:T + 8 + zh, ox:ox + zw] = z
             cv2.rectangle(img, (ox, T + 8), (ox + zw, T + 8 + zh), (255, 255, 255), 1)
+            # where a click would land: crosshair with a gap, so the pixel under it stays visible
+            cx, cy = ox + (mx - x0) * 3 + 1, T + 8 + (my - y0) * 3 + 1
+            for col_, w_ in (((0, 0, 0), 3), ((0, 255, 255), 1)):          # dark outline, bright line
+                for (a1, b1), (a2, b2) in (((cx - 18, cy), (cx - 5, cy)), ((cx + 5, cy), (cx + 18, cy)),
+                                          ((cx, cy - 18), (cx, cy - 5)), ((cx, cy + 5), (cx, cy + 18))):
+                    cv2.line(img, (a1, b1), (a2, b2), col_, w_, cv2.LINE_AA)
+            cv2.circle(img, (cx, cy), 1, (0, 255, 255), -1)
     # top bar
     seg = R.P["segments"][seg_i]
     done, tot = R.progress()
