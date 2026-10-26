@@ -25,7 +25,9 @@ What goes where:
   - data/gt clips (old dev set) are left out of every split
   - YOLO: every --yolo-every'th visible frame, plus every frame you fixed by hand (the hard
     ones), plus every --neg-every'th "no ball" frame as an empty label; "hidden" and "skip"
-    frames are left out (ambiguous for a single image). Frames already in
+    frames are left out (ambiguous for a single image). Every "no ball" frame where YOLO
+    fired anyway (>= 0.25: a hand, a head, a clock) is always included as a hard negative.
+    Frames already in
     volleyball_combined are skipped.
   - TrackNet: every checked frame, in runs of >= 8 consecutive frames; "none" and "hidden"
     are Visibility 0 (no ball visible), "skip" breaks a run
@@ -84,6 +86,7 @@ AUG_VERSIONS = 3
 AUG_CROP = 0.15
 AUG_ROT_DEG = 6.0
 AUG_BRIGHT = 0.25
+HARD_NEG_CONF = 0.25   # a "no ball" frame where YOLO fired at least this confidently is always exported
 
 
 def fit_within(img, size: int = FIT):
@@ -136,7 +139,7 @@ def export_yolo(clips, out: Path, every: int, neg_every: int, skip_existing: set
     import random
     from core.other_balls import auto as auto_others
     stats = {"images": 0, "frames": 0, "ball": 0, "no_ball": 0, "hand_fixed": 0, "skipped_existing": 0,
-             "ball_left_picture": 0, "other_balls": 0, "other_balls_checked": 0}
+             "ball_left_picture": 0, "other_balls": 0, "other_balls_checked": 0, "hard_negatives": 0}
     for c in clips:
         V, video, split = c["V"], c["video"], c["split"]
         W, H = V["width"], V["height"]
@@ -169,8 +172,14 @@ def export_yolo(clips, out: Path, every: int, neg_every: int, skip_existing: set
             if i % every == 0 or src.get(f) in ("fixed", "interp"):
                 pick[f] = "ball"
         for i, f in enumerate(none):
-            if i % neg_every == 0:
+            # every neg_every'th "no ball" frame, plus EVERY one where YOLO fired anyway (a hand
+            # at the block, a head, a clock): hard negatives teach it what is not a ball
+            hard = det_frames is not None and f < len(det_frames) and any(
+                c[4] >= HARD_NEG_CONF and not any(abs(c[0] - o[0]) + abs(c[1] - o[1]) <= ball_px for o in others(f))
+                for c in det_frames[f])
+            if i % neg_every == 0 or hard:
                 pick[f] = "none"
+                stats["hard_negatives"] += hard
         pick = {f: k for f, k in pick.items() if (c["stem"], f) not in skip_existing}
         stats["skipped_existing"] += sum(1 for f in vis + none if (c["stem"], f) in skip_existing)
         if not pick:
@@ -328,7 +337,7 @@ def main():
                        ["valid/images", rel(comb / "valid" / "images")])
         json.dump({**manifest, "stats": st}, open(out / "manifest.json", "w"), indent=1)
         print(f"YOLO     -> {out}: {st['frames']} frames -> {st['images']} images ({st['ball']} ball, "
-              f"{st['no_ball']} no-ball, {st['hand_fixed']} hand-fixed; {st['skipped_existing']} already in "
+              f"{st['no_ball']} no-ball ({st['hard_negatives']} where YOLO fired anyway), {st['hand_fixed']} hand-fixed; {st['skipped_existing']} already in "
               f"{comb.name}; ball cropped out in {st['ball_left_picture']} augmented images)\n"
               f"         + {st['other_balls']} other balls you confirmed; {st['other_balls_checked']} YOLO suggestions "
               f"left unlabelled (not confirmed in the review tool)")
