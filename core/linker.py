@@ -31,7 +31,7 @@ DETECTED, WEAK, FILLED, NONE = "detected", "weak", "filled", "none"
 
 # Bump whenever linking behaviour changes: cached zoom searches were steered by the
 # old track, so they are discarded when this changes.
-LINKER_VERSION = 8
+LINKER_VERSION = 9
 
 
 @dataclass
@@ -78,6 +78,9 @@ class Track:
     tau: list = field(default_factory=list)         # real time per frame, in nominal frames (times * fps)
     size: list = field(default_factory=list)        # ball box size (px) per frame where observed
     tentative: list = field(default_factory=list)   # [[(frame, x, y), ...], ...] unconfirmed weak chains
+    resting: dict = field(default_factory=dict)     # frame -> (x, y, size): a ball set aside as not in play
+                                                    #   (held, resting, caught in the net): still a visible
+                                                    #   ball, so autolabel proposes it for the labels
 
     def summary(self) -> dict:
         from collections import Counter
@@ -96,6 +99,9 @@ class Track:
                 r["conf"] = round(c, 3)
             if self.dup and self.dup[i]:
                 r["dup"] = True
+            if i in self.resting:              # kept even if a later stage filled this frame
+                x, y, sz = self.resting[i]
+                r["resting"] = [round(x, 1), round(y, 1), round(sz, 1)]
             rows.append(r)
         return rows
 
@@ -385,6 +391,7 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
     # resting) is not the ball in play. Checked with a sliding window, so a long
     # run that drifts slowly (a person's head) is caught too.
     keys = sorted(owner)
+    resting_pts: dict = {}
     win = max(4, int(round(P.static_s * fps)))
     from core.cost_linker import _gravity           # clip gravity, px/frame², from confident arcs
     by_frame = {i: [(c[0], c[1], max(c[2], c[3]), None, c[4]) for c in C[i]] for i in range(n) if not dup[i]}
@@ -426,6 +433,7 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
                     if not edge and slow and max(ys) - min(ys) < 0.5 * g_px * L * L / 8:
                         drop.update(seg)
         for f in drop:
+            resting_pts[f] = owner[f][:3]
             del owner[f]
 
     # c3. one ball: consecutive points must be physically reachable ────────────
@@ -460,9 +468,13 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
             break
         # 2) split at impossible steps; keep stretches strongest-first, trimming a
         #    few edge points if that lets a stretch connect to what's already kept.
+        # also split at long gaps: across one, any position is "reachable", so without this
+        # a single bad point could chain everything after it into one stretch and take it
+        # all down with it (test53: one blurred box at 645 removed 5 s of clean track)
+        gap_split = P.max_bridge_s * fps
         segs = [[keys[0]]]
         for f in keys[1:]:
-            if ok_pair(segs[-1][-1], f):
+            if ok_pair(segs[-1][-1], f) and TAU[f] - TAU[segs[-1][-1]] <= gap_split:
                 segs[-1].append(f)
             else:
                 segs.append([f])
@@ -497,7 +509,9 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
                 break
 
     tentative = [t for t in tentative if not any(f in owner for f, _, _ in t)]
-    return finalize(owner, n, fps, width, height, P, dup, (cx0, cy0, cx1, cy1), tentative, TAU)
+    tr = finalize(owner, n, fps, width, height, P, dup, (cx0, cy0, cx1, cy1), tentative, TAU)
+    tr.resting = {f: tuple(float(v) for v in p) for f, p in resting_pts.items() if tr.pos[f] is None}
+    return tr
 
 
 def reachable_pts(P: LinkParams, fa, pa, fb, pb, size, tau=None) -> bool:

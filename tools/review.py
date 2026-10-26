@@ -12,6 +12,8 @@ it resumes where you left off.
   play           space  play / pause (through the whole clip)   w / s  faster / slower (¼× … 4×)
                  d / a  next / previous frame  D / A  ±10 frames
   fix a frame    click  the ball is here       n      no ball visible
+                 N      no ball here AND for the rest of this run of proposals (e.g. a
+                        "resting" run that is really a head or a sign: one key, not 30)
                  h      hidden: in play but covered (behind a player, …)
                  x      can't tell (skip)      c      clear my edit (back to the proposal)
                  i      fill the frames between your last two clicks (straight line)
@@ -194,6 +196,20 @@ class Review:
         assert value in ("none", "hidden", "skip")
         self._push([f])
         self._set(f, value, "fixed")
+
+    def set_none_run(self, f: int) -> int:
+        """"No ball" for f and the following frames with the same kind of proposal (same state,
+        e.g. a run of "resting" proposals), stopping at your own edits. Returns the count."""
+        st = self.P["frames"][f]["state"]
+        todo = [f]
+        for g in range(f + 1, self.n):
+            if self.P["frames"][g]["state"] != st or self.src.get(g) == "fixed":
+                break
+            todo.append(g)
+        self._push(todo)
+        for g in todo:
+            self._set(g, "none", "fixed")
+        return len(todo)
 
     def clear(self, f: int):
         self._push([f])
@@ -521,6 +537,9 @@ def review(video: str, test: bool = False):
             speed_i = max(0, speed_i - 1)
         elif k == "n":
             R.set_mark(f, "none"); save()
+        elif k == "N":
+            m = R.set_none_run(f); save(); playing = False
+            msg, msg_t = f"no ball in {m} frame{'s' if m != 1 else ''} (this run of {R.P['frames'][f]['state']} proposals)", time.time()
         elif k == "h":
             R.set_mark(f, "hidden"); save()
         elif k == "x":
