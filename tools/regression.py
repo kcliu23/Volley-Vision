@@ -67,6 +67,10 @@ def _cases():
         ok = sum(t.pos[f] is not None and t.state[f] != "filled" for f in range(155, 163))
         return ok >= 6, f"real (non-filled) positions in 155-162: {ok}/8"
 
+    def t53_after_gap(t):
+        cov = sum(t.pos[f] is not None for f in range(740, 757)) / 17
+        return cov >= 0.8, f"coverage 740-756 = {cov:.0%} (lost when one bad point chained the rest of the clip)"
+
     def no_teleport(t):
         jumps, pv = [], None
         for f, p in enumerate(t.pos):
@@ -89,6 +93,7 @@ def _cases():
         ("test18", "ignores the ceiling object (793-857)", t18_fixture),
         ("test42", "uses the blurred-ball zoom finds (155-162)", t42_blur),
         ("test42", "no teleports", no_teleport),
+        ("test53", "keeps the ball after a long gap (740-756)", t53_after_gap),
     ]
 
 

@@ -15,6 +15,8 @@ writes data/proposals/<clip>.json:
 Doubt reasons flag frames worth a closer look (shown in red on the review timeline):
   filled      position is a physics guess (no detection) — the ball may be hidden
   tracknet    position from TrackNet only
+  resting     a ball not in play (held, resting, caught in the net): the tracker leaves it out,
+              but it's a visible ball, so it's proposed for the labels
   low_conf    weak YOLO detection (conf < 0.15)
   edge        ball at the picture edge
   jump        position off the line through its neighbours (> 1.5 ball-widths)
@@ -100,6 +102,11 @@ def propose(video: str, out_dir: str = "data/proposals", tracknet: str | None = 
         p = r.get("pos")
         doubt = []
         st = r["state"]
+        if r.get("resting") and st in ("none", "filled"):   # a real detection beats a guess
+            # a visible ball the tracker set aside as not in play (held, resting, caught in
+            # the net): the training labels mark every visible ball, so propose it
+            p, st = r["resting"][:2], "resting"
+            doubt.append("resting")
         if st == "filled":
             doubt.append("filled")
         elif st == "tracknet":
