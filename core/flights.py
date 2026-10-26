@@ -228,7 +228,7 @@ def from_track(track, params: FlightParams | None = None):
 
 
 def apply_flights(track, flights, contacts, max_dev_sizes: float = 1.5, smooth_observed: bool = False,
-                  place_tracknet: bool = True):
+                  place_tracknet: bool = True, max_fill_s: float | None = 0.5):
     """Physics gap filling: frames without a detection take their flight's parabola.
 
     - observed frames (detected/weak) keep their detected position (with
@@ -243,12 +243,34 @@ def apply_flights(track, flights, contacts, max_dev_sizes: float = 1.5, smooth_o
     - between two flights that meet at a contact, frames before the contact follow the
       incoming flight and frames after it the outgoing one
     - fitted positions outside the picture area are not drawn (ball left the frame)
+    - only gaps up to max_fill_s seconds between observed points are filled (same limit as the
+      linker's bridging): an arc through two clusters a second apart is a guess, not a
+      measurement (test53: 7 points around a 70-frame hole drew a ball 6-9 ball-widths off)
     Returns new (pos, state) lists; the track object is not modified.
     """
     n = len(track.pos)
     pos, state = list(track.pos), list(track.state)
     x0, y0, x1, y1 = track.content or (0, 0, track.width, track.height)
     inside = lambda p: x0 <= p[0] <= x1 and y0 <= p[1] <= y1
+    # gap length (seconds) around every unobserved frame: from the last observed point before
+    # it to the next one after it
+    obs = [s in ("detected", "weak", "tracknet") and p is not None for s, p in zip(track.state, track.pos)]
+    tau = list(getattr(track, "tau", None) or range(n))
+    gap_s = [0.0] * n
+    last = None
+    for f in range(n):
+        if obs[f]:
+            last = f
+        else:
+            gap_s[f] = last                     # temporarily: previous observed frame
+    nxt = None
+    for f in range(n - 1, -1, -1):
+        if obs[f]:
+            nxt = f
+        elif gap_s[f] is None or nxt is None:
+            gap_s[f] = float("inf")             # open-ended: before the first / after the last point
+        else:
+            gap_s[f] = (tau[nxt] - tau[gap_s[f]]) / track.fps
 
     def put(f, fl):
         p = fl.at(f)
@@ -261,6 +283,9 @@ def apply_flights(track, flights, contacts, max_dev_sizes: float = 1.5, smooth_o
             if use_fit and track.pos[f] is not None and \
                     np.hypot(p[0] - track.pos[f][0], p[1] - track.pos[f][1]) <= max_dev_sizes * sz:
                 pos[f] = (float(p[0]), float(p[1]))
+        elif max_fill_s is not None and gap_s[f] > max_fill_s:
+            if state[f] == "filled":            # too long to trust an arc (or the linker's line)
+                pos[f], state[f] = None, "none"
         elif inside(p):
             pos[f], state[f] = (float(p[0]), float(p[1])), "filled"
         else:
