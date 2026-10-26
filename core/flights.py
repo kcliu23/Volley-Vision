@@ -227,11 +227,17 @@ def from_track(track, params: FlightParams | None = None):
     return segment(fr, xs, ys, ss, track.fps, P, getattr(track, "tau", None), extra_bw=ex)
 
 
-def apply_flights(track, flights, contacts, max_dev_sizes: float = 1.5, smooth_observed: bool = False):
+def apply_flights(track, flights, contacts, max_dev_sizes: float = 1.5, smooth_observed: bool = False,
+                  place_tracknet: bool = True):
     """Physics gap filling: frames without a detection take their flight's parabola.
 
     - observed frames (detected/weak) keep their detected position (with
       smooth_observed=True they're replaced by the fit when within max_dev_sizes)
+    - TrackNet points (place_tracknet) take their flight's fitted position: TrackNet says WHERE
+      the ball is reliably but places it coarsely, and the fit (which weights each point by its
+      measured noise: YOLO 0.14, TrackNet 0.35 ball-widths) places it better. Measured on the
+      labelled clips: TrackNet median error 0.33 -> 0.16 ball-widths (YOLO detections: 0.14
+      raw, 0.17 on the arc, so those keep their own position)
     - unobserved frames inside a flight (filled/none) get the fitted position, state
       "filled" — gaps follow the real arc instead of a smooth guess
     - between two flights that meet at a contact, frames before the contact follow the
@@ -249,8 +255,10 @@ def apply_flights(track, flights, contacts, max_dev_sizes: float = 1.5, smooth_o
         sz = track.size[f] if getattr(track, "size", None) and track.size[f] else 30.0
         if state[f] in ("detected", "weak", "tracknet"):
             # real detections are more accurate than the fit (measured on the labelled
-            # clips: replacing them raised the median error 4.8 -> 5.5 px), so keep them
-            if smooth_observed and track.pos[f] is not None and \
+            # clips: replacing them raised the median error 4.8 -> 5.5 px), so keep them;
+            # TrackNet points are less accurate than the fit, so they take it
+            use_fit = place_tracknet if state[f] == "tracknet" else smooth_observed
+            if use_fit and track.pos[f] is not None and \
                     np.hypot(p[0] - track.pos[f][0], p[1] - track.pos[f][1]) <= max_dev_sizes * sz:
                 pos[f] = (float(p[0]), float(p[1]))
         elif inside(p):
