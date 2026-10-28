@@ -21,6 +21,8 @@ def main():
                         help="(finder-first) YOLO-check up to this many finder candidates per frame")
     parser.add_argument("--crop-p",     type=float, default=0.6,
                         help="(finder-first) ... those with calibrated P(ball) >= this")
+    parser.add_argument("--no-guided",  action="store_true",
+                        help="(finder-first) skip the physics-guided search (YOLO where the flights predict the ball)")
     parser.add_argument("--loose",      action="store_true",
                         help="(finder-first) the top 2 candidates in every frame, no threshold (~2.5x the YOLO work)")
     parser.add_argument("--linker",     choices=["rule", "cost"], default="rule",
@@ -45,7 +47,8 @@ def main():
         zoom=not args.no_zoom, redetect=args.redetect, trail_len=args.trail_len,
         show_preview=args.preview, touches=not args.no_touches, ring=args.ring,
         tracknet=None if args.no_tracknet else args.tracknet, pipeline=args.pipeline, finder=args.finder,
-        crop_top=2 if args.loose else args.crop_top, crop_p=None if args.loose else args.crop_p)
+        crop_top=2 if args.loose else args.crop_top, crop_p=None if args.loose else args.crop_p,
+        guided=not args.no_guided)
 
 
 if __name__ == "__main__":

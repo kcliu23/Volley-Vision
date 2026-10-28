@@ -147,6 +147,26 @@ checked, regression cases). Then removed or tuned one piece at a time:
 **Speed, test62 (8.4 s, 501 frames) from scratch:** Mac ~65 s new vs ~83 s classic; cloud CPU 431 s
 vs 535 s. YOLO work ~3× lower; WASB is now the slowest stage.
 
+## Phase 8 — physics backbone experiment (Oct 28)
+
+Idea: the ball between touches is a gravity arc, so build the track from physics: find arcs in
+all candidates, chain the arcs that meet at contacts, search where the arcs predict the ball.
+
+- **Physics-guided search** (`core/physics_search.py`): after the first pass, YOLO crops where each
+  flight predicts the ball but nothing confirmed it (gaps inside flights, just before/after
+  contacts), then the linker runs again. **Consistent small gain on every set:** holdout 95.3 →
+  95.6%, dev 91.5 → 92.6%, checked 97.1 → 97.8% on-ball; wrong and false equal or lower; same
+  regression cases. Cost ~0.5 extra crops per frame. **Adopted as default** (`--no-guided` to skip).
+- **Physics-first tracker** (`core/flight_model.py`): seed-and-grow robust arc fitting (each new
+  point must agree with the whole arc), gravity estimated from the clip's own arcs, arcs chained
+  and cut where they meet. **Scored lower:** holdout 92.8% on-ball (3.2% wrong, 7.6% false) vs
+  95.3%; it breaks on short, fast flights around spikes and digs (regression cases test12, test21)
+  and didn't fix the second ball (test34). Looser tolerances didn't help. Kept as an experimental
+  `tools.ablate` variant (`arcs`), to re-test after WASB improves.
+- **Conclusion:** WASB as the backbone, physics as the assist (choosing, smoothing, filling,
+  guided search, contacts; and exact 3D physics later for the analyses). The remaining losses are
+  mostly frames no detector proposes (about 60% of lost frames), which only a better WASB fixes.
+
 ---
 
 ## The pipeline today
@@ -156,8 +176,9 @@ vs 535 s. YOLO work ~3× lower; WASB is now the slowest stage.
 2. **WASB on every frame:** up to 3 candidates per frame; calibrated probabilities from your labels.
 3. **YOLO crops:** around WASB's top candidate where P ≥ 0.6 (batched): confirms and pinpoints.
 4. **Joint linker:** one pass picks the path: evidence + motion physics + touches + limits + gaps.
-5. **Flights:** parabolas, WASB-only points on the arc, gaps ≤ 0.5 s filled, contacts at the breaks.
-6. **Render** in real time.
+5. **Physics-guided search:** YOLO crops where the flights predict the ball but nothing confirmed it; link again.
+6. **Flights:** parabolas, WASB-only points on the arc, gaps ≤ 0.5 s filled, contacts at the breaks.
+7. **Render** in real time.
 
 Autolabel: the same, with loose crops (fewest misses) and full-frame YOLO kept for other-ball
 suggestions and hard negatives.
@@ -182,7 +203,8 @@ suggestions and hard negatives.
 
 **Step 1 — robust tracking (now)**
 1. **Contact scorer** against touch marks (`m` in review; holdout first): found / missed / fake, timing error.
-2. **Physics backbone** (redesign of linking): find flights as robust parabola fits through the
+2. ~~**Physics backbone** (redesign of linking)~~ tried Oct 28 (Phase 8): guided search adopted; the
+   physics-first tracker scored lower and stays experimental. Original plan: find flights as robust parabola fits through the
    candidates → chain flights that meet at contacts (one ball; a far-court ball's arcs don't connect)
    → **search where physics predicts** (YOLO crops at predicted positions) → refit → output from the
    arcs (smooth by construction, sub-frame contact times, each frame marked observed / predicted).

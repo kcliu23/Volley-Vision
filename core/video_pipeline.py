@@ -59,6 +59,7 @@ def run(
     finder: str = "models/wasb/wasb_ft2.pth.tar",
     crop_top: int = 1,
     crop_p: float | None = 0.6,
+    guided: bool = True,
 ) -> str:
     """pipeline: "finder-first" (default; uses finder + the crop rule crop_top / crop_p, crop_p=None
     for no threshold) or "classic" (uses linker, zoom, tracknet)."""
@@ -86,7 +87,7 @@ def run(
         # candidates, joint linker (core/finder_first.py)
         from core import finder_first
         model = YOLO(model_path)
-        track, info = finder_first.track(input_path, model, finder, crop_top=crop_top, crop_p=crop_p, root=output_dir,
+        track, info = finder_first.track(input_path, model, finder, crop_top=crop_top, crop_p=crop_p, root=output_dir, guided=guided,
                                          log=lambda m: print(m))
         det_path = paths.cache_dir(stem, output_dir) / "sample_dets.json"
         dets = json.load(open(det_path))
