@@ -11,12 +11,15 @@ it resumes where you left off.
 
   play           space  play / pause (through the whole clip)   w / s  faster / slower (¼× … 4×)
                  d / a  next / previous frame  D / A  ±10 frames
-  fix a frame    click  the ball is here       n      no ball visible
+  fix a frame    click  the ball is here: snaps to the centre of a YOLO box near your click if
+                        there is one (more exact than a click); z  toggle snapping off / on
+                        n      no ball visible
                  N      no ball here AND for the rest of this run of proposals (e.g. a
                         "resting" run that is really a head or a sign: one key, not 30)
                  h      hidden: in play but covered (behind a player, …)
                  x      can't tell (skip)      c      clear my edit (back to the proposal)
-                 i      fill the frames between your last two clicks (straight line)
+                 i      fill the frames between your last two clicks (straight line; each
+                        filled frame snaps to a YOLO box near the line, like a click)
                  I      fill between ALL your clicks in this segment (held / slow ball:
                         click it every 10-20 frames, then press I once)
   accept         Enter  accept the segment you're in and go to the next unchecked one
@@ -264,9 +267,30 @@ class Review:
         else:
             self.boxes.pop(f, None)
 
-    def set_ball(self, f: int, xy):
+    SNAP_BW = 0.75           # a click snaps to a YOLO box whose centre is within this many ball-widths
+
+    def snap_target(self, f: int, xy):
+        """The YOLO box (from autolabel's full-frame pass) nearest to a click, if its centre is
+        within SNAP_BW ball-widths: [cx, cy, w, h], else None. Hand clicks wobble ~2.4x more
+        than accepted proposals; a box centre is pixel-accurate."""
+        if not self.dets or f >= len(self.dets):
+            return None
+        best = None
+        for b in self.dets[f]:
+            if b[4] < 0.05:
+                continue
+            d = ((b[0] - xy[0]) ** 2 + (b[1] - xy[1]) ** 2) ** 0.5
+            if d <= self.SNAP_BW * self.ball and (best is None or d < best[0]):
+                best = (d, [round(b[0], 1), round(b[1], 1), round(b[2], 1), round(b[3], 1)])
+        return None if best is None else best[1]
+
+    def set_ball(self, f: int, xy, box=None):
+        """Game ball at xy in frame f; box = [cx, cy, w, h] of a YOLO box it was snapped to."""
         self._push([f])
-        self._set(f, [round(float(xy[0]), 1), round(float(xy[1]), 1)], "fixed")
+        if box is not None:
+            xy = box[:2]
+        self._set(f, [round(float(xy[0]), 1), round(float(xy[1]), 1)], "fixed",
+                  box=[box[2], box[3]] if box is not None else None)
         self.clicks = ([c for c in self.clicks if c != f] + [f])[-2:]   # re-clicking a frame just updates it
 
     def set_mark(self, f: int, value: str):
@@ -306,8 +330,18 @@ class Review:
         self._push(todo)
         for f in todo:
             w = (f - a) / (b - a)
-            self._set(f, [round(pa[0] + w * (pb[0] - pa[0]), 1), round(pa[1] + w * (pb[1] - pa[1]), 1)], "interp")
+            self._set_interp(f, [pa[0] + w * (pb[0] - pa[0]), pa[1] + w * (pb[1] - pa[1])])
         return len(todo)
+
+    snap = True               # the review loop's z key turns snapping off for clicks and fills
+
+    def _set_interp(self, f: int, xy):
+        """A filled frame: on the straight line, or on a YOLO box near it (snapping on)."""
+        box = self.snap_target(f, xy) if self.snap else None
+        if box is not None:
+            self._set(f, box[:2], "interp", box=[box[2], box[3]])
+        else:
+            self._set(f, [round(xy[0], 1), round(xy[1], 1)], "interp")
 
     def interpolate_all(self, f0: int, f1: int, max_gap: int = 60) -> int:
         """Fill between every pair of consecutive frames you clicked in f0..f1 (straight line),
@@ -323,7 +357,7 @@ class Review:
         self._push([f for f, _, _ in todo])
         for f, a, b in todo:
             pa, pb, w = self.labels[a], self.labels[b], (f - a) / (b - a)
-            self._set(f, [round(pa[0] + w * (pb[0] - pa[0]), 1), round(pa[1] + w * (pb[1] - pa[1]), 1)], "interp")
+            self._set_interp(f, [pa[0] + w * (pb[0] - pa[0]), pa[1] + w * (pb[1] - pa[1])])
         return len(todo)
 
     def accept(self, f0: int, f1: int) -> int:
@@ -554,7 +588,31 @@ def review(video: str, test: bool = False):
         seg_i = 0
     f = P["segments"][seg_i]["f0"]
     playing, speed_i = False, SPEEDS.index(1.0)
-    state = {"mouse": None, "click": None, "extra": False, "contact": False}
+    state = {"mouse": None, "click": None, "extra": False, "contact": False, "snap": True}
+    yolo = {}
+
+    def snap_by_crop(img, xy, ball, scale):
+        """YOLO on a crop of the displayed frame around a click; the nearest box within SNAP_BW
+        ball-widths, in video coordinates, or None. The model loads on first use."""
+        try:
+            if "m" not in yolo:
+                from ultralytics import YOLO
+                yolo["m"] = YOLO("models/best4.pt") if Path("models/best4.pt").exists() else None
+            if yolo["m"] is None:
+                return None
+            from core.refine import zoom_detect
+            c = (xy[0] * scale, xy[1] * scale)
+            half = int(max(48, 5.0 * ball * scale))
+            boxes = zoom_detect(yolo["m"], img, c, half, conf=0.05)
+        except Exception as e:                               # snapping is a convenience: never block labelling
+            print(f"[review] snap: {type(e).__name__}: {e}")
+            return None
+        best = None
+        for b in boxes:
+            d = ((b[0] - c[0]) ** 2 + (b[1] - c[1]) ** 2) ** 0.5 / scale
+            if d <= Review.SNAP_BW * ball and (best is None or d < best[0]):
+                best = (d, [round(b[0] / scale, 1), round(b[1] / scale, 1), round(b[2] / scale, 1), round(b[3] / scale, 1)])
+        return None if best is None else best[1]
     msg, msg_t = "", 0.0
 
     WIN = "VolleyVision review"
@@ -587,7 +645,19 @@ def review(video: str, test: bool = False):
                     m = R.toggle_other(f, (x / scale, (y - TOP_H) / scale), seg["f1"]); save()
                     msg, msg_t, state["extra"] = m, time.time(), False
                 else:
-                    R.set_ball(f, (x / scale, (y - TOP_H) / scale)); save()
+                    xy = (x / scale, (y - TOP_H) / scale)
+                    box, how = None, ""
+                    if state["snap"]:
+                        box = R.snap_target(f, xy)
+                        if box is None:                      # no cached box: YOLO on a crop around the click
+                            box = snap_by_crop(img, xy, R.ball, scale)
+                        if box is not None:
+                            how = f"snapped to the ball ({((box[0] - xy[0]) ** 2 + (box[1] - xy[1]) ** 2) ** 0.5:.0f} px from your click)"
+                        else:
+                            how = "your click (no YOLO box near it)"
+                    R.set_ball(f, xy, box); save()
+                    if how:
+                        msg, msg_t = how, time.time()
                 playing = False
             elif y >= TOP_H + img.shape[0]:                    # click on the timeline: jump there
                 f = int(round(x / max(canvas.shape[1] - 1, 1) * (R.n - 1)))
@@ -658,6 +728,9 @@ def review(video: str, test: bool = False):
                 msg, msg_t = "no more grey suggestions in this clip", time.time()
             else:
                 f = g; seg_i = R.segment_of(f)
+        elif k == "z":
+            state["snap"] = R.snap = not state["snap"]
+            msg, msg_t = ("clicks snap to the ball (YOLO box)" if state["snap"] else "clicks stay exactly where you click"), time.time()
         elif k == "e":
             state["extra"] = not state["extra"]; playing = False
             msg, msg_t = ("next click: another ball (on a square: remove it)" if state["extra"] else "back to normal clicks"), time.time()
