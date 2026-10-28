@@ -7,8 +7,10 @@ runs on every frame and proposes where the ball might be. **YOLO** checks only a
 around WASB's top candidate (where it's likely enough to be the ball). A **joint linker**
 then picks the ball's path over the whole clip in one pass: every candidate weighed by a
 probability learned from your labels (score calibration) plus physics (gravity arcs, speed and
-size limits, one ball). The path is split into **flights** (one parabola each); the boundaries
-are **contacts**, classified as touch, bounce or other from where the players are.
+size limits, one ball). The path is split into **flights** (one parabola each); where a flight
+says the ball must be but nothing confirmed it, YOLO checks a crop there (**physics-guided
+search**) and the linker runs again. The flight boundaries are **contacts**, classified as touch,
+bounce or other from where the players are.
 
 The older **classic** pipeline (YOLO on every frame, rule linker + zoom search, TrackNet gap
 filling) is still there: `--pipeline classic`.
@@ -33,6 +35,7 @@ the YOLO crops; re-runs reuse the caches and take seconds.
 | `--preview` | off | Show the render while it's written |
 | `--trail-len` | `40` | Ball trail length in frames |
 | `--no-touches` | off | Skip contact detection and overlay |
+| `--no-guided` | off | (finder-first) Skip the physics-guided search |
 | `--output` | `output` | Output directory |
 | `--model` | `models/best4.pt` | YOLO weights |
 | `--linker`, `--no-zoom`, `--redetect`, `--tracknet`, `--no-tracknet` | | classic pipeline only |
@@ -57,12 +60,17 @@ share of ball frames where the track is within one ball-width of your label:
 | | on the ball | wrong place | missed | false ball when hidden | YOLO work |
 |---|---|---|---|---|---|
 | classic | 92.2% | 0.5% | 7.3% | 2.7% | every frame + zoom rounds |
-| **finder-first, strict (default)** | **95.2%** | 1.2% | **3.6%** | 3.4% | ~39% of every frame (+5% sparse pass) |
+| finder-first, strict, no guided search (`--no-guided`) | 95.2% | 1.2% | 3.6% | 3.4% | ~39% of every frame (+5% sparse pass) |
+| **finder-first, strict + guided search (default)** | **+0.3** | **−0.2** | **−0.1** | **−0.2** | + ~0.5 crops per frame (≈ +25% of every frame) |
 | finder-first, loose | 96.3% | 0.9% | 2.8% | 4.9% | ~100% of every frame |
 
 Measured 2026-10-28 after the simplification pass (one joint linker, no tracklet layer; WASB-only
 points penalised by 0.5 instead of 1.0, which found more of the ball for a few more false balls).
-Before it: 94.8% on-ball, 4.1% missed, 2.3% false.
+Before it: 94.8% on-ball, 4.1% missed, 2.3% false. Guided search (measured with `tools.ablate`
+on the same inputs, so shown as the change): holdout 95.3 → 95.6% on-ball, dev 91.5 → 92.6%,
+checked clips 97.1 → 97.8%, wrong and false balls equal or lower, the same regression cases.
+A physics-first tracker (`core/flight_model.py`: arcs found and chained directly) was also built
+and measured; it scored lower (holdout 92.8%) and is kept as an experimental `tools.ablate` variant.
 
 Known gap: a second ball in play on a neighbouring court can win over the game ball for a moment
 when it's seen more confidently (regression case test34). A court-area cue (homography) is the

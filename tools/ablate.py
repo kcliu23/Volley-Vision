@@ -56,8 +56,45 @@ def inputs(stem: str, cal, rule):
     return d2, cands, ball, link_args(d)
 
 
+_YOLO = {}
+SEARCH_LOG = {}            # stem -> guided-search stats of the last "guided" run
+
+
+def _video(stem):
+    import glob
+    for d in ("videos", "holdout"):
+        v = sorted(glob.glob(f"{d}/{stem}.*"))
+        if v:
+            return v[0]
+    return None
+
+
 def run_variant(name, d2, cands, cal, ball, a, stem=None):
-    """name: "joint", "classic", or "joint:key=value,key=value" (JointParams changed)."""
+    """name: "joint", "classic", "joint:key=value,key=value" (JointParams changed), or
+    "guided" / "guided2": joint linker, then physics-guided search (core.physics_search: YOLO
+    crops where the flights predict the ball), then the joint linker again (1 or 2 rounds;
+    needs the video and runs YOLO, results cached)."""
+    if name in ("guided", "guided2"):
+        from core.flights import from_track
+        from core import physics_search as ps
+        from core.profile import link_args  # noqa: F401  (a already holds the link args)
+        if "m" not in _YOLO:
+            from ultralytics import YOLO
+            _YOLO["m"] = YOLO("models/best4.pt")
+        video = _video(stem)
+        if video is None:
+            raise FileNotFoundError(f"no video for {stem}")
+        t = run_variant("joint", d2, cands, cal, ball, a)
+        dd, stats = dict(d2), []
+        for r in range(1 if name == "guided" else 2):
+            fl, _ = from_track(t)
+            tg = ps.targets(t, fl, ball, dd.get("zoom"), a["fps"])
+            res = ps.search(stem if r == 0 else f"{stem}", video, tg, ball, _YOLO["m"], f"wasb_ft2_r{r}")
+            dd["zoom"] = ps.merge_zoom(dd.get("zoom"), res["found"])
+            stats.append({"crops": res["crops"], "found_frames": len(res["found"]), "by_trigger": res.get("by_trigger")})
+            t = run_variant("joint", dd, cands, cal, ball, a)
+        SEARCH_LOG[stem] = stats
+        return t
     from dataclasses import fields
     from core.joint_linker import JointParams
     from core.finder_first import FINDER_ONLY_BIAS
@@ -74,6 +111,18 @@ def run_variant(name, d2, cands, cal, ball, a, stem=None):
     if name == "joint":
         from core.joint_linker import link
         return link(d2, cands, cal, a["fps"], W, H, ball, jp, **kw)
+    if name == "arcs" or name.startswith("arcs:"):   # physics backbone (core.flight_model); "arcs:key=v,..."
+        from dataclasses import replace as _rep
+        from core.flight_model import link as arc_link, ArcParams, ChainParams
+        ap_, cp_ = ArcParams(), ChainParams()
+        if ":" in name:
+            for kv in name.split(":", 1)[1].split(","):
+                k, v = kv.split("=")
+                if hasattr(ap_, k):
+                    ap_ = _rep(ap_, **{k: type(getattr(ap_, k))(float(v))})
+                else:
+                    cp_ = _rep(cp_, **{k: type(getattr(cp_, k))(float(v))})
+        return arc_link(d2, cands, cal, a["fps"], W, H, ball, jp, arc_params=ap_, chain_params=cp_, **kw)
     if name == "classic":
         from core import finders
         from core.linker import link as rule_link

@@ -8,6 +8,8 @@
                      P >= q (--crop-top / --crop-p), or top 2 with no threshold (loose)
     4. joint linker  picks the ball's path over the whole clip in one pass: every candidate
                      weighed by its calibrated probability + physics (speed, size, gravity arcs)
+    5. guided search YOLO crops where the flights predict the ball but nothing confirmed it (gaps,
+                     around contacts); the linker runs again (core/physics_search.py)
 
 No zoom-search rounds, no rule-linker cascade. (A tracklet layer with rival / fixture removal
 used to sit before the joint linker; removed 2026-10-28 after tools.ablate showed the joint
@@ -183,9 +185,10 @@ def crop_finds(stem: str, video: str, cands, ball: float, ftag: str, model, prob
 
 
 def track(video: str, model, finder: str = DEFAULT_FINDER, cal=None, crop_top: int = None,
-          crop_p: float | None = "default", root=paths.OUTPUT, log=print):
-    """Run stages 1-4 on a clip. Returns (track, info). Crop rule: up to crop_top candidates per
-    frame with calibrated P(ball) >= crop_p (crop_p=None: no threshold, the loose rule)."""
+          crop_p: float | None = "default", root=paths.OUTPUT, log=print, guided: bool = True):
+    """Run stages 1-5 on a clip. Returns (track, info). Crop rule: up to crop_top candidates per
+    frame with calibrated P(ball) >= crop_p (crop_p=None: no threshold, the loose rule).
+    guided: physics-guided search (core.physics_search) after the first pass."""
     crop_top = CROP_TOP if crop_top is None else crop_top
     crop_p = CROP_P if crop_p == "default" else crop_p
     from core import finders
@@ -215,10 +218,25 @@ def track(video: str, model, finder: str = DEFAULT_FINDER, cal=None, crop_top: i
     # ^ the sizing pass's full-frame boxes are candidates too: anchors where WASB misses the ball
     #   (big, near-camera balls). Measured 2026-10-28: dev 89.6% -> 91.6% on-ball, holdout unchanged
     d2["zoom"] = cf["found"]
-    t = joint_link(d2, cands, cal, a["fps"], d["width"], d["height"], ball, JointParams(tn_only_bias=FINDER_ONLY_BIAS),
-                   dup_flags=a["dup_flags"], content=a["content"], times=a["times"])
+    jp = JointParams(tn_only_bias=FINDER_ONLY_BIAS)
+    kw = dict(dup_flags=a["dup_flags"], content=a["content"], times=a["times"])
+    t = joint_link(d2, cands, cal, a["fps"], d["width"], d["height"], ball, jp, **kw)
     info = {"ball_px": ball, "crops": cf["crops"], "frames": len(cands), "crop_frames": len(cf["found"]),
             "fps": a["fps"], "width": d["width"], "height": d["height"]}
+    if guided:
+        # 5. physics-guided search: YOLO where the flights say the ball must be, then link again.
+        #    Measured 2026-10-28 (tools.ablate): holdout 95.3 -> 95.6%, dev 91.5 -> 92.6%,
+        #    checked 97.1 -> 97.8% on-ball, wrong / false equal or lower, same regression cases.
+        from core.flights import from_track
+        from core import physics_search as ps
+        tg = ps.targets(t, from_track(t)[0], ball, d2["zoom"], a["fps"])
+        res = ps.search(stem, video, tg, ball, model, ftag, root=root)
+        d2["zoom"] = ps.merge_zoom(d2["zoom"], res["found"])
+        t = joint_link(d2, cands, cal, a["fps"], d["width"], d["height"], ball, jp, **kw)
+        info["guided_crops"], info["guided_found"] = res["crops"], len(res["found"])
+        if log:
+            log(f"[VolleyVision] physics-guided search: {res['crops']} crops where the flights predict the ball, "
+                f"found it in {len(res['found'])} frames")
     if log:
         log(f"[VolleyVision] finder-first: {cf['crops']} YOLO crops ({cf['crops'] / max(len(cands), 1):.2f} per frame), "
             f"ball confirmed by YOLO in {len(cf['found'])} frames")
