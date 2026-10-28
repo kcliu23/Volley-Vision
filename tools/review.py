@@ -33,7 +33,9 @@ it resumes where you left off.
                  orange squares = other balls you confirmed
                  shift+click (or e, then click) a grey square: yes, a ball. One click is enough: it
                  follows that ball through the whole clip, both directions (bridging gaps where YOLO
-                 lost it: up to 1 s, or 5 s for a ball that stays put). On an orange one: remove it (same). Elsewhere: a ball here
+                 lost it: up to 1 s, or 5 s for a ball that stays put). On an orange one: remove it (same).
+                 Elsewhere: snaps to a weaker YOLO box near the click and follows it the same way; if
+                 there is none, a ball in this frame only (on a YOLO box from a crop, else at the click)
                  o      jump to the next frame with a grey suggestion (quick pass over a checked clip)
   contacts       m      mark a touch at this frame, then its type: 1 serve, 2 pass/receive,
                         3 set, 4 attack, 5 block, 6 dig, 0 other (m on a marked frame removes it)
@@ -189,11 +191,22 @@ class Review:
             out.append([round(b[0], 1), round(b[1], 1), round(b[2], 1), round(b[3], 1)])
         return out
 
-    def toggle_other(self, f: int, xy, until: int | None = None) -> str:
+    def other_click_target(self, f: int, xy):
+        """For a shift+click away from confirmed balls and suggestions: a weaker YOLO box near it
+        (not the game ball) to snap to and follow, or None."""
+        r = max(self.ball, 12.0)
+        if self._nearest(self.others(f), xy, r) is not None or self._nearest(self.suggestions(f), xy, r) is not None:
+            return None
+        boxes = self._boxes_near_play(f)
+        j = self._nearest(boxes, xy, self.SNAP_BW * self.ball)
+        return boxes[j] if j is not None else None
+
+    def toggle_other(self, f: int, xy, until: int | None = None, crop_box=None) -> str:
         """On a confirmed ball: remove it, here and everywhere it continues (both directions).
-        On a suggestion: confirm it, here and everywhere YOLO keeps seeing it at that spot (both
-        directions, whole clip, weaker boxes and gaps up to a second included).
-        Elsewhere: add a ball in this frame."""
+        On a suggestion, or (snapping on) a weaker YOLO box near the click: confirm it, here and
+        everywhere YOLO keeps seeing it at that spot (both directions, whole clip, weaker boxes
+        and gaps up to a second included). Elsewhere: a ball in this frame only, at crop_box
+        (a box YOLO found on a crop around the click) if given, else at the click."""
         r = max(self.ball, 12.0)
         i = self._nearest(self.others(f), xy, r)
         if i is not None:                                  # remove a confirmed ball
@@ -211,8 +224,9 @@ class Review:
                     self.others_edit.pop(g, None)
             return f"removed the other ball from {len(frames)} frame{'s' if len(frames) != 1 else ''}"
         i = self._nearest(self.suggestions(f), xy, r)
-        if i is not None:                                  # confirm a suggestion, following it
-            box = self.suggestions(f)[i]
+        weak = self.other_click_target(f, xy) if (i is None and self.snap) else None
+        if i is not None or weak is not None:              # confirm a suggestion / weak box, following it
+            box = self.suggestions(f)[i] if i is not None else weak
             self._origin = box
             frames = {f: box}
             for d in (+1, -1):
@@ -225,8 +239,11 @@ class Review:
             lo, hi = min(frames), max(frames)
             return f"confirmed another ball in {len(frames)} frames ({lo}-{hi})"
         self._push([f])
+        if crop_box is not None:
+            self.others_edit[f] = self.others(f) + [list(crop_box)]
+            return "added another ball (this frame, snapped to a YOLO box on a crop)"
         self.others_edit[f] = self.others(f) + [[round(float(xy[0]), 1), round(float(xy[1]), 1), self.ball, self.ball]]
-        return "added another ball (this frame)"
+        return "added another ball (this frame, at your click)"
 
     def next_suggestion(self, f: int) -> int | None:
         """Next frame with an unconfirmed suggestion, skipping the rest of the current run of them."""
@@ -642,7 +659,13 @@ def review(video: str, test: bool = False):
             state["click"] = None
             if TOP_H <= y < TOP_H + img.shape[0]:
                 if shift or state["extra"]:
-                    m = R.toggle_other(f, (x / scale, (y - TOP_H) / scale), seg["f1"]); save()
+                    xy = (x / scale, (y - TOP_H) / scale)
+                    cb = None
+                    rr = max(R.ball, 12.0)
+                    if (state["snap"] and R._nearest(R.others(f), xy, rr) is None
+                            and R._nearest(R.suggestions(f), xy, rr) is None and R.other_click_target(f, xy) is None):
+                        cb = snap_by_crop(img, xy, R.ball, scale)    # nothing cached near the click: try a crop
+                    m = R.toggle_other(f, xy, seg["f1"], crop_box=cb); save()
                     msg, msg_t, state["extra"] = m, time.time(), False
                 else:
                     xy = (x / scale, (y - TOP_H) / scale)
