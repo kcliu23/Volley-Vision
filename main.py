@@ -20,8 +20,7 @@ def main():
     parser.add_argument("--crop-top",   type=int, default=1,
                         help="(finder-first) YOLO-check up to this many finder candidates per frame")
     parser.add_argument("--crop-p",     type=float, default=0.6,
-                        help="(finder-first) ... those with calibrated P(ball) >= this "
-                             "(e.g. --crop-top 2 --crop-p 0.1: +0.7 on-ball on holdout, ~30%% more crops)")
+                        help="(finder-first) ... those with calibrated P(ball) >= this")
     parser.add_argument("--loose",      action="store_true",
                         help="(finder-first) the top 2 candidates in every frame, no threshold (~2.5x the YOLO work)")
     parser.add_argument("--linker",     choices=["rule", "cost"], default="rule",
