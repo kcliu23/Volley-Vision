@@ -2,10 +2,12 @@
 
     python -m tools.autolabel videos/test40.mov videos/test41.mov
     python -m tools.autolabel --dir ~/Videos/games            # every video in a folder
-    python -m tools.autolabel videos/test40.mov --tracknet     # also use TrackNet (off by default)
+    python -m tools.autolabel videos/test40.mov --classic      # the old pipeline (+ --tracknet)
 
-Runs the full pipeline (YOLO, linker + zoom, TrackNet, flights; no video render), then
-writes data/proposals/<clip>.json:
+Runs the finder-first pipeline with the loose crop rule (fewest missed balls: a miss costs
+more clicks in review than a false ball), plus full-frame YOLO on every frame (cached), which
+the review tool's other-ball suggestions and the export's hard negatives need. No render.
+Writes data/proposals/<clip>.json:
 
   frames[f]   {"state": detected|weak|tracknet|filled|none, "xy": [x, y] | null,
                "box": [w, h], "doubt": [reasons]}
@@ -14,14 +16,14 @@ writes data/proposals/<clip>.json:
 
 Doubt reasons flag frames worth a closer look (shown in red on the review timeline):
   filled      position is a physics guess (no detection) — the ball may be hidden
-  tracknet    position from TrackNet only
+  tracknet    position from the ball finder only (WASB, or TrackNet with --classic)
   resting     a ball not in play (held, resting, caught in the net): the tracker leaves it out,
               but it's a visible ball, so it's proposed for the labels
   low_conf    weak YOLO detection (conf < 0.15)
   edge        ball at the picture edge
   jump        position off the line through its neighbours (> 1.5 ball-widths)
-  disagree    TrackNet strongly sees the ball somewhere else (> 3 ball-widths away)
-  missed      no position, but TrackNet strongly sees a ball
+  disagree    the finder strongly sees the ball somewhere else (> 3 ball-widths away)
+  missed      no position, but the finder strongly sees a ball
   contact     odd contact: direction barely changes (likely a split arc, e.g. a long lob)
 Clips that already have ground truth in data/gt are skipped (they are the test set).
 """
@@ -74,20 +76,40 @@ def _box_sizes(track_rows, dets, ball_px):
 
 
 def propose(video: str, out_dir: str = "data/proposals", tracknet: str | None = None,
-            output_dir: str = "output", model_path: str = "models/best4.pt") -> Path:
+            output_dir: str = "output", model_path: str = "models/best4.pt", classic: bool = False,
+            finder: str = "models/wasb/wasb_ft2.pth.tar") -> Path:
     from core.video_pipeline import run
-    from core import paths
+    from core import paths, finders
     stem = Path(video).stem
-    run(input_path=video, output_dir=output_dir, model_path=model_path, tracknet=tracknet, render=False)
+    if classic:
+        run(input_path=video, output_dir=output_dir, model_path=model_path, tracknet=tracknet, render=False,
+            pipeline="classic")
+        dets = json.load(open(paths.dets(stem, output_dir)))
+        prof = dets.get("profile") or {}
+        tpath = paths.tracknet(stem, output_dir)
+        from core.tracknet import correct
+        tn = correct(json.load(open(tpath))["frames"], float(prof.get("ball_px") or 30.0)) \
+            if (tracknet and tpath.exists()) else None
+    else:
+        dp = paths.dets(stem, output_dir)
+        if not dp.exists():           # full-frame YOLO: other-ball suggestions + hard negatives need it
+            from ultralytics import YOLO
+            from tools.dump_detections import dump
+            print("[autolabel] full-frame YOLO pass (for other balls / hard negatives; cached)")
+            dump(video, YOLO(model_path), paths.ensure(dp), 0.05, 1280)
+        run(input_path=video, output_dir=output_dir, model_path=model_path, render=False,
+            pipeline="finder-first", finder=finder, strict_p=None)
+        dets = json.load(open(dp))
+        sample = json.load(open(paths.cache_dir(stem, output_dir) / "sample_dets.json"))
+        prof = sample.get("profile") or {}
+        ftag = finders.tag(finder) or "tracknet"
+        crops = json.load(open(paths.cache_dir(stem, output_dir) / f"crops_{ftag}.json"))
+        dets["zoom"] = crops["found"]           # box sizes at crop-confirmed positions
+        tn = finders.correct(finders.load_cached(stem, finder, output_dir), float(prof.get("ball_px") or 30.0), finder)
+        tracknet = finder
     track = json.load(open(paths.track(stem, output_dir)))
     cpath = paths.contacts(stem, output_dir)
     contacts = json.load(open(cpath))["contacts"] if cpath.exists() else []
-    dets = json.load(open(paths.dets(stem, output_dir)))
-    tpath = paths.tracknet(stem, output_dir)
-    prof = dets.get("profile") or {}
-    from core.tracknet import correct
-    tn = correct(json.load(open(tpath))["frames"], float(prof.get("ball_px") or 30.0)) \
-        if (tracknet and tpath.exists()) else None
     fps = prof.get("fps") or track.get("fps") or 60.0
     ball = float(prof.get("ball_px") or 30.0)
     W, H = track["width"], track["height"]
@@ -193,7 +215,10 @@ def main():
     # TrackNet is off by default for labeling: its points run ~0.35 ball-widths off (right
     # direction, wrong spot), which costs more fixing than the gaps it fills. Turn it on with
     # --tracknet (bare flag = the current checkpoint) once a retrained model is more precise.
-    ap.add_argument("--tracknet", nargs="?", const="models/tracknet/FT_TrackNet_best.pt", default=None)
+    ap.add_argument("--tracknet", nargs="?", const="models/tracknet/FT_TrackNet_best.pt", default=None,
+                    help="(--classic) also use TrackNet")
+    ap.add_argument("--classic", action="store_true", help="the old pipeline (YOLO every frame + rule linker + zoom)")
+    ap.add_argument("--finder", default="models/wasb/wasb_ft2.pth.tar", help="ball finder (finder-first)")
     ap.add_argument("--no-tracknet", action="store_true", help="(default; kept for old commands)")
     ap.add_argument("--include-gt", action="store_true", help="also process clips that have ground truth (test set)")
     ap.add_argument("--redo", action="store_true", help="re-propose clips that already have a proposals file")
@@ -212,7 +237,8 @@ def main():
         if (Path(a.out) / f"{stem}.json").exists() and not a.redo:
             print(f"[autolabel] {stem}: already proposed, skipped (--redo to redo)")
             continue
-        propose(v, a.out, None if a.no_tracknet else a.tracknet, model_path=a.model)
+        propose(v, a.out, None if a.no_tracknet else a.tracknet, model_path=a.model, classic=a.classic,
+                finder=a.finder)
 
 
 if __name__ == "__main__":

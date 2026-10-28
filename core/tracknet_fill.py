@@ -12,7 +12,7 @@ Runs after the linker. TrackNet never overrides a YOLO detection; it only fills:
 
 The corridor radius is r_bw ball-widths, growing with time since the last observation.
 Settings are in seconds and ball-widths. Measured on the 10 labelled clips
-(tools.eval_gt, rule linker 95.3% on-ball):
+(tools/archive/eval_gt.py, rule linker 95.3% on-ball):
     peak_ext 0.4  -> 96.5% on-ball, false ball when hidden 8.0% -> 10.4%
     peak_ext 0.2  -> 97.6% on-ball, false ball when hidden 17.8%
 Frames filled here get state "tracknet" (an observation, like "weak").

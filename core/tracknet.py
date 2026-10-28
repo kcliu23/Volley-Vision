@@ -189,7 +189,7 @@ def offset_path(ckpt: str | Path = DEFAULT_CKPT) -> Path:
 
 def load_offset(ckpt: str | Path = DEFAULT_CKPT) -> tuple[float, float]:
     """Temporary workaround for a model defect: this checkpoint's measured position offset
-    (TrackNet - true ball, ball-widths), from tools.tracknet_offset. Used only if it was
+    (TrackNet - true ball, ball-widths), from tools/archive/tracknet_offset.py. Used only if it was
     measured for exactly this checkpoint (fingerprint match), so a retrained model starts
     uncorrected. (0, 0) otherwise."""
     p = offset_path(ckpt)

@@ -31,20 +31,41 @@ def dump(video: str, model, out_path: Path, conf: float, imgsz: int) -> Path:
     cap.release()
 
     from core.refine import small_gray, frame_changed_pixels, DUP_MAX_CHANGED
+    from core.device import predict, yolo_device, BATCH
     frames, dup, prev = [], [], None
     t0 = time.time()
-    for i, r in enumerate(model.predict(source=video, stream=True, conf=conf, imgsz=imgsz, verbose=False)):
-        boxes = []
-        for b in r.boxes:
-            x1, y1, x2, y2 = (float(v) for v in b.xyxy[0])
-            boxes.append([round((x1 + x2) / 2, 1), round((y1 + y2) / 2, 1),
-                          round(x2 - x1, 1), round(y2 - y1, 1), round(float(b.conf[0]), 3)])
-        frames.append(boxes)
-        g = small_gray(r.orig_img)
-        dup.append(prev is not None and frame_changed_pixels(prev, g) < DUP_MAX_CHANGED)
-        prev = g
-        if i % 100 == 0:
-            print(f"  {Path(video).name}: {i}/{total}  [{time.time() - t0:.0f}s]", flush=True)
+    print(f"  YOLO on {yolo_device()}, {BATCH} frames per batch", flush=True)
+
+    def flush(batch):
+        nonlocal prev
+        for r, img in zip(predict(model, batch, conf=conf, imgsz=imgsz, batch=len(batch)), batch):
+            boxes = []
+            for b in r.boxes:
+                x1, y1, x2, y2 = (float(v) for v in b.xyxy[0])
+                boxes.append([round((x1 + x2) / 2, 1), round((y1 + y2) / 2, 1),
+                              round(x2 - x1, 1), round(y2 - y1, 1), round(float(b.conf[0]), 3)])
+            frames.append(boxes)
+            g = small_gray(img)
+            dup.append(prev is not None and frame_changed_pixels(prev, g) < DUP_MAX_CHANGED)
+            prev = g
+            if len(frames) % 100 == 0:
+                print(f"  {Path(video).name}: {len(frames)}/{total}  [{time.time() - t0:.0f}s]", flush=True)
+
+    cap = cv2.VideoCapture(video)
+    batch = []
+    while True:
+        ok, img = cap.read()
+        if not ok:
+            break
+        batch.append(img)
+        if len(batch) == BATCH:
+            flush(batch)
+            batch = []
+    if batch:
+        flush(batch)
+    cap.release()
+    print(f"  {Path(video).name}: {len(frames)} frames in {time.time() - t0:.0f}s "
+          f"({len(frames) / max(time.time() - t0, 1e-6):.1f} frames/s)", flush=True)
 
     out = Path(out_path)
     out.parent.mkdir(parents=True, exist_ok=True)

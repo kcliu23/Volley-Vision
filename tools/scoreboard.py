@@ -1,8 +1,8 @@
 """Should a new checkpoint replace the current one? Score both through the whole pipeline.
 
-    python -m tools.scoreboard --yolo models/best5.pt
-    python -m tools.scoreboard --tracknet models/tracknet/FT2_TrackNet_best.pt
-    python -m tools.scoreboard --yolo models/best5.pt --tracknet models/tracknet/FT2_TrackNet_best.pt
+    python -m tools.scoreboard --yolo models/best5.pt                      # finder-first (default)
+    python -m tools.scoreboard --finder models/wasb/wasb_ft4.pth.tar
+    python -m tools.scoreboard --pipeline classic --tracknet models/tracknet/FT2_TrackNet_best.pt
 
 Runs the full pipeline (main.py without the video render) with the current models and with
 the candidate, each in its own folder under output/dev/scoreboard/ (your real outputs are
@@ -13,7 +13,8 @@ untouched), and compares:
     has seen them: read these as "did it learn them", the test clips as "does it generalize")
   - the 11 regression cases
 Caches are copied from output/<clip>/cache when a model is unchanged, so only what changed is
-recomputed (a new YOLO needs a detection pass per clip; a new TrackNet one TrackNet pass).
+recomputed (finder-first: a new YOLO redoes the sparse pass and the crops, a new finder its
+pass and the crops; classic: a new YOLO a full detection pass, a new TrackNet a TrackNet pass).
 """
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ from core import paths  # noqa: E402
 
 CUR_YOLO = "models/best4.pt"
 CUR_TN = "models/tracknet/FT_TrackNet_best.pt"
+CUR_FINDER = "models/wasb/wasb_ft2.pth.tar"
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".avi", ".mkv")
 
 
@@ -43,13 +45,30 @@ def find_video(stem: str, dirs: list[str]) -> str | None:
     return None
 
 
-def run_one(stem, video, root, yolo, tn, reuse_yolo, reuse_tn):
+def run_one(stem, video, root, yolo, finder, reuse_yolo, reuse_finder, pipeline):
     from core.video_pipeline import run
-    if reuse_yolo and paths.dets(stem).exists() and not paths.dets(stem, root).exists():
-        shutil.copy(paths.dets(stem), paths.ensure(paths.dets(stem, root)))
-    if reuse_tn and paths.tracknet(stem).exists() and not paths.tracknet(stem, root).exists():
-        shutil.copy(paths.tracknet(stem), paths.ensure(paths.tracknet(stem, root)))
-    run(input_path=video, output_dir=str(root), model_path=yolo, tracknet=tn, render=False)
+    from core import finders
+
+    def reuse(src, dst):
+        if src.exists() and not dst.exists():
+            shutil.copy(src, paths.ensure(dst))
+    if pipeline == "classic":
+        if reuse_yolo:
+            reuse(paths.dets(stem), paths.dets(stem, root))
+        if reuse_finder:
+            reuse(paths.tracknet(stem), paths.tracknet(stem, root))
+        run(input_path=video, output_dir=str(root), model_path=yolo, tracknet=finder, render=False,
+            pipeline="classic")
+    else:
+        cache, dst = paths.cache_dir(stem), paths.cache_dir(stem, root)
+        if reuse_yolo:
+            reuse(cache / "sample_dets.json", dst / "sample_dets.json")
+        if reuse_finder:
+            reuse(finders.cache_path(stem, finder), finders.cache_path(stem, finder, root))
+        if reuse_yolo and reuse_finder:              # crops depend on both models
+            for c in cache.glob(f"crops_{finders.tag(finder)}*.json"):
+                reuse(c, dst / c.name)
+        run(input_path=video, output_dir=str(root), model_path=yolo, finder=finder, render=False)
     rows = json.load(open(paths.track(stem, root)))["frames"]
     return SimpleNamespace(pos=[tuple(r["pos"]) if "pos" in r else None for r in rows],
                            state=[r["state"] for r in rows])
@@ -83,18 +102,23 @@ def fmt(t: dict) -> str:
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--yolo", default=None, help="candidate YOLO weights (default: keep the current)")
-    ap.add_argument("--tracknet", default=None, help="candidate TrackNet checkpoint (default: keep the current)")
+    ap.add_argument("--finder", default=None, help="candidate ball finder, WASB (finder-first)")
+    ap.add_argument("--tracknet", default=None, help="candidate TrackNet checkpoint (classic)")
+    ap.add_argument("--pipeline", choices=["finder-first", "classic"], default="finder-first")
     ap.add_argument("--video-dir", action="append", default=["videos", "holdout"])
     ap.add_argument("--clips", nargs="*", help="only these clips")
     a = ap.parse_args()
-    if not a.yolo and not a.tracknet:
-        ap.error("give --yolo and/or --tracknet")
+    classic = a.pipeline == "classic"
+    if not a.yolo and not (a.tracknet if classic else a.finder):
+        ap.error("give --yolo and/or " + ("--tracknet" if classic else "--finder"))
     from tools.calibrate import ball_px
     from tools.regression import _cases
-    cand_yolo, cand_tn = a.yolo or CUR_YOLO, a.tracknet or CUR_TN
-    tag = "_".join(Path(x).stem for x in (cand_yolo, cand_tn))
-    roots = {"current": paths.dev() / "scoreboard" / "current", "candidate": paths.dev() / "scoreboard" / tag}
-    models = {"current": (CUR_YOLO, CUR_TN), "candidate": (cand_yolo, cand_tn)}
+    cur_f = CUR_TN if classic else CUR_FINDER
+    cand_yolo, cand_f = a.yolo or CUR_YOLO, (a.tracknet if classic else a.finder) or cur_f
+    tag = a.pipeline + "_" + "_".join(Path(x).name.split(".")[0] for x in (cand_yolo, cand_f))
+    roots = {"current": paths.dev() / "scoreboard" / f"{a.pipeline}_current",
+             "candidate": paths.dev() / "scoreboard" / tag}
+    models = {"current": (CUR_YOLO, cur_f), "candidate": (cand_yolo, cand_f)}
 
     gt = paths.gt_stems()
     hold = [s for s in paths.holdout_stems() if paths.verified(s).exists() and s not in gt]
@@ -110,10 +134,10 @@ def main():
         for name in ("current", "candidate"):
             y, t = models[name]
             print(f"== {stem} [{name}]", flush=True)
-            tracks[name][stem] = run_one(stem, video, roots[name], y, t,
-                                         reuse_yolo=(y == CUR_YOLO), reuse_tn=(t == CUR_TN))
+            tracks[name][stem] = run_one(stem, video, roots[name], y, t, reuse_yolo=(y == CUR_YOLO),
+                                         reuse_finder=(t == cur_f), pipeline=a.pipeline)
 
-    print(f"\ncandidate: YOLO {cand_yolo}   TrackNet {cand_tn}\n")
+    print(f"\n{a.pipeline} pipeline; candidate: YOLO {cand_yolo}   {'TrackNet' if classic else 'finder'} {cand_f}\n")
     for title, group, src in (("HOLDOUT clips (real test: never trained on, every frame)", hold, "verified"),
                               ("dev clips (data/gt; test7/12/17 were in best4's training)", gt, "gt"),
                               ("your checked training clips", checked, "verified")):
@@ -123,7 +147,9 @@ def main():
             if stem not in tracks["current"]:
                 continue
             labels = json.load(open(paths.gt(stem) if src == "gt" else paths.verified(stem)))["labels"]
-            ball = ball_px(json.load(open(paths.dets(stem, roots["current"]))))
+            dp = paths.dets(stem, roots["current"]) if classic else \
+                paths.cache_dir(stem, roots["current"]) / "sample_dets.json"
+            ball = ball_px(json.load(open(dp)))
             row = {}
             for n in tracks:
                 r = score(tracks[n][stem], labels, ball)

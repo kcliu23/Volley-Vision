@@ -2,6 +2,7 @@
 
     python -m tools.calibrate                 # fit on checked training clips (data/verified) -> models/score_calibration.json
     python -m tools.calibrate --report        # + leave-one-clip-out check on the test clips (data/gt)
+    python -m tools.calibrate --finder models/wasb/wasb_volleyball_best.pth.tar   # + a model for WASB's peaks
 
 Each candidate in a labelled frame is positive if it lies within one ball-width of the
 labelled ball, negative otherwise (and every candidate in a "no ball" / "hidden" frame is
@@ -9,7 +10,7 @@ negative). Training uses data/verified clips with role "train"; data/gt test cli
 used for the leave-one-clip-out report, never for the saved model.
 
 TrackNet positions are taken with the checkpoint's offset workaround applied (see
-tools.tracknet_offset), so positives are judged where the pipeline will actually use them.
+tools/archive/tracknet_offset.py), so positives are judged where the pipeline will actually use them.
 """
 from __future__ import annotations
 
@@ -36,6 +37,9 @@ def labels_for(stem: str, kind: str) -> dict[int, object]:
     return {int(k): v for k, v in lab.items() if v != "skip"}
 
 
+EXTRA_FINDERS: list[str] = []      # checkpoints of other finders to calibrate too (--finder)
+
+
 def candidates(stem: str) -> tuple[dict, list[list[tuple]]]:
     """(dets dict, per-frame list of (source, x, y, size, conf, aspect)); TrackNet positions
     corrected by the offset being fitted (set_offset) or the saved one."""
@@ -55,6 +59,15 @@ def candidates(stem: str) -> tuple[dict, list[list[tuple]]]:
         for f, fr in enumerate(tn[:n]):
             for c in fr:
                 out[f].append(("tracknet", c[0], c[1], c[2], c[4], 1.0))
+    from core import finders
+    for ck in EXTRA_FINDERS:
+        fr = finders.load_cached(stem, ck)
+        if fr is None:
+            continue
+        name = finders.calib_name(ck)
+        for f, row in enumerate(finders.correct(fr, ball_px(d), ck)[:n]):
+            for c in row:
+                out[f].append((name, c[0], c[1], c[2], c[4], 1.0))
     return d, out
 
 
@@ -68,7 +81,8 @@ def ball_px(d: dict) -> float:
 
 def collect(clips: list[tuple[str, str]]) -> dict:
     """clips: [(stem, "gt" | "verified")] -> {source: (X, y)}"""
-    rows = {s: ([], [], [], []) for s in SOURCES}       # conf, size_ratio, aspect, y
+    from core import finders
+    rows = {s: ([], [], [], []) for s in tuple(SOURCES) + tuple(finders.calib_name(c) for c in EXTRA_FINDERS)}
     for stem, kind in clips:
         d, cands = candidates(stem)
         ball = ball_px(d)
@@ -120,7 +134,11 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--report", action="store_true")
     ap.add_argument("--out", default="models/score_calibration.json")
+    ap.add_argument("--finder", action="append", default=[],
+                    help="also calibrate this finder's peaks (e.g. models/wasb/wasb_volleyball_best.pth.tar); "
+                         "uses its cached candidates (output/<clip>/cache/tracknet_<tag>.json)")
     a = ap.parse_args()
+    EXTRA_FINDERS[:] = a.finder
     tr = train_clips()
     gt = [(s, "gt") for s in paths.gt_stems() if paths.dets(s).exists()]
     if not tr:
@@ -130,7 +148,7 @@ def main():
     cal = fit(samples)
     cal.save(a.out, {"trained_on": [s for s, _ in tr]})
     print(f"fitted on {len(tr)} checked clip(s) {[s for s, _ in tr]}: "
-          + ", ".join(f"{s} {len(samples[s][1])} candidates ({int(samples[s][1].sum())} on the ball)" for s in SOURCES)
+          + ", ".join(f"{s} {len(samples[s][1])} candidates ({int(samples[s][1].sum())} on the ball)" for s in samples)
           + f"  →  {a.out}")
     if a.report:
         print("held-out check on the test clips (never used for fitting):")

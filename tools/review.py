@@ -28,9 +28,13 @@ it resumes where you left off.
                  grey squares   = suggestions (confident YOLO boxes away from the game ball;
                                   often a wall clock or a light: then just ignore them)
                  orange squares = other balls you confirmed
-                 shift+click (or e, then click) a grey square: yes, a ball (follows it to the end
-                 of the segment); on an orange one: remove it (same); elsewhere: a ball here
+                 shift+click (or e, then click) a grey square: yes, a ball. One click is enough: it
+                 follows that ball through the whole clip, both directions (bridging gaps where YOLO
+                 lost it: up to 1 s, or 5 s for a ball that stays put). On an orange one: remove it (same). Elsewhere: a ball here
                  o      jump to the next frame with a grey suggestion (quick pass over a checked clip)
+  contacts       m      mark a touch at this frame, then its type: 1 serve, 2 pass/receive,
+                        3 set, 4 attack, 5 block, 6 dig, 0 other (m on a marked frame removes it)
+                 M      jump to the next marked touch
   other          u      undo                   t      toggle train / test clip
                  ?      help                   q/Esc  save and quit
 
@@ -38,7 +42,8 @@ Red ticks on the timeline are frames autolabel flagged for a closer look (the re
 at the top); green = accepted, yellow = your edits. Ball labels: data/verified/<clip>.json
   {"labels": {"<frame>": [x, y] | "none" | "hidden" | "skip"}, "boxes": {"<frame>": [w, h]},
    "src": {"<frame>": "auto" | "fixed" | "interp"}, "role": "train" | "test", "reviewed": [[f0, f1], ...],
-   "others": {"<frame>": [[x, y, w, h], ...]}}   other balls you confirmed (only these are exported)
+   "others": {"<frame>": [[x, y, w, h], ...]},   other balls you confirmed (only these are exported)
+   "contacts": {"<frame>": "serve" | "pass" | "set" | "attack" | "block" | "dig" | "other"}}   touches you marked
 """
 from __future__ import annotations
 
@@ -71,6 +76,7 @@ class Review:
         sizes = sorted(max(fr["box"]) for fr in proposals["frames"] if fr.get("xy") is not None and fr.get("box"))
         self.ball = sizes[len(sizes) // 2] if sizes else 30.0
         self.others_edit: dict[int, list] = {int(k): x for k, x in v.get("others", {}).items()}
+        self.contacts: dict[int, str] = {int(k): x for k, x in v.get("contacts", {}).items()}
         self.labels: dict[int, object] = {int(k): x for k, x in v.get("labels", {}).items()}
         self.boxes: dict[int, list] = {int(k): x for k, x in v.get("boxes", {}).items()}
         self.src: dict[int, str] = {int(k): x for k, x in v.get("src", {}).items()}
@@ -131,19 +137,71 @@ class Review:
                 best = (i, d)
         return None if best is None else best[0]
 
-    def toggle_other(self, f: int, xy, until: int) -> str:
-        """On a confirmed ball: remove it (here and onward while it's there, up to `until`).
-        On a suggestion: confirm it (here and onward while YOLO keeps seeing it there).
+    FOLLOW_CONF = 0.1        # once you confirmed a ball, weaker YOLO boxes at that spot count too
+    FOLLOW_GAP_S = 1.0       # ... and gaps up to this long (YOLO lost it) are bridged
+    STILL_GAP_S = 5.0        # ... or up to this long if it reappears at the same spot (resting ball)
+
+    def _follow(self, f: int, spot, boxes_at, direction: int) -> dict:
+        """Follow one object from frame f in one direction through the whole clip: frame -> box.
+        boxes_at(g) gives candidate boxes in frame g. Gaps where YOLO lost it are bridged by
+        interpolating between the sightings on both sides: up to FOLLOW_GAP_S, or up to
+        STILL_GAP_S when it reappears at the same spot (a resting ball doesn't go anywhere)."""
+        fps = self.P.get("fps", 30)
+        max_gap = max(1, int(round(self.FOLLOW_GAP_S * fps)))
+        max_still = max(max_gap, int(round(self.STILL_GAP_S * fps)))
+        hits, last = {}, f
+        while True:
+            found = None
+            for g in range(last + direction, last + direction * (max_still + 1), direction):
+                if not 0 <= g < self.n:
+                    break
+                j = self._nearest(boxes_at(g), spot, self.ball)
+                if j is not None:
+                    box = boxes_at(g)[j]
+                    still = ((box[0] - spot[0]) ** 2 + (box[1] - spot[1]) ** 2) ** 0.5 <= 0.5 * self.ball
+                    if abs(g - last) <= max_gap or still:
+                        found = (g, box)
+                    break
+            if found is None:
+                return hits
+            g, box = found
+            hits[g] = box
+            pa = hits.get(last) or self._origin
+            for h in range(last + direction, g, direction):              # bridge the gap
+                w = (h - last) / (g - last)
+                hits[h] = [round(pa[k] + w * (box[k] - pa[k]), 1) for k in range(4)]
+            last, spot = g, box[:2]
+
+    def _boxes_near_play(self, g: int) -> list:
+        """YOLO boxes in frame g (>= FOLLOW_CONF) that aren't the game ball."""
+        if not self.dets or g >= len(self.dets):
+            return []
+        game = self.game_xy(g)
+        out = []
+        for b in self.dets[g]:
+            if b[4] < self.FOLLOW_CONF:
+                continue
+            if game is not None and ((b[0] - game[0]) ** 2 + (b[1] - game[1]) ** 2) ** 0.5 <= 1.5 * self.ball:
+                continue
+            out.append([round(b[0], 1), round(b[1], 1), round(b[2], 1), round(b[3], 1)])
+        return out
+
+    def toggle_other(self, f: int, xy, until: int | None = None) -> str:
+        """On a confirmed ball: remove it, here and everywhere it continues (both directions).
+        On a suggestion: confirm it, here and everywhere YOLO keeps seeing it at that spot (both
+        directions, whole clip, weaker boxes and gaps up to a second included).
         Elsewhere: add a ball in this frame."""
         r = max(self.ball, 12.0)
         i = self._nearest(self.others(f), xy, r)
         if i is not None:                                  # remove a confirmed ball
-            spot, frames, g = self.others(f)[i][:2], [], f
-            while g <= until and (j := self._nearest(self.others(g), spot, self.ball)) is not None:
-                frames.append((g, j)); spot = self.others(g)[j][:2]; g += 1
-            self._push([g for g, _ in frames])
-            for g, j in frames:
-                cur = list(self.others(g)); cur.pop(j)
+            box = self.others(f)[i]
+            self._origin = box
+            frames = {f: box}
+            for d in (+1, -1):
+                frames.update(self._follow(f, box[:2], self.others, d))
+            self._push(list(frames))
+            for g, b in frames.items():
+                cur = [o for o in self.others(g) if ((o[0] - b[0]) ** 2 + (o[1] - b[1]) ** 2) ** 0.5 > self.ball]
                 if cur:
                     self.others_edit[g] = cur
                 else:
@@ -151,13 +209,18 @@ class Review:
             return f"removed the other ball from {len(frames)} frame{'s' if len(frames) != 1 else ''}"
         i = self._nearest(self.suggestions(f), xy, r)
         if i is not None:                                  # confirm a suggestion, following it
-            spot, frames, g = self.suggestions(f)[i][:2], [], f
-            while g <= until and (j := self._nearest(self.suggestions(g), spot, self.ball)) is not None:
-                frames.append((g, self.suggestions(g)[j])); spot = frames[-1][1][:2]; g += 1
-            self._push([g for g, _ in frames])
-            for g, box in frames:
-                self.others_edit[g] = self.others(g) + [box]
-            return f"confirmed another ball in {len(frames)} frame{'s' if len(frames) != 1 else ''}"
+            box = self.suggestions(f)[i]
+            self._origin = box
+            frames = {f: box}
+            for d in (+1, -1):
+                frames.update(self._follow(f, box[:2], self._boxes_near_play, d))
+            new = {g: b for g, b in frames.items()
+                   if not any(((o[0] - b[0]) ** 2 + (o[1] - b[1]) ** 2) ** 0.5 <= self.ball for o in self.others(g))}
+            self._push(list(new))
+            for g, b in new.items():
+                self.others_edit[g] = self.others(g) + [b]
+            lo, hi = min(frames), max(frames)
+            return f"confirmed another ball in {len(frames)} frames ({lo}-{hi})"
         self._push([f])
         self.others_edit[f] = self.others(f) + [[round(float(xy[0]), 1), round(float(xy[1]), 1), self.ball, self.ball]]
         return "added another ball (this frame)"
@@ -172,9 +235,23 @@ class Review:
                 return h
         return None
 
+    CONTACT_TYPES = {"1": "serve", "2": "pass", "3": "set", "4": "attack", "5": "block", "6": "dig", "0": "other"}
+
+    def set_contact(self, f: int, kind: str | None):
+        """Mark a touch at frame f (kind from CONTACT_TYPES values), or remove it (None)."""
+        self._push([f])
+        if kind is None:
+            self.contacts.pop(f, None)
+        else:
+            self.contacts[f] = kind
+
+    def next_contact(self, f: int) -> int | None:
+        later = [g for g in sorted(self.contacts) if g > f]
+        return later[0] if later else None
+
     def _push(self, frames):
-        self.undo_stack.append(([(f, self.labels.get(f), self.boxes.get(f), self.src.get(f), self.others_edit.get(f))
-                                 for f in frames],
+        self.undo_stack.append(([(f, self.labels.get(f), self.boxes.get(f), self.src.get(f), self.others_edit.get(f),
+                                  self.contacts.get(f)) for f in frames],
                                 [list(r) for r in self.reviewed], list(self.clicks)))
         if len(self.undo_stack) > 200:
             self.undo_stack.pop(0)
@@ -263,8 +340,9 @@ class Review:
         if not self.undo_stack:
             return False
         saved, reviewed, clicks = self.undo_stack.pop()
-        for f, lab, box, src, oth in saved:
-            for d, v in ((self.labels, lab), (self.boxes, box), (self.src, src), (self.others_edit, oth)):
+        for f, lab, box, src, oth, con in saved:
+            for d, v in ((self.labels, lab), (self.boxes, box), (self.src, src), (self.others_edit, oth),
+                         (self.contacts, con)):
                 if v is None:
                     d.pop(f, None)
                 else:
@@ -309,6 +387,7 @@ class Review:
                 "src": {str(f): self.src[f] for f in sorted(keep) if f in self.src},
                 "reviewed": self.reviewed,
                 "others": {str(f): self.others_edit[f] for f in sorted(self.others_edit)},
+                "contacts": {str(f): self.contacts[f] for f in sorted(self.contacts)},
                 "proposals": {"pipeline": P.get("pipeline"), "file": str(paths.proposals(Path(video).stem))}}
 
 
@@ -423,7 +502,8 @@ def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, pl
     d = R.doubt(f)
     lab_txt = {"fixed": "your label", "interp": "filled (line)", "auto": "accepted proposal",
                "proposal": "proposal"}[src]
-    note = msg or (("check: " + ", ".join(d) + "   ") if d and not R.is_edited(f) else "") + lab_txt
+    note = msg or (("check: " + ", ".join(d) + "   ") if d and not R.is_edited(f) else "") + lab_txt \
+        + (f"   TOUCH: {R.contacts[f]}" if f in R.contacts else "")
     cv2.putText(img, note, (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (255, 255, 255) if msg else ((90, 90, 255) if d and not R.is_edited(f) else (180, 180, 180)),
                 1, cv2.LINE_AA)
@@ -441,6 +521,8 @@ def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, pl
             cv2.line(img, (xs(g), y0 + 32), (xs(g), y0 + 42), (60, 60, 255), 1)
         elif R.is_edited(g):
             cv2.line(img, (xs(g), y0 + 32), (xs(g), y0 + 42), (0, 220, 255), 1)
+    for g, kind in R.contacts.items():                      # marked touches: white ticks above the timeline
+        cv2.line(img, (xs(g), y0 + 1), (xs(g), y0 + 8), (255, 255, 255), 2)
     cv2.line(img, (xs(f), y0), (xs(f), H), (255, 255, 255), 2)
     return img
 
@@ -472,7 +554,7 @@ def review(video: str, test: bool = False):
         seg_i = 0
     f = P["segments"][seg_i]["f0"]
     playing, speed_i = False, SPEEDS.index(1.0)
-    state = {"mouse": None, "click": None, "extra": False}
+    state = {"mouse": None, "click": None, "extra": False, "contact": False}
     msg, msg_t = "", 0.0
 
     WIN = "VolleyVision review"
@@ -521,6 +603,30 @@ def review(video: str, test: bool = False):
                     msg, msg_t = "end of clip - Enter / y to accept, q to quit", time.time()
             continue
         k = chr(key) if key < 128 else ""
+        if state["contact"]:                                    # waiting for the touch type after "m"
+            state["contact"] = False
+            if k in Review.CONTACT_TYPES:
+                R.set_contact(f, Review.CONTACT_TYPES[k]); save()
+                msg, msg_t = f"touch at frame {f}: {Review.CONTACT_TYPES[k]}", time.time()
+            else:
+                msg, msg_t = "no touch marked (type keys: 1 serve 2 pass 3 set 4 attack 5 block 6 dig 0 other)", time.time()
+            continue
+        if k == "m":
+            playing = False
+            if f in R.contacts:
+                R.set_contact(f, None); save()
+                msg, msg_t = f"touch at frame {f} removed", time.time()
+            else:
+                state["contact"] = True
+                msg, msg_t = "touch type? 1 serve 2 pass 3 set 4 attack 5 block 6 dig 0 other", time.time()
+            continue
+        if k == "M":
+            g = R.next_contact(f); playing = False
+            if g is None:
+                msg, msg_t = "no more marked touches", time.time()
+            else:
+                f = g; seg_i = R.segment_of(f)
+            continue
         if k == " ":
             playing = not playing; last_step = time.time()
         elif k in ("d", "."):
