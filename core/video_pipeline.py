@@ -1,7 +1,7 @@
 """VolleyVision pipeline: run(input_path, ...) tracks the ball, finds contacts, renders.
 
 pipeline="finder-first" (default): WASB on every frame, YOLO only on crops around its
-    candidates, hybrid linker (core/finder_first.py) -> flights + contacts -> render.
+    candidates, joint linker (core/finder_first.py) -> flights + contacts -> render.
 pipeline="classic": YOLO on every frame (cached), rule linker + zoom search, TrackNet gap
     filling -> flights + contacts -> render.
 The old single-pass tracker (run_legacy) is archived in core/archive/legacy_pipeline.py.
@@ -36,10 +36,11 @@ def run(
     render: bool = True,
     pipeline: str = "finder-first",
     finder: str = "models/wasb/wasb_ft2.pth.tar",
-    strict_p: float | None = 0.6,
+    crop_top: int = 1,
+    crop_p: float | None = 0.6,
 ) -> str:
-    """pipeline: "finder-first" (default; uses finder + strict_p, strict_p=None for the loose
-    crop rule) or "classic" (uses linker, zoom, tracknet)."""
+    """pipeline: "finder-first" (default; uses finder + the crop rule crop_top / crop_p, crop_p=None
+    for no threshold) or "classic" (uses linker, zoom, tracknet)."""
     from ultralytics import YOLO
     from core.linker import link as rule_link, LinkParams
     from core.refine import link_with_zoom
@@ -61,10 +62,10 @@ def run(
 
     if pipeline == "finder-first":
         # finder-first (default): WASB on every frame, YOLO only on crops around its top
-        # candidates, hybrid linker (core/finder_first.py)
+        # candidates, joint linker (core/finder_first.py)
         from core import finder_first
         model = YOLO(model_path)
-        track, info = finder_first.track(input_path, model, finder, strict_p=strict_p, root=output_dir,
+        track, info = finder_first.track(input_path, model, finder, crop_top=crop_top, crop_p=crop_p, root=output_dir,
                                          log=lambda m: print(m))
         det_path = paths.cache_dir(stem, output_dir) / "sample_dets.json"
         dets = json.load(open(det_path))

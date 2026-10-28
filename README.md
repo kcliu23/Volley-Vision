@@ -4,7 +4,7 @@ Volleyball ball tracking and touch detection from a single camera.
 
 **Finder-first (default):** **WASB**, a ball-finding network that looks at 3 frames at once,
 runs on every frame and proposes where the ball might be. **YOLO** checks only a small crop
-around WASB's top candidate (where it's likely enough to be the ball). A **hybrid linker**
+around WASB's top candidate (where it's likely enough to be the ball). A **joint linker**
 then picks the ball's path over the whole clip in one pass: every candidate weighed by a
 probability learned from your labels (score calibration) plus physics (gravity arcs, speed and
 size limits, one ball). The path is split into **flights** (one parabola each); the boundaries
@@ -27,8 +27,8 @@ the YOLO crops; re-runs reuse the caches and take seconds.
 |------|---------|-------------|
 | `--pipeline` | `finder-first` | `finder-first` or `classic` |
 | `--finder` | `models/wasb/wasb_ft2.pth.tar` | (finder-first) ball finder, WASB |
-| `--strict-p` | `0.6` | (finder-first) crop WASB's top candidate only if its calibrated P(ball) ≥ this |
-| `--loose` | off | (finder-first) crop up to 2 candidates per frame: fewer misses, more false balls, ~2.5× the YOLO work |
+| `--crop-top`, `--crop-p` | `1`, `0.6` | (finder-first) YOLO-check up to this many WASB candidates per frame, those with calibrated P(ball) ≥ this |
+| `--loose` | off | (finder-first) top 2 candidates, no threshold: fewer misses, more false balls, ~2.5× the YOLO work |
 | `--ring` | off | Hollow ring marker, so the real ball stays visible underneath |
 | `--preview` | off | Show the render while it's written |
 | `--trail-len` | `40` | Ball trail length in frames |
@@ -57,8 +57,13 @@ share of ball frames where the track is within one ball-width of your label:
 | | on the ball | wrong place | missed | false ball when hidden | YOLO work |
 |---|---|---|---|---|---|
 | classic | 92.2% | 0.5% | 7.3% | 2.7% | every frame + zoom rounds |
-| **finder-first, strict 0.6 (default)** | **94.8%** | 1.1% | 4.1% | **2.3%** | ~39% of every frame (+10% sparse pass) |
-| finder-first, loose | 96.2% | 1.0% | 2.8% | 3.7% | ~100% of every frame |
+| **finder-first, strict (default)** | **94.8%** | 1.1% | 4.1% | **2.3%** | ~39% of every frame (+10% sparse pass) |
+| finder-first, `--crop-top 2 --crop-p 0.1` | 95.5% | 0.9% | 3.6% | 2.4% | ~51% of every frame (breaks regression case test21) |
+| finder-first, loose | 96.1% | 1.0% | 2.9% | 3.7% | ~100% of every frame |
+
+Known gap: a second ball in play on a neighbouring court can win over the game ball for a moment
+when it's seen more confidently (regression case test34). A court-area cue (homography) is the
+planned fix; `--pipeline classic` handles that clip.
 
 Positions: YOLO-confirmed points are within ~0.05 ball-widths of your label; points only WASB
 saw (blur, partly hidden; ~40% of frames) are ~0.17 ball-widths (~4 px) off, WASB's heatmap
@@ -100,9 +105,10 @@ python -m tools.export_training --name v3 \
 ## Development tools
 
 ```bash
-python -m tools.regression [--linker finder-first|hybrid|cost] [--tracknet]   # 12 known-tricky moments
+python -m tools.regression [--linker finder-first|joint|cost] [--tracknet]   # 12 known-tricky moments
 python -m tools.compare_finders --runs --finders tracknet wasb:models/wasb/wasb_ft2.pth.tar   # finders alone
-python -m tools.eval_finder_first --finder models/wasb/wasb_ft2.pth.tar     # classic vs hybrid vs finder-first
+python -m tools.eval_finder_first --finder models/wasb/wasb_ft2.pth.tar     # classic vs YOLO+finder vs finder-first crop rules
+python -m tools.ablate [--variants joint classic]   # test a pipeline change on cached inputs (holdout/dev/checked + regression)
 python -m tools.dump_detections videos/*.mov      # pre-compute the full YOLO pass for many clips
 ```
 
@@ -113,12 +119,12 @@ main.py                 CLI entry point
 core/
   paths.py              where every file lives (output/<clip>/..., data/..., training/...)
   video_pipeline.py     run(): finder-first (default) or classic -> flights + contacts -> render
-  finder_first.py       sparse YOLO pass, WASB, YOLO crops, hybrid linker
+  finder_first.py       sparse YOLO pass, WASB, YOLO crops, joint linker
   finders.py            one interface for the ball finders (WASB, TrackNet): candidates, caches, calibration name
   wasb.py, wasb_hrnet.py   WASB (HRNet, from nttcom/WASB-SBDT, MIT) heatmaps -> candidates
   tracknet.py           TrackNet heatmaps -> candidates (network from TrackNetV3, MIT)
   calibration.py        detection score -> probability, per source
-  tracklets.py, tracklet_linker.py, joint_linker.py   hybrid linker: tracklets pick the object, joint linker the path
+  joint_linker.py       the ball's path over the whole clip: calibrated candidates + physics, one pass
   linker.py             rule-based linker (classic) + shared gap filling
   cost_linker.py        cost-based linker (classic option; shared helpers)
   refine.py             zoom search (classic), YOLO crops, repeated-frame and picture-area detection
@@ -129,10 +135,11 @@ core/
   device.py             CUDA / MPS / CPU choice, batched YOLO (VV_DEVICE, VV_BATCH)
   other_balls.py        other volleyballs in the picture (suggestions for the review tool)
   render.py             trail / marker / touch rings, ffmpeg encode
-  archive/              retired: single-pass tracker + old touch detector, VballNet, TrackNet-zoom experiment
+  archive/              retired: single-pass tracker + old touch detector, VballNet, TrackNet-zoom experiment,
+                        tracklet layer (tracklets, tracklet_linker: no gain over the joint linker alone)
 tools/                  autolabel, review, export_training, build_tracknet_data, calibrate, scoreboard,
-                        regression, compare_finders, eval_finder_first, dump_detections
-tools/archive/          retired tools (eval_gt, eval_joint, label_gt, compare_tracking, tracknet_offset,
+                        regression, ablate, compare_finders, eval_finder_first, dump_detections
+tools/archive/          retired tools (eval_gt, eval_joint, label_gt, compare_tracking, tracknet_offset, fit_linker,
                         old Roboflow upload, organize_output) and dev/ (linker debugging, visualisation)
 videos/                 your clip pool: everything labelled for training (not in git)
 holdout/                test clips: never trained on, only scored (not in git)

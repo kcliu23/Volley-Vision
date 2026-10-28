@@ -3,7 +3,9 @@
 Step 2 of the joint linker with tracklets (step 1: core.tracklets). The chosen sequence of
 tracklets minimizes
 
-    Σ evidence      -w_det · logit(p) for every point kept (sure balls are rewarded)
+    Σ evidence      -w_det · min(logit(p), logit_cap) for every point kept (sure balls are
+                    rewarded; the cap stops one long, confident object, e.g. a ball on the next
+                    court, from outweighing every hand-over cost just by being seen in more frames)
   + Σ not visible   miss per usable frame no chosen tracklet covers
   + Σ hand-overs    for each consecutive pair (A ends, B starts), how plausibly ONE ball does that:
                       arcs meet  A's arc forward and B's arc backward come within d of each
@@ -18,11 +20,16 @@ Only one tracklet at a time (a small overlap is trimmed), so two balls in view a
 both be "the ball": the chain that connects is chosen. Solved exactly by dynamic programming
 over tracklets (O(N²), N ≈ tens). Gaps inside the chosen chain are then bridged as before
 (core.linker.finalize).
+
+The weights are fitted on your labels by tools.fit_linker and saved in
+models/linker_params.json (loaded automatically); without that file the hand-set defaults below apply.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
+import json
 import math
+from pathlib import Path
 
 import numpy as np
 
@@ -32,6 +39,7 @@ from core.linker import LinkParams, finalize, DETECTED, WEAK
 from core.tracklets import TrackletParams, build as build_tracklets
 
 TRACKLET_LINKER_VERSION = 1
+PARAMS_PATH = Path(__file__).resolve().parents[1] / "models" / "linker_params.json"
 
 
 @dataclass
@@ -47,6 +55,17 @@ class AssocParams:
     reentry: float = 6.0          # pick the ball up again after a long gap, anywhere
     reentry_gap_s: float = 0.6    # ... only after at least this long
     max_overlap_s: float = 0.1    # consecutive tracklets may overlap this much (trimmed)
+    logit_cap: float = 1e9        # a point's evidence counts at most this much (1e9 = no cap)
+
+    @classmethod
+    def load(cls, path=PARAMS_PATH) -> "AssocParams":
+        """Fitted weights (tools.fit_linker) if models/linker_params.json exists, else the defaults."""
+        p = Path(path)
+        if not p.exists():
+            return cls()
+        w = json.load(open(p)).get("assoc", {})
+        names = {f.name for f in fields(cls)}
+        return cls(**{k: float(v) for k, v in w.items() if k in names})
 
 
 def _meet(A, B, gy, f_lo, f_hi, k=5):
@@ -66,7 +85,7 @@ def link(dets: dict, tn_frames, cal, fps: float, width: int, height: int, ball: 
          params: AssocParams | None = None, jparams: JointParams | None = None,
          tparams: TrackletParams | None = None, dup_flags=None, content=None, times=None,
          link_params: LinkParams | None = None, return_debug: bool = False):
-    A_ = params or AssocParams()
+    A_ = params or AssocParams.load()
     JP = jparams or JointParams()
     LP = link_params or LinkParams()
     n = len(dets["frames"])
@@ -89,7 +108,7 @@ def link(dets: dict, tn_frames, cal, fps: float, width: int, height: int, ball: 
     re_gap = int(round(A_.reentry_gap_s * fps))
 
     def cost_from(t, start_idx):
-        return float(-A_.w_det * np.sum(t.logits[start_idx:]))
+        return float(-A_.w_det * np.sum(np.minimum(t.logits[start_idx:], A_.logit_cap)))
 
     def handover(a, b, start_b):
         """Cost of one ball going from tracklet a's end to tracklet b's (trimmed) start."""
