@@ -78,8 +78,10 @@ def read_rallies(root: Path) -> list[list[tuple[str, tuple[float, float] | None]
 
 
 class Triplets(Dataset):
-    def __init__(self, rallies, wh, train: bool, stride: int = 1):
+    def __init__(self, rallies, wh, train: bool, stride: int = 1, zoom_prob: float = 0.0,
+                 zoom_range: tuple = (1.5, 3.0)):
         self.wh, self.train = wh, train
+        self.zoom_prob, self.zoom_range = zoom_prob, zoom_range
         self.items = [(r, i) for r in rallies for i in range(0, len(r) - FRAMES + 1, stride)]
         W, H = wh
         yy, xx = np.mgrid[0:H, 0:W]
@@ -100,10 +102,33 @@ class Triplets(Dataset):
         if self.train and random.random() < 0.5:                       # same jitter for all 3 frames
             jitter = [random.uniform(0.9, 1.1), random.uniform(0.9, 1.1), random.uniform(0.9, 1.1),
                       random.uniform(-0.1, 0.1)]
+        # zoom augmentation: the same zoomed-in crop for all 3 frames, so the ball appears
+        # 1.5-3x bigger (near-camera balls are rare in the data and WASB misses them)
+        box = None
+        if self.train and self.zoom_prob > 0 and random.random() < self.zoom_prob:
+            box = random.uniform(*self.zoom_range)
         imgs, hms, xys = [], [], []
-        for path, xy in run[i:i + FRAMES]:
+        for j, (path, xy) in enumerate(run[i:i + FRAMES]):
             img = cv2.imread(path)
             h0, w0 = img.shape[:2]
+            if isinstance(box, float):                     # pick the crop once, from the first frame's size
+                z = box
+                cw, ch = int(w0 / z), int(h0 / z)
+                mid = run[i + FRAMES // 2][1]
+                if mid is not None and random.random() < 0.8:  # mostly around the ball, anywhere in the crop
+                    cx0 = mid[0] - random.uniform(0.15, 0.85) * cw
+                    cy0 = mid[1] - random.uniform(0.15, 0.85) * ch
+                else:
+                    cx0, cy0 = random.uniform(0, w0 - cw), random.uniform(0, h0 - ch)
+                box = (int(min(max(cx0, 0), w0 - cw)), int(min(max(cy0, 0), h0 - ch)), cw, ch)
+            if box is not None:
+                x0, y0, cw, ch = box
+                img = img[y0:y0 + ch, x0:x0 + cw]
+                if xy is not None:
+                    xy = (xy[0] - x0, xy[1] - y0)
+                    if not (0 <= xy[0] < cw and 0 <= xy[1] < ch):
+                        xy = None                          # the ball is outside the crop
+                h0, w0 = ch, cw
             img = cv2.resize(img, (W, H), interpolation=cv2.INTER_LINEAR)
             img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0
             if jitter is not None:
@@ -216,6 +241,8 @@ def main():
     ap.add_argument("--mine-from", type=int, default=0, help="hard-negative mining from this epoch on (0 = off)")
     ap.add_argument("--hard-weight", type=float, default=3.0, help="draw mined hard negatives this many times as often")
     ap.add_argument("--mine-every", type=int, default=1, help="re-mine hard negatives every N epochs (mining costs ~half an epoch)")
+    ap.add_argument("--zoom-prob", type=float, default=0.0,
+                    help="share of training windows zoomed in 1.5-3x (bigger balls; 0.3 recommended)")
     a = ap.parse_args()
     assert a.width % 8 == 0 and a.height % 8 == 0, "width/height must be multiples of 8"
     dev = torch.device("cuda" if torch.cuda.is_available() else
@@ -224,7 +251,9 @@ def main():
     out.mkdir(parents=True, exist_ok=True)
     wh = (a.width, a.height)
     tr, va = read_rallies(root / "train"), read_rallies(root / "val")
-    dtr, dva = Triplets(tr, wh, True, a.train_stride), Triplets(va, wh, False, FRAMES)
+    dtr, dva = Triplets(tr, wh, True, a.train_stride, zoom_prob=a.zoom_prob), Triplets(va, wh, False, FRAMES)
+    if a.zoom_prob:
+        print(f"zoom augmentation: {a.zoom_prob:.0%} of training windows zoomed in 1.5-3x")
     print(f"device {dev} | input {wh[0]}x{wh[1]} | train {len(tr)} rallies, {len(dtr)} windows | "
           f"val {len(va)} rallies, {len(dva)} windows")
     free = np.array(dtr.ball_free())

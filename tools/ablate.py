@@ -48,9 +48,11 @@ def inputs(stem: str, cal, rule):
         found, _ = subset_finds(json.load(open(lp))["found"], cands, lambda pk: float(cal.prob("tracknet", [pk])[0]), ball, *rule)
     else:                                              # no loose cache: this rule's own cache
         found = json.load(open(paths.cache_dir(stem) / f"crops_{finders.tag(FINDER)}{crop_suffix(*rule)}.json"))["found"]
+    from core.finder_first import SAMPLE_EVERY
     d2 = dict(d)
-    d2["frames"] = [[] for _ in d["frames"]]
     d2["zoom"] = found
+    # as in the pipeline: the sizing pass's full-frame boxes (every SAMPLE_EVERY-th frame) are candidates
+    d2["frames"] = [list(fr) if f % SAMPLE_EVERY == 0 else [] for f, fr in enumerate(d["frames"])]
     return d2, cands, ball, link_args(d)
 
 
