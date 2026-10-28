@@ -100,9 +100,9 @@ def _cases():
     ]
 
 
-def _hybrid(stem, d, a):
-    """Tracklets + joint linker on cached candidates (saved score calibration, offset-corrected TrackNet)."""
-    from core.tracklet_linker import link_hybrid
+def _joint(stem, d, a):
+    """Joint linker on cached full-frame YOLO + zoom + TrackNet candidates (saved score calibration)."""
+    from core.joint_linker import link as joint_link
     from core.calibration import Calibration
     from core.tracknet import correct
     from tools.calibrate import ball_px
@@ -110,8 +110,8 @@ def _hybrid(stem, d, a):
     ball = ball_px(d)
     tp = paths.tracknet(stem)
     tn = correct(json.load(open(tp))["frames"], ball) if tp.exists() else None
-    return link_hybrid(d, tn, Calibration.load(), a["fps"], d["width"], d["height"], ball,
-                       dup_flags=a["dup_flags"], content=a["content"], times=a["times"])
+    return joint_link(d, tn, Calibration.load(), a["fps"], d["width"], d["height"], ball,
+                      dup_flags=a["dup_flags"], content=a["content"], times=a["times"])
 
 
 def run(linker_name="rule", verbose=True, tracknet=False):
@@ -138,8 +138,8 @@ def run(linker_name="rule", verbose=True, tracknet=False):
             d, fr, dup = _load(stem, "zoom" if linker_name == "rule" else f"zoom_{linker_name}")
             from core.profile import link_args
             a = link_args(d)
-            if linker_name == "hybrid":                 # TrackNet is already part of the hybrid
-                cache[stem] = _hybrid(stem, d, a)
+            if linker_name == "joint":                  # TrackNet is already part of the joint linker
+                cache[stem] = _joint(stem, d, a)
                 tp = None
             else:
                 cache[stem] = linkf(fr, a["fps"], d["width"], d["height"], dup_flags=a["dup_flags"],
@@ -168,7 +168,7 @@ def run(linker_name="rule", verbose=True, tracknet=False):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--linker", choices=["rule", "cost", "hybrid", "finder-first"], default="rule")
+    ap.add_argument("--linker", choices=["rule", "cost", "joint", "finder-first"], default="rule")
     ap.add_argument("--tracknet", action="store_true", help="apply the TrackNet stage (needs <clip>_tracknet.json)")
     a = ap.parse_args()
     run(a.linker, tracknet=a.tracknet)

@@ -7,7 +7,7 @@ def main():
     parser = argparse.ArgumentParser(
         prog="volleyvision",
         description="VolleyVision — volleyball ball tracking. Default: finder-first (WASB on every frame, "
-                    "YOLO on crops around its candidates, hybrid linker, physics). --pipeline classic: "
+                    "YOLO on crops around its candidates, joint linker, physics). --pipeline classic: "
                     "YOLO on every frame + rule linker + zoom search + TrackNet.",
     )
     parser.add_argument("input",        help="Path to the input video file (mp4, mov, etc.)")
@@ -17,11 +17,13 @@ def main():
                         help="finder-first (default, best on the holdout clips) or classic (the old pipeline)")
     parser.add_argument("--finder",     default="models/wasb/wasb_ft2.pth.tar",
                         help="(finder-first) ball finder checkpoint, WASB")
-    parser.add_argument("--strict-p",   type=float, default=0.6,
-                        help="(finder-first) crop only the finder's top candidate with calibrated P(ball) >= this")
+    parser.add_argument("--crop-top",   type=int, default=1,
+                        help="(finder-first) YOLO-check up to this many finder candidates per frame")
+    parser.add_argument("--crop-p",     type=float, default=0.6,
+                        help="(finder-first) ... those with calibrated P(ball) >= this "
+                             "(e.g. --crop-top 2 --crop-p 0.1: +0.7 on-ball on holdout, ~30%% more crops)")
     parser.add_argument("--loose",      action="store_true",
-                        help="(finder-first) crop up to 2 candidates per frame: fewer misses, more false balls, "
-                             "~2.5x the YOLO work of strict")
+                        help="(finder-first) the top 2 candidates in every frame, no threshold (~2.5x the YOLO work)")
     parser.add_argument("--linker",     choices=["rule", "cost"], default="rule",
                         help="(classic) rule or cost (global optimization)")
     parser.add_argument("--no-zoom",    action="store_true",       help="(classic) Skip zoom search")
@@ -44,7 +46,7 @@ def main():
         zoom=not args.no_zoom, redetect=args.redetect, trail_len=args.trail_len,
         show_preview=args.preview, touches=not args.no_touches, ring=args.ring,
         tracknet=None if args.no_tracknet else args.tracknet, pipeline=args.pipeline, finder=args.finder,
-        strict_p=None if args.loose else args.strict_p)
+        crop_top=2 if args.loose else args.crop_top, crop_p=None if args.loose else args.crop_p)
 
 
 if __name__ == "__main__":

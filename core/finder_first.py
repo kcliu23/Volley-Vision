@@ -2,21 +2,19 @@
 
     1. sparse YOLO   full-frame YOLO on every 10th frame only: ball size and clip profile
     2. finder        WASB on every frame: where the ball might be (candidates + peak)
-    3. crops         YOLO on a small crop around the finder's top candidate, only where that
-                     candidate's calibrated probability is >= strict_p (strict, the default),
-                     or around up to 2 candidates per frame (loose)
-    4. hybrid linker tracklets pick which object is the ball, the joint linker picks the
-                     path; every candidate weighed by its calibrated probability + physics
+    3. crops         YOLO on a small crop around the finder's top candidate, if its calibrated
+                     P(ball) >= 0.6 (strict, the default); options: up to N candidates with
+                     P >= q (--crop-top / --crop-p), or top 2 with no threshold (loose)
+    4. joint linker  picks the ball's path over the whole clip in one pass: every candidate
+                     weighed by its calibrated probability + physics (speed, size, gravity arcs)
 
-No zoom-search rounds, no rule-linker cascade. Measured on the 10 holdout clips (game ball):
-
-                                on-ball  missed  false  YOLO work
-    old pipeline (classic)        92.2%    7.3%   2.7%  every frame + zoom rounds
-    finder-first, strict 0.6      94.8%    4.1%   2.3%  ~39% of every frame (+10% sparse pass)
-    finder-first, loose           96.2%    2.8%   3.7%  ~100% of every frame
+No zoom-search rounds, no rule-linker cascade. (A tracklet layer with rival / fixture removal
+used to sit before the joint linker; removed 2026-10-28 after tools.ablate showed the joint
+linker alone scores the same on holdout and dev, and better on the checked clips:
+core/archive/tracklet_linker.py.) Holdout numbers: README.md.
 
 Caches (output/<clip>/cache/): sample_dets.json (sparse YOLO + profile), tracknet_<finder>.json
-(finder candidates), crops_<finder>[_strictP].json (crop finds).
+(finder candidates), crops_<finder>[_strict0.6 | _top2_p0.1].json (crop finds; no suffix = loose).
 """
 from __future__ import annotations
 
@@ -30,7 +28,8 @@ import numpy as np
 from core import paths
 
 DEFAULT_FINDER = "models/wasb/wasb_ft2.pth.tar"
-STRICT_P = 0.6                 # crop the top candidate only if calibrated P(ball) >= this
+CROP_TOP, CROP_P = 1, 0.6      # default crop rule (strict): the top candidate, if calibrated P(ball) >= 0.6.
+                               # (2, 0.1) scores +0.7 on-ball on holdout but breaks regression case test21
 SAMPLE_EVERY = 10              # sparse full-frame YOLO pass: every Nth frame
 P_MIN, TOP = 0.1, 2            # loose crop rule: candidates with peak >= P_MIN, at most TOP per frame
 
@@ -91,21 +90,55 @@ def ball_px(dets: dict) -> float:
     return float(np.median(s)) if s else 30.0
 
 
-def crop_finds(stem: str, video: str, cands, ball: float, ftag: str, model, keep=None, suffix: str = "",
-               root=paths.OUTPUT) -> dict:
-    """YOLO on crops around the finder's candidates (cached). keep(c) -> bool: crop only the
-    frame's top candidate, if keep says so (strict); None: up to TOP candidates with
-    peak >= P_MIN (loose)."""
+def crop_targets(row, prob, top: int, q: float | None):
+    """Which of a frame's finder candidates get a YOLO crop: the `top` strongest with peak >=
+    P_MIN, and of those only the ones with calibrated P(ball) >= q (q=None: all of them)."""
+    t = sorted([c for c in row if c[4] >= P_MIN], key=lambda c: -c[4])[:top]
+    return t if q is None else [c for c in t if prob(c[4]) >= q]
+
+
+def subset_finds(found: dict, cands, prob, ball: float, top: int, q: float | None):
+    """Simulate a stricter crop rule from the loose crop cache (top 2, peak >= P_MIN) without
+    re-running YOLO: keep the boxes found around the candidates the rule would crop.
+    Returns (found, number of crops)."""
+    out, ncrops = {}, 0
+    for f, row in enumerate(cands):
+        tg = crop_targets(row, prob, top, q)
+        ncrops += len(tg)
+        v = found.get(str(f))
+        if not tg or not v:
+            continue
+        boxes = [b for b in v["cands"] if any(abs(b[0] - c[0]) <= 1.5 * ball and abs(b[1] - c[1]) <= 1.5 * ball for c in tg)]
+        if boxes:
+            out[str(f)] = {"c": tg[0][:2], "cands": boxes}
+    return out, ncrops
+
+
+def crop_suffix(top: int, q: float | None) -> str:
+    """Cache-name suffix of a crop rule (kept compatible with the older strict/loose names)."""
+    if top == TOP and q is None:
+        return ""                                  # loose
+    if top == 1:
+        return f"_strict{q:g}"
+    return f"_top{top}_p{q:g}"
+
+
+def crop_finds(stem: str, video: str, cands, ball: float, ftag: str, model, prob, top: int = CROP_TOP,
+               q: float | None = CROP_P, root=paths.OUTPUT) -> dict:
+    """YOLO on crops around the finder's candidates chosen by crop_targets (cached). If the loose
+    crop cache exists, a stricter rule is taken from it instead of running YOLO again."""
     from core.refine import zoom_detect_many
-    cp = paths.cache_dir(stem, root) / f"crops_{ftag}{suffix}.json"
+    cp = paths.cache_dir(stem, root) / f"crops_{ftag}{crop_suffix(top, q)}.json"
     if cp.exists():
         return json.load(open(cp))
+    loose = paths.cache_dir(stem, root) / f"crops_{ftag}.json"
+    if loose.exists() and top <= TOP:
+        found, n = subset_finds(json.load(open(loose))["found"], cands, prob, ball, top, q)
+        out = {"found": found, "crops": n, "frames": len(cands), "secs": 0.0, "from": loose.name}
+        json.dump(out, open(paths.ensure(cp), "w"))
+        return out
     half = int(max(64, 5.0 * ball))
-    if keep is None:
-        want = {f: sorted([c for c in row if c[4] >= P_MIN], key=lambda c: -c[4])[:TOP] for f, row in enumerate(cands)}
-    else:
-        want = {f: [max(row, key=lambda c: c[4])] if row and keep(max(row, key=lambda c: c[4])) else []
-                for f, row in enumerate(cands)}
+    want = {f: crop_targets(row, prob, top, q) for f, row in enumerate(cands)}
     want = {f: v for f, v in want.items() if v}
     cap = cv2.VideoCapture(video)
     found, f, ncrops, t0 = {}, 0, 0, time.time()
@@ -129,13 +162,16 @@ def crop_finds(stem: str, video: str, cands, ball: float, ftag: str, model, keep
     return out
 
 
-def track(video: str, model, finder: str = DEFAULT_FINDER, cal=None, strict_p: float | None = STRICT_P,
-          root=paths.OUTPUT, log=print):
-    """Run stages 1-4 on a clip. Returns (track, info). strict_p=None: loose crop rule."""
+def track(video: str, model, finder: str = DEFAULT_FINDER, cal=None, crop_top: int = None,
+          crop_p: float | None = "default", root=paths.OUTPUT, log=print):
+    """Run stages 1-4 on a clip. Returns (track, info). Crop rule: up to crop_top candidates per
+    frame with calibrated P(ball) >= crop_p (crop_p=None: no threshold, the loose rule)."""
+    crop_top = CROP_TOP if crop_top is None else crop_top
+    crop_p = CROP_P if crop_p == "default" else crop_p
     from core import finders
     from core.calibration import Calibration
     from core.profile import get as get_profile, link_args
-    from core.tracklet_linker import link_hybrid
+    from core.joint_linker import link as joint_link
     from core.joint_linker import JointParams
 
     stem = Path(video).stem
@@ -151,17 +187,14 @@ def track(video: str, model, finder: str = DEFAULT_FINDER, cal=None, strict_p: f
     cands = finders.correct(cands, ball, finder)
     cal = (cal or Calibration.load()).for_finder(finders.calib_name(finder))
     ftag = finders.tag(finder) or "tracknet"
-    if strict_p is None:
-        cf = crop_finds(stem, video, cands, ball, ftag, model, root=root)
-    else:
-        cf = crop_finds(stem, video, cands, ball, ftag, model, root=root, suffix=f"_strict{strict_p:g}",
-                        keep=lambda c: cal.prob("tracknet", [c[4]])[0] >= strict_p)
+    cf = crop_finds(stem, video, cands, ball, ftag, model, lambda pk: float(cal.prob("tracknet", [pk])[0]),
+                    crop_top, crop_p, root=root)
     a = link_args(d)
     d2 = dict(d)
     d2["frames"] = [[] for _ in d["frames"]]      # the sparse boxes only set ball size / profile
     d2["zoom"] = cf["found"]
-    t = link_hybrid(d2, cands, cal, a["fps"], d["width"], d["height"], ball, jparams=JointParams(tn_only_bias=1.0),
-                    dup_flags=a["dup_flags"], content=a["content"], times=a["times"])
+    t = joint_link(d2, cands, cal, a["fps"], d["width"], d["height"], ball, JointParams(tn_only_bias=1.0),
+                   dup_flags=a["dup_flags"], content=a["content"], times=a["times"])
     info = {"ball_px": ball, "crops": cf["crops"], "frames": len(cands), "crop_frames": len(cf["found"]),
             "fps": a["fps"], "width": d["width"], "height": d["height"]}
     if log:

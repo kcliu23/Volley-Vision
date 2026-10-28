@@ -98,7 +98,7 @@ def propose(video: str, out_dir: str = "data/proposals", tracknet: str | None = 
             print("[autolabel] full-frame YOLO pass (for other balls / hard negatives; cached)")
             dump(video, YOLO(model_path), paths.ensure(dp), 0.05, 1280)
         run(input_path=video, output_dir=output_dir, model_path=model_path, render=False,
-            pipeline="finder-first", finder=finder, strict_p=None)
+            pipeline="finder-first", finder=finder, crop_p=None)
         dets = json.load(open(dp))
         sample = json.load(open(paths.cache_dir(stem, output_dir) / "sample_dets.json"))
         prof = sample.get("profile") or {}

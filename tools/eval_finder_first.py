@@ -5,17 +5,18 @@
     python -m tools.eval_finder_first --finder ... --clips test45 test46       # a subset
 
 Setups compared (all end with flights placing the final positions):
-  current pipeline        full-frame YOLO + zoom (cached dets) + rule linker + TrackNet fill
-  YOLO + <finder> hybrid  full-frame YOLO + zoom + the finder, chosen together by the hybrid linker
-  finder-first            the finder on every frame; YOLO ONLY on small crops around its candidates
-                          (no full-frame YOLO, no zoom rounds); hybrid linker
-  finder-first, strict    the same with a tighter crop rule: only the finder's top candidate per
-                          frame, and only if its calibrated probability >= --strict-p (fewer crops)
+  current pipeline        classic: full-frame YOLO + zoom (cached dets) + rule linker + TrackNet fill
+  YOLO + <finder> joint   full-frame YOLO + zoom + the finder, chosen together by the joint linker
+  finder-first, <rule>    the finder on every frame; YOLO ONLY on small crops around its candidates
+                          (no full-frame YOLO, no zoom rounds); joint linker. Crop rules: loose
+                          (top 2 candidates per frame), the pipeline's default (top 2 with calibrated
+                          P >= 0.1), strict (top 1 with P >= --strict-p); all taken from one loose
+                          YOLO crop pass.
 
 Score calibration is leave-one-clip-out (each clip scored by probabilities fitted on the other
 labelled clips). Needs per clip: the YOLO cache (for the current pipeline and ball size), the
 video (for the crops), and the finder's candidates (computed if missing; cached).
-Crop finds are cached in output/<clip>/cache/crops_<finder>.json.
+Loose crop finds are cached in output/<clip>/cache/crops_<finder>.json.
 """
 from __future__ import annotations
 
@@ -31,7 +32,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core import paths  # noqa: E402
-from core.finder_first import crop_finds  # noqa: E402  (shared with the pipeline)
+from core.finder_first import crop_finds, subset_finds, CROP_TOP, CROP_P  # noqa: E402  (shared with the pipeline)
 
 TN = "models/tracknet/FT_TrackNet_best.pt"
 CROP_PX = 640 * 640           # YOLO input of one crop ...
@@ -79,7 +80,7 @@ def main():
     from core.calibration import fit
     from core.linker import link as rule_link
     from core.tracknet_fill import apply as fill
-    from core.tracklet_linker import link_hybrid
+    from core.joint_linker import link as joint_link
     from core.joint_linker import JointParams
     from core.profile import link_args
     from core.flights import from_track, apply_flights
@@ -121,7 +122,10 @@ def main():
         return fit({k: (np.concatenate(X), np.concatenate(y)) for k, (X, y) in merged.items()}).for_finder(name)
 
     res, frames = {}, 0
-    crops = {"finder-first": 0, "finder-first, strict": 0}
+    rules = {"finder-first, loose": (2, None), f"finder-first (top {CROP_TOP}, P >= {CROP_P:g})": (CROP_TOP, CROP_P),
+             f"finder-first, strict {a.strict_p:g}": (1, a.strict_p)}
+    crops = {k: 0 for k in rules}
+
     for s in clips:
         d = json.load(open(paths.dets(s))); ball = C.ball_px(d); a_ = link_args(d)
         labels = json.load(open(paths.gt(s) if s in gt else paths.verified(s)))["labels"]
@@ -142,36 +146,37 @@ def main():
         cands = finders.correct(finders.load_cached(s, a.finder), ball, a.finder)
         cal = cal_without(s)
         jp = JointParams(tn_only_bias=1.0)
-        # B: full-frame YOLO + zoom + the finder, chosen together by the hybrid linker
-        t = link_hybrid(d, cands, cal, a_["fps"], d["width"], d["height"], ball, jparams=jp, **kw)
-        finish(f"YOLO + {ftag} hybrid", t, a.finder)
+        # B: full-frame YOLO + zoom + the finder, chosen together by the joint linker
+        t = joint_link(d, cands, cal, a_["fps"], d["width"], d["height"], ball, jp, **kw)
+        finish(f"YOLO + {ftag} joint", t, a.finder)
         frames += len(d["frames"])
-        # C: finder-first (loose crop rule) and C': strict crop rule
-        for label, keep, suffix in (("finder-first", None, ""),
-                                    ("finder-first, strict", lambda c: cal.prob("tracknet", [c[4]])[0] >= a.strict_p,
-                                     f"_strict{a.strict_p:g}")):
-            cf = crop_finds(s, video_of(s, a.video_dir), cands, ball, ftag, model, keep=keep, suffix=suffix)
-            crops[label] += cf["crops"]
-            d2 = dict(d); d2["frames"] = [[] for _ in d["frames"]]; d2["zoom"] = cf["found"]
-            t = link_hybrid(d2, cands, cal, a_["fps"], d["width"], d["height"], ball, jparams=jp, **kw)
-            finish(f"{label} ({ftag})", t, a.finder)
+        # C: finder-first with each crop rule, all taken from the loose crop cache (YOLO runs once,
+        # loose; a stricter rule keeps the boxes around the candidates it would have cropped)
+        prob = lambda pk: float(cal.prob("tracknet", [pk])[0])          # noqa: E731
+        loose = crop_finds(s, video_of(s, a.video_dir), cands, ball, ftag, model, prob, 2, None)
+        for label, (top, q) in rules.items():
+            found, nc = subset_finds(loose["found"], cands, prob, ball, top, q)
+            crops[label] += nc
+            d2 = dict(d); d2["frames"] = [[] for _ in d["frames"]]; d2["zoom"] = found
+            t = joint_link(d2, cands, cal, a_["fps"], d["width"], d["height"], ball, jp, **kw)
+            finish(f"{label}", t, a.finder)
         res[s] = out
         print(f"  {s}: done", flush=True)
 
     print(f"\nYOLO work vs the current pipeline's full frames (one 640 px crop ~ {CROP_PX / FULL_PX:.2f} of a 1280 px frame; "
           f"not counting the current pipeline's zoom rounds):")
     for label, n in crops.items():
-        print(f"  {label:22s} {n / max(frames, 1):.2f} crops per frame  ~ {n * CROP_PX / FULL_PX / max(frames, 1):.0%} of full-frame YOLO")
+        print(f"  {label:32s} {n / max(frames, 1):.2f} crops per frame  ~ {n * CROP_PX / FULL_PX / max(frames, 1):.0%} of full-frame YOLO")
     for title, g in groups:
         g = [s for s in g if s in res]
         if not g:
             continue
         print(f"{title} ({len(g)} clips)")
-        print(f"  {'':28s} {'on-ball':>7s} {'wrong':>6s} {'missed':>7s} {'false':>6s} {'>0.25bw':>8s}")
+        print(f"  {'':34s} {'on-ball':>7s} {'wrong':>6s} {'missed':>7s} {'false':>6s} {'>0.25bw':>8s}")
         for n in res[g[0]]:
             t = {k: sum(res[c][n][k] for c in g) for k in ("hit", "wrong", "miss", "ok", "false", "off")}
             vis, hid = t["hit"] + t["wrong"] + t["miss"], t["ok"] + t["false"]
-            print(f"  {n:28s} {t['hit'] / vis:7.1%} {t['wrong'] / vis:6.1%} {t['miss'] / vis:7.1%} "
+            print(f"  {n:34s} {t['hit'] / vis:7.1%} {t['wrong'] / vis:6.1%} {t['miss'] / vis:7.1%} "
                   f"{t['false'] / max(hid, 1):6.1%} {t['off'] / max(t['hit'] + t['wrong'], 1):8.1%}")
 
 
