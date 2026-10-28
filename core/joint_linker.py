@@ -16,7 +16,7 @@ Detection first, then one optimization (instead of rule stages plus a TrackNet a
   3. gaps         bridged as before (core.linker.finalize)
 
 States in the output: detected / weak (from YOLO or zoom, by probability) and tracknet
-(TrackNet only). Weights are fit on labelled clips (tools.eval_joint).
+(TrackNet only). Weights are fit on labelled clips (tools/archive/eval_joint.py).
 
 Status (experimental, not the default): leave-one-clip-out on the 10 test clips it scores
 96.6% on-ball vs 96.4% for rule linker + TrackNet, misses fewer frames (1.3% vs 2.8%) but
@@ -39,7 +39,7 @@ JOINT_LINKER_VERSION = 1
 
 @dataclass
 class JointParams(CostParams):
-    # defaults = best leave-one-clip-out setting on the 10 test clips (tools.eval_joint --grid)
+    # defaults = best leave-one-clip-out setting on the 10 test clips (tools/archive/eval_joint.py --grid)
     w_det: float = 0.7          # weight on the detection evidence (logit of p)
     miss: float = 1.0           # per usable frame with no point chosen
     touch: float = 3.0          # a hit (velocity restart)

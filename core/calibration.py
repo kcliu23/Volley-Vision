@@ -20,7 +20,7 @@ from pathlib import Path
 
 import numpy as np
 
-SOURCES = ("yolo", "zoom", "tracknet")
+SOURCES = ("yolo", "zoom", "tracknet")   # + one model per extra finder (e.g. "wasb"), see Calibration.for_finder
 DEFAULT_PATH = Path("models/score_calibration.json")
 
 
@@ -51,6 +51,15 @@ class Calibration:
 
     def prob(self, source: str, conf, size_ratio=None, aspect=None) -> np.ndarray:
         return 1.0 / (1.0 + np.exp(-self.logit(source, conf, size_ratio, aspect)))
+
+    def for_finder(self, name: str) -> "Calibration":
+        """The same calibration with the finder slot ("tracknet" in the linkers) scored by the
+        model fitted for finder `name` (e.g. "wasb"). Unchanged if name is "tracknet"."""
+        if name == "tracknet":
+            return self
+        if name not in self.models:
+            raise KeyError(f"no score calibration for finder '{name}': run  python -m tools.calibrate --finder <ckpt>")
+        return Calibration({**self.models, "tracknet": self.models[name]})
 
 
 def fit(samples: dict, C: float = 1.0) -> Calibration:

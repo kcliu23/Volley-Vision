@@ -101,20 +101,35 @@ def content_box(path: str, samples: int = 40) -> list[int]:
     return [int(cols[0]) * 4, int(rows[0]) * 4, min(w * 4, (int(cols[-1]) + 1) * 4), min(h * 4, (int(rows[-1]) + 1) * 4)]
 
 
-def zoom_detect(model, img: np.ndarray, center, half: int, imgsz: int = 640, conf: float = 0.02):
-    """Run YOLO on a (2*half)^2 crop around center. Returns [[cx, cy, w, h, conf], ...] in frame coords."""
+def _crop(img: np.ndarray, center, half: int):
     H, W = img.shape[:2]
     half = min(half, W // 2, H // 2)
     x0 = int(np.clip(center[0] - half, 0, W - 2 * half))
     y0 = int(np.clip(center[1] - half, 0, H - 2 * half))
-    crop = img[y0:y0 + 2 * half, x0:x0 + 2 * half]
-    r = model.predict(crop, imgsz=imgsz, conf=conf, verbose=False)[0]
+    return img[y0:y0 + 2 * half, x0:x0 + 2 * half], x0, y0
+
+
+def zoom_detect_many(model, jobs: list, imgsz: int = 640, conf: float = 0.02) -> list[list]:
+    """jobs: [(img, center, half), ...]. YOLO on each (2*half)^2 crop, several crops per forward
+    pass (core.device). Returns one [[cx, cy, w, h, conf], ...] list per job, in frame coords."""
+    from core.device import predict, BATCH
+    crops = [_crop(img, c, h) for img, c, h in jobs]
     out = []
-    for b in r.boxes:
-        x1, y1, x2, y2 = (float(v) for v in b.xyxy[0])
-        out.append([round((x1 + x2) / 2 + x0, 1), round((y1 + y2) / 2 + y0, 1),
-                    round(x2 - x1, 1), round(y2 - y1, 1), round(float(b.conf[0]), 3)])
+    for i in range(0, len(crops), BATCH):
+        part = crops[i:i + BATCH]
+        for r, (_, x0, y0) in zip(predict(model, [c for c, _, _ in part], imgsz=imgsz, conf=conf, batch=len(part)), part):
+            res = []
+            for b in r.boxes:
+                x1, y1, x2, y2 = (float(v) for v in b.xyxy[0])
+                res.append([round((x1 + x2) / 2 + x0, 1), round((y1 + y2) / 2 + y0, 1),
+                            round(x2 - x1, 1), round(y2 - y1, 1), round(float(b.conf[0]), 3)])
+            out.append(res)
     return out
+
+
+def zoom_detect(model, img: np.ndarray, center, half: int, imgsz: int = 640, conf: float = 0.02):
+    """Run YOLO on a (2*half)^2 crop around center. Returns [[cx, cy, w, h, conf], ...] in frame coords."""
+    return zoom_detect_many(model, [(img, center, half)], imgsz, conf)[0]
 
 
 def ahead_targets(track, horizon: int, fit_pts: int = 6):
@@ -228,11 +243,9 @@ def link_with_zoom(dets: dict, video: str, model, params: LinkParams | None = No
             break
         reader.load({f for f, _ in todo})
         found = 0
-        for f, p in todo:
-            img = reader.get(f)
-            if img is None:
-                continue
-            cands = zoom_detect(model, img, p, half)
+        jobs = [(f, p, reader.get(f)) for f, p in todo]
+        jobs = [(f, p, img) for f, p, img in jobs if img is not None]
+        for (f, p, _), cands in zip(jobs, zoom_detect_many(model, [(img, p, half) for _, p, img in jobs])):
             zoom[str(f)] = {"c": [round(p[0], 1), round(p[1], 1)], "cands": cands}
             found += bool(cands)
         before = track.summary()

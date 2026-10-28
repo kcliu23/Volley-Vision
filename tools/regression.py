@@ -3,6 +3,9 @@
     python -m tools.regression                      # rule-based linker (core.linker)
     python -m tools.regression --linker cost        # cost-based linker (core.cost_linker)
     python -m tools.regression --tracknet           # rule linker + TrackNet stage
+    python -m tools.regression --linker finder-first   # the default pipeline (core.finder_first);
+                                                    # needs the videos; first run computes the
+                                                    # finder and crop caches (slow on a CPU)
 
 Uses the cached detections + zoom finds in output/<clip>/cache (no YOLO), so it runs
 in seconds. Each case came from a real bug; a linker change that re-breaks one fails here.
@@ -117,7 +120,20 @@ def run(linker_name="rule", verbose=True, tracknet=False):
     else:
         from core.linker import link as linkf
     cache, passed, results = {}, 0, []
+    if linker_name == "finder-first":
+        import glob
+        from ultralytics import YOLO
+        from core.finder_first import track as ff_track
+        model = YOLO("models/best4.pt")
+        for stem in dict.fromkeys(c[0] for c in _cases()):
+            vids = sorted(glob.glob(f"videos/{stem}.*") + glob.glob(f"holdout/{stem}.*"))
+            if not vids:
+                print(f"  (no video for {stem} in videos/)")
+                continue
+            cache[stem], _ = ff_track(vids[0], model, log=None)
     for stem, desc, check in _cases():
+        if linker_name == "finder-first" and stem not in cache:
+            continue
         if stem not in cache:
             d, fr, dup = _load(stem, "zoom" if linker_name == "rule" else f"zoom_{linker_name}")
             from core.profile import link_args
@@ -152,7 +168,7 @@ def run(linker_name="rule", verbose=True, tracknet=False):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--linker", choices=["rule", "cost", "hybrid"], default="rule")
+    ap.add_argument("--linker", choices=["rule", "cost", "hybrid", "finder-first"], default="rule")
     ap.add_argument("--tracknet", action="store_true", help="apply the TrackNet stage (needs <clip>_tracknet.json)")
     a = ap.parse_args()
     run(a.linker, tracknet=a.tracknet)
