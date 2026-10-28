@@ -19,6 +19,27 @@ import numpy as np
 
 # ── two-pass pipeline ─────────────────────────────────────────────────────────
 
+def render_timing(times, fps: float):
+    """(output fps, per-frame repeat counts) so a fixed-rate output plays in real time.
+    times: each source frame's timestamp (s). Output rate = the clip's fastest steady rate
+    (1 / the 5th-percentile frame gap, rounded); frame i is written as many times as output
+    ticks fall between its timestamp and the next. Returns (fps, None) if there are no usable
+    timestamps; (measured fps, None) if the clip is evenly timed."""
+    if not times or len(times) < 3:
+        return fps, None
+    t = np.asarray(times, float)
+    dt = np.diff(t)
+    dt = dt[dt > 1e-4]
+    if not len(dt):
+        return fps, None
+    if np.std(dt) / np.median(dt) < 0.05:                 # evenly timed: the measured rate (the
+        return float(1.0 / np.median(dt)), None              # file's stated fps can be off, e.g. 57.8 vs 60)
+    out_fps = float(round(1.0 / np.percentile(dt, 5)))
+    end = np.append(t[1:], t[-1] + np.median(dt))
+    ticks_end = np.round((end - t[0]) * out_fps).astype(int)
+    ticks_start = np.round((t - t[0]) * out_fps).astype(int)
+    return out_fps, np.maximum(ticks_end - ticks_start, 0).tolist()
+
 def run(
     input_path: str,
     output_dir: str = "output",
@@ -168,7 +189,11 @@ def run(
         return track_path
     out_path = str(paths.video(stem, output_dir))
     tmp_path = os.path.join(tempfile.gettempdir(), f"{stem}_render.mp4")
-    writer = cv2.VideoWriter(tmp_path, cv2.VideoWriter_fourcc(*"mp4v"), fps, (width, height))
+    # phones often record a variable frame rate (e.g. 60 fps parts and 30 fps parts); a fixed-rate
+    # writer would play those parts too slow / too fast. Render at the clip's top rate and show
+    # each source frame for as long as it really lasted (its timestamp to the next one).
+    out_fps, repeats = render_timing((dets.get("profile") or {}).get("times"), fps)
+    writer = cv2.VideoWriter(tmp_path, cv2.VideoWriter_fourcc(*"mp4v"), out_fps, (width, height))
     cap = cv2.VideoCapture(input_path)
     f = 0
     while True:
@@ -181,7 +206,8 @@ def run(
             draw_ball(img, track.pos[f], ring=ring)
         draw_touch_rings(img, f, [c for c in found if c.kind == "touch"], fps)
         draw_touch_rings(img, f, [c for c in found if c.kind == "bounce"], fps, color=(255, 255, 255))
-        writer.write(img)
+        for _ in range(repeats[f] if repeats is not None and f < len(repeats) else 1):
+            writer.write(img)
         if show_preview:
             cv2.imshow("VolleyVision", img)
             if cv2.waitKey(1) & 0xFF == ord("q"):
