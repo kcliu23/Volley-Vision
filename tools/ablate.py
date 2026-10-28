@@ -55,8 +55,18 @@ def inputs(stem: str, cal, rule):
 
 
 def run_variant(name, d2, cands, cal, ball, a, stem=None):
+    """name: "joint", "classic", or "joint:key=value,key=value" (JointParams changed)."""
+    from dataclasses import fields
     from core.joint_linker import JointParams
-    jp = JointParams(tn_only_bias=1.0)
+    from core.finder_first import FINDER_ONLY_BIAS
+    jp = JointParams(tn_only_bias=FINDER_ONLY_BIAS)
+    if name.startswith("joint:"):
+        types = {f.name: f.type for f in fields(JointParams)}
+        kv = dict(x.split("=") for x in name.split(":", 1)[1].split(","))
+        conv = {k: (v.lower() in ("1", "true") if types[k] in (bool, "bool") else
+                    int(v) if types[k] in (int, "int") else float(v)) for k, v in kv.items()}
+        jp = JointParams(**{"tn_only_bias": FINDER_ONLY_BIAS, **conv})
+        name = "joint"
     kw = dict(dup_flags=a["dup_flags"], content=a["content"], times=a["times"])
     W, H = d2["width"], d2["height"]
     if name == "joint":
@@ -83,10 +93,19 @@ def run_variant(name, d2, cands, cal, ball, a, stem=None):
 
 
 def finish(t, variant="joint"):
-    """Flights, as in the pipeline (WASB points stay where WASB put them; TrackNet's go on the arc)."""
+    """Flights, as in the pipeline (WASB points stay where WASB put them; TrackNet's go on the arc).
+    A variant may end in "|key=value,..." to change apply_flights' options (e.g. "joint|max_fill_s=0.3",
+    "joint|none" = no flights at all, the linker's own track)."""
     from core.flights import from_track, apply_flights
+    opts = {}
+    if "|" in variant:
+        variant, o = variant.split("|", 1)
+        if o == "none":
+            return list(t.pos), list(t.state)
+        opts = {k: (None if v == "none" else v.lower() == "true" if v.lower() in ("true", "false") else float(v))
+                for k, v in (x.split("=") for x in o.split(","))}
     fl, ct = from_track(t)
-    return apply_flights(t, fl, ct, place_tracknet=(variant == "classic"))
+    return apply_flights(t, fl, ct, place_tracknet=(variant == "classic"), **opts)
 
 
 def score(pos, state, labels, ball):
@@ -149,7 +168,7 @@ def main():
                 json.load(open(paths.gt(s) if s in gt else paths.verified(s)))["labels"]
             res[s] = {}
             for v in a.variants:
-                t = run_variant(v, d2, cands, cal, ball, args_, stem=s)
+                t = run_variant(v.split("|")[0], d2, cands, cal, ball, args_, stem=s)
                 for stem, desc, check in cases:
                     if stem == s:
                         ok, det = check(t)

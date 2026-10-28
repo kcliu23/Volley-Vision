@@ -50,9 +50,11 @@ class JointParams(CostParams):
     p_min: float = 0.03         # candidates less likely than this are dropped (speed)
     top_k: int = 4              # at most this many points per frame
     logit_clip: float = 6.0
-    tn_only_bias: float = 0.0   # logit shift for TrackNet-only points (no YOLO/zoom support)
+    tn_only_bias: float = 0.0   # logit shift for finder-only points (no YOLO/zoom support). The
+                                # finder-first pipeline uses 0.5 (core.finder_first.FINDER_ONLY_BIAS)
     size_near_bw: float = 1.5   # TrackNet point size = YOLO boxes within this distance ...
     size_near_s: float = 0.25   # ... and this time (TrackNet itself gives no size)
+    size_from_zoom: bool = False  # ... counting zoom / crop finds too (finder-first has no full-frame boxes)
 
 
 def _local_sizes(dets: dict, ball: float, P: JointParams, fps: float):
@@ -60,6 +62,9 @@ def _local_sizes(dets: dict, ball: float, P: JointParams, fps: float):
     or None. TrackNet's own 'size' is borrowed from the clip, which would hide a switch to
     a smaller far-court ball from the size-continuity check."""
     boxes = [(f, c[0], c[1], max(c[2], c[3])) for f, fr in enumerate(dets["frames"]) for c in fr if c[4] >= 0.1]
+    if P.size_from_zoom:
+        boxes += [(int(k), c[0], c[1], max(c[2], c[3])) for k, v in (dets.get("zoom") or {}).items()
+                  for c in v["cands"] if c[4] >= 0.1]
     if not boxes:
         return lambda f, x, y: None
     B = np.array(boxes)

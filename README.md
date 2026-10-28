@@ -20,7 +20,7 @@ pip install -r requirements.txt
 python main.py videos/test42.MP4
 ```
 
-The first run of a clip includes the sparse YOLO pass (every 10th frame), the WASB pass and
+The first run of a clip includes the sparse YOLO pass (every 20th frame), the WASB pass and
 the YOLO crops; re-runs reuse the caches and take seconds.
 
 | Flag | Default | Description |
@@ -57,9 +57,12 @@ share of ball frames where the track is within one ball-width of your label:
 | | on the ball | wrong place | missed | false ball when hidden | YOLO work |
 |---|---|---|---|---|---|
 | classic | 92.2% | 0.5% | 7.3% | 2.7% | every frame + zoom rounds |
-| **finder-first, strict (default)** | **94.8%** | 1.1% | 4.1% | **2.3%** | ~39% of every frame (+10% sparse pass) |
-| finder-first, `--crop-top 2 --crop-p 0.1` | 95.5% | 0.9% | 3.6% | 2.4% | ~51% of every frame (breaks regression case test21) |
-| finder-first, loose | 96.1% | 1.0% | 2.9% | 3.7% | ~100% of every frame |
+| **finder-first, strict (default)** | **95.2%** | 1.2% | **3.6%** | 3.4% | ~39% of every frame (+5% sparse pass) |
+| finder-first, loose | 96.3% | 0.9% | 2.8% | 4.9% | ~100% of every frame |
+
+Measured 2026-10-28 after the simplification pass (one joint linker, no tracklet layer; WASB-only
+points penalised by 0.5 instead of 1.0, which found more of the ball for a few more false balls).
+Before it: 94.8% on-ball, 4.1% missed, 2.3% false.
 
 Known gap: a second ball in play on a neighbouring court can win over the game ball for a moment
 when it's seen more confidently (regression case test34). A court-area cue (homography) is the

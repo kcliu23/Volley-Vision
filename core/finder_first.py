@@ -1,6 +1,6 @@
 """Finder-first tracking: the default pipeline since 2026-10-27.
 
-    1. sparse YOLO   full-frame YOLO on every 10th frame only: ball size and clip profile
+    1. sparse YOLO   full-frame YOLO on every 20th frame only: ball size and clip profile
     2. finder        WASB on every frame: where the ball might be (candidates + peak)
     3. crops         YOLO on a small crop around the finder's top candidate, if its calibrated
                      P(ball) >= 0.6 (strict, the default); options: up to N candidates with
@@ -30,7 +30,11 @@ from core import paths
 DEFAULT_FINDER = "models/wasb/wasb_ft2.pth.tar"
 CROP_TOP, CROP_P = 1, 0.6      # default crop rule (strict): the top candidate, if calibrated P(ball) >= 0.6.
                                # (2, 0.1) scores +0.7 on-ball on holdout but breaks regression case test21
-SAMPLE_EVERY = 10              # sparse full-frame YOLO pass: every Nth frame
+FINDER_ONLY_BIAS = 0.5         # penalty on points only the finder saw (no YOLO box). Measured 2026-10-28
+                               # (tools.ablate, 36 clips): 1.0 lost ball frames, 0 added false balls; 0.5
+                               # kept the on-ball gain (holdout 94.5% -> 95.3%) with fewer false balls
+SAMPLE_EVERY = 20              # sparse full-frame YOLO pass: every Nth frame (ball size: within ~1% of
+                               # every frame at 20, unreliable at 30+; measured on 68 clips)
 P_MIN, TOP = 0.1, 2            # loose crop rule: candidates with peak >= P_MIN, at most TOP per frame
 
 
@@ -193,7 +197,7 @@ def track(video: str, model, finder: str = DEFAULT_FINDER, cal=None, crop_top: i
     d2 = dict(d)
     d2["frames"] = [[] for _ in d["frames"]]      # the sparse boxes only set ball size / profile
     d2["zoom"] = cf["found"]
-    t = joint_link(d2, cands, cal, a["fps"], d["width"], d["height"], ball, JointParams(tn_only_bias=1.0),
+    t = joint_link(d2, cands, cal, a["fps"], d["width"], d["height"], ball, JointParams(tn_only_bias=FINDER_ONLY_BIAS),
                    dup_flags=a["dup_flags"], content=a["content"], times=a["times"])
     info = {"ball_px": ball, "crops": cf["crops"], "frames": len(cands), "crop_frames": len(cf["found"]),
             "fps": a["fps"], "width": d["width"], "height": d["height"]}

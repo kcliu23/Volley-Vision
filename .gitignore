@@ -37,3 +37,6 @@ models/archive/
 *.tar
 *.zip
 .DS_Store
+
+# large model weights (over GitHub's 100 MB limit; keep them locally / on Drive)
+models/tracknet/*.pt

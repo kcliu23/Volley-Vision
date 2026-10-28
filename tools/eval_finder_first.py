@@ -145,7 +145,8 @@ def main():
         finish("current pipeline", t)
         cands = finders.correct(finders.load_cached(s, a.finder), ball, a.finder)
         cal = cal_without(s)
-        jp = JointParams(tn_only_bias=1.0)
+        from core.finder_first import FINDER_ONLY_BIAS
+        jp = JointParams(tn_only_bias=FINDER_ONLY_BIAS)
         # B: full-frame YOLO + zoom + the finder, chosen together by the joint linker
         t = joint_link(d, cands, cal, a_["fps"], d["width"], d["height"], ball, jp, **kw)
         finish(f"YOLO + {ftag} joint", t, a.finder)
