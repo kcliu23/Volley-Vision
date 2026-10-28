@@ -1,6 +1,7 @@
 """Finder-first tracking: the default pipeline since 2026-10-27.
 
-    1. sparse YOLO   full-frame YOLO on every 20th frame only: ball size and clip profile
+    1. sparse YOLO   full-frame YOLO on every 20th frame only: ball size, clip profile, and anchor
+                     candidates where WASB misses the ball (e.g. big, near-camera balls)
     2. finder        WASB on every frame: where the ball might be (candidates + peak)
     3. crops         YOLO on a small crop around the finder's top candidate, if its calibrated
                      P(ball) >= 0.6 (strict, the default); options: up to N candidates with
@@ -195,7 +196,9 @@ def track(video: str, model, finder: str = DEFAULT_FINDER, cal=None, crop_top: i
                     crop_top, crop_p, root=root)
     a = link_args(d)
     d2 = dict(d)
-    d2["frames"] = [[] for _ in d["frames"]]      # the sparse boxes only set ball size / profile
+    d2["frames"] = [list(fr) if f % SAMPLE_EVERY == 0 else [] for f, fr in enumerate(d["frames"])]
+    # ^ the sizing pass's full-frame boxes are candidates too: anchors where WASB misses the ball
+    #   (big, near-camera balls). Measured 2026-10-28: dev 89.6% -> 91.6% on-ball, holdout unchanged
     d2["zoom"] = cf["found"]
     t = joint_link(d2, cands, cal, a["fps"], d["width"], d["height"], ball, JointParams(tn_only_bias=FINDER_ONLY_BIAS),
                    dup_flags=a["dup_flags"], content=a["content"], times=a["times"])

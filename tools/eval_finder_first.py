@@ -158,7 +158,9 @@ def main():
         for label, (top, q) in rules.items():
             found, nc = subset_finds(loose["found"], cands, prob, ball, top, q)
             crops[label] += nc
-            d2 = dict(d); d2["frames"] = [[] for _ in d["frames"]]; d2["zoom"] = found
+            from core.finder_first import SAMPLE_EVERY
+            d2 = dict(d); d2["zoom"] = found
+            d2["frames"] = [list(fr) if f % SAMPLE_EVERY == 0 else [] for f, fr in enumerate(d["frames"])]
             t = joint_link(d2, cands, cal, a_["fps"], d["width"], d["height"], ball, jp, **kw)
             finish(f"{label}", t, a.finder)
         res[s] = out
