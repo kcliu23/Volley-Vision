@@ -71,10 +71,13 @@ def load_cached(stem: str, ckpt: str, root=paths.OUTPUT):
 
 
 def place_on_arc(ckpt: str | None) -> bool:
-    """Should the flights stage move this finder's points onto the fitted arc? Yes for TrackNet
-    (coarse, 0.35 bw: the arc places it better, 0.33 -> 0.16 bw on the dev clips); no for WASB
-    (0.17 bw: on the holdout clips the arc made it worse, 12.3% -> 16.6% of points > 0.25 bw off)."""
-    return kind(ckpt) in (None, "tracknet")
+    """Should the flights stage move this finder's points onto the fitted arc? Yes for every finder.
+    TrackNet (0.35 bw error): the arc places it better (0.33 -> 0.16 bw on the dev clips).
+    WASB (0.17 bw): its own points sit slightly closer to the labels at the tail (12% vs 17% of
+    points > 0.25 bw off), but they wobble frame to frame: median jitter 0.158 bw vs 0.100 on the
+    arc (classic 0.092, your own labels 0.095), with on-ball unchanged (95.3% vs 95.2%). A smooth
+    path looks right and is what speeds and heights are computed from (measured 2026-10-28)."""
+    return True
 
 
 def correct(frames, ball_px: float, ckpt: str):

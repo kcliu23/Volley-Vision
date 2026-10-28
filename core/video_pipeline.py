@@ -146,13 +146,17 @@ def run(
     clip_dir = paths.clip_dir(stem, output_dir)
     clip_dir.mkdir(parents=True, exist_ok=True)
 
-    # 3. contacts: split the track into flights (one parabola each); each boundary is a
-    #    contact, classified touch / bounce / other using where the people are
-    found = []
-    if touches:
-        from core.flights import from_track
+    # 3. flights: split the track into flights (one parabola each). Always applied: gaps follow
+    #    the arc and finder-only points go onto it (smooth path). Each boundary is a contact,
+    #    classified touch / bounce / other from where the people are (skipped with touches=False).
+    from core.flights import from_track, apply_flights
+    from core import finders
+    flights, found = from_track(track)
+    track.pos, track.state = apply_flights(track, flights, found, place_tracknet=finders.place_on_arc(arc_finder))
+    if not touches:
+        found = []
+    else:
         from core.contacts import classify
-        flights, found = from_track(track)
         if found:
             person_model = YOLO(str(Path(model_path).parent / "yolov8n.pt")) \
                 if (Path(model_path).parent / "yolov8n.pt").exists() else YOLO("yolov8n.pt")
@@ -166,10 +170,6 @@ def run(
                                     "cx": [round(v, 5) for v in fl.cx], "cy": [round(v, 5) for v in fl.cy]}
                                    for fl in flights],
                        "contacts": [c.to_dict() for c in found]}, fh, indent=1)
-        # gaps inside a flight follow that flight's parabola (real detections are kept)
-        from core.flights import apply_flights
-        from core import finders
-        track.pos, track.state = apply_flights(track, flights, found, place_tracknet=finders.place_on_arc(arc_finder))
         kinds = {k: sum(c.kind == k for c in found) for k in ("touch", "bounce", "other")}
         print(f"[VolleyVision] {len(flights)} flights, {kinds['touch']} touches, {kinds['bounce']} bounces, "
               f"{kinds['other']} other contacts  →  {contact_path}")

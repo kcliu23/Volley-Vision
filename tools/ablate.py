@@ -95,7 +95,7 @@ def run_variant(name, d2, cands, cal, ball, a, stem=None):
 
 
 def finish(t, variant="joint"):
-    """Flights, as in the pipeline (WASB points stay where WASB put them; TrackNet's go on the arc).
+    """Flights, as in the pipeline (finder-only points go onto the fitted arc).
     A variant may end in "|key=value,..." to change apply_flights' options (e.g. "joint|max_fill_s=0.3",
     "joint|none" = no flights at all, the linker's own track)."""
     from core.flights import from_track, apply_flights
@@ -107,7 +107,7 @@ def finish(t, variant="joint"):
         opts = {k: (None if v == "none" else v.lower() == "true" if v.lower() in ("true", "false") else float(v))
                 for k, v in (x.split("=") for x in o.split(","))}
     fl, ct = from_track(t)
-    return apply_flights(t, fl, ct, place_tracknet=(variant == "classic"), **opts)
+    return apply_flights(t, fl, ct, place_tracknet=True, **opts)
 
 
 def score(pos, state, labels, ball):
