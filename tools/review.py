@@ -553,7 +553,8 @@ def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, pl
     d = R.doubt(f)
     lab_txt = {"fixed": "your label", "interp": "filled (line)", "auto": "accepted proposal",
                "proposal": "proposal"}[src]
-    note = msg or (("check: " + ", ".join(d) + "   ") if d and not R.is_edited(f) else "") + lab_txt \
+    shown = {"tracknet": "WASB only"}               # old name in the proposal files: finder point, no YOLO box
+    note = msg or (("check: " + ", ".join(shown.get(x, x) for x in d) + "   ") if d and not R.is_edited(f) else "") + lab_txt \
         + (f"   TOUCH: {R.contacts[f]}" if f in R.contacts else "")
     cv2.putText(img, note, (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (255, 255, 255) if msg else ((90, 90, 255) if d and not R.is_edited(f) else (180, 180, 180)),
