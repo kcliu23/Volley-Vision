@@ -807,7 +807,16 @@ def main():
     ap.add_argument("videos", nargs="+")
     ap.add_argument("--test", action="store_true", help="mark as a test clip (kept out of training)")
     a = ap.parse_args()
+    from tools.todo import old_data_clips
+    from core import paths
+    old = old_data_clips(paths.YOLO_DATASETS / "volleyball_combined")
     for v in a.videos:
+        stem = Path(v).stem
+        if stem in old and not (Path("data/verified") / f"{stem}.json").exists():
+            ans = input(f"[review] {stem} is already in the old training data (volleyball_combined); "
+                        f"labeling it again counts it twice. Review anyway? [y/N] ")
+            if ans.strip().lower() != "y":
+                continue
         review(v, a.test)
 
 
