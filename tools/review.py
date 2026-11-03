@@ -14,8 +14,9 @@ it resumes where you left off.
   fix a frame    click  the ball is here: snaps to the centre of a YOLO box near your click if
                         there is one (more exact than a click); z  toggle snapping off / on
                         n      no ball visible
-                 N      no ball here AND for the rest of this run of proposals (e.g. a
-                        "resting" run that is really a head or a sign: one key, not 30)
+                 N      no ball here AND in the following frames while the proposal stays on
+                        that same object (a wall sign, a fan, a head: one key, not 30); stops
+                        where the proposal jumps somewhere else
                  h      hidden: in play but covered (behind a player, …)
                  x      can't tell (skip)      c      clear my edit (back to the proposal)
                  i      fill the frames between your last two clicks (straight line; each
@@ -34,8 +35,10 @@ it resumes where you left off.
                  shift+click (or e, then click) a grey square: yes, a ball. One click is enough: it
                  follows that ball through the whole clip, both directions (bridging gaps where YOLO
                  lost it: up to 1 s, or 5 s for a ball that stays put). On an orange one: remove it (same).
-                 Elsewhere: snaps to a weaker YOLO box near the click and follows it the same way; if
-                 there is none, a ball in this frame only (on a YOLO box from a crop, else at the click)
+                 Elsewhere: snaps to a weaker YOLO box near the click and follows it the same way. Where
+                 the full-frame YOLO pass missed the ball (small, far or resting balls), it follows with
+                 YOLO on crops around it instead (a few seconds; progress in the terminal). Only if YOLO
+                 finds nothing even on a crop: a ball in this frame only, at the click
                  o      jump to the next frame with a grey suggestion (quick pass over a checked clip)
   contacts       m      mark a touch at this frame, then its type: 1 serve, 2 pass/receive,
                         3 set, 4 attack, 5 block, 6 dig, 0 other (m on a marked frame removes it)
@@ -146,7 +149,7 @@ class Review:
     FOLLOW_GAP_S = 1.0       # ... and gaps up to this long (YOLO lost it) are bridged
     STILL_GAP_S = 5.0        # ... or up to this long if it reappears at the same spot (resting ball)
 
-    def _follow(self, f: int, spot, boxes_at, direction: int) -> dict:
+    def _follow(self, f: int, spot, boxes_at, direction: int, with_spot: bool = False) -> dict:
         """Follow one object from frame f in one direction through the whole clip: frame -> box.
         boxes_at(g) gives candidate boxes in frame g. Gaps where YOLO lost it are bridged by
         interpolating between the sightings on both sides: up to FOLLOW_GAP_S, or up to
@@ -157,12 +160,16 @@ class Review:
         hits, last = {}, f
         while True:
             found = None
-            for g in range(last + direction, last + direction * (max_still + 1), direction):
+            # past max_gap only a ball at the same spot counts; with crop searches (with_spot: one
+            # YOLO call per look) check every 4th frame there, the bridge fills the rest
+            steps = list(range(1, max_gap + 1)) + list(range(max_gap + 1, max_still + 1, 4 if with_spot else 1))
+            for g in (last + direction * k for k in steps):
                 if not 0 <= g < self.n:
                     break
-                j = self._nearest(boxes_at(g), spot, self.ball)
+                cand = boxes_at(g, spot) if with_spot else boxes_at(g)
+                j = self._nearest(cand, spot, self.ball)
                 if j is not None:
-                    box = boxes_at(g)[j]
+                    box = cand[j]
                     still = ((box[0] - spot[0]) ** 2 + (box[1] - spot[1]) ** 2) ** 0.5 <= 0.5 * self.ball
                     if abs(g - last) <= max_gap or still:
                         found = (g, box)
@@ -190,6 +197,18 @@ class Review:
                 continue
             out.append([round(b[0], 1), round(b[1], 1), round(b[2], 1), round(b[3], 1)])
         return out
+
+    crop_find = None         # set by review(): (frame, spot) -> YOLO boxes on a full-res crop there
+
+    def _boxes_or_crop(self, g: int, spot) -> list:
+        """Cached YOLO boxes near the spot; where the full-frame pass missed the ball (small,
+        far, resting balls often are), YOLO on a crop around the spot instead."""
+        cached = self._boxes_near_play(g)
+        if self._nearest(cached, spot, self.ball) is not None or self.crop_find is None:
+            return cached
+        game = self.game_xy(g)
+        return [b for b in self.crop_find(g, spot)
+                if game is None or ((b[0] - game[0]) ** 2 + (b[1] - game[1]) ** 2) ** 0.5 > 1.5 * self.ball]
 
     def other_click_target(self, f: int, xy):
         """For a shift+click away from confirmed balls and suggestions: a weaker YOLO box near it
@@ -225,12 +244,14 @@ class Review:
             return f"removed the other ball from {len(frames)} frame{'s' if len(frames) != 1 else ''}"
         i = self._nearest(self.suggestions(f), xy, r)
         weak = self.other_click_target(f, xy) if (i is None and self.snap) else None
+        if i is None and weak is None and crop_box is not None and self.crop_find is not None:
+            weak = list(crop_box)                          # found on a crop: follow it with crops too
         if i is not None or weak is not None:              # confirm a suggestion / weak box, following it
             box = self.suggestions(f)[i] if i is not None else weak
             self._origin = box
             frames = {f: box}
             for d in (+1, -1):
-                frames.update(self._follow(f, box[:2], self._boxes_near_play, d))
+                frames.update(self._follow(f, box[:2], self._boxes_or_crop, d, with_spot=True))
             new = {g: b for g, b in frames.items()
                    if not any(((o[0] - b[0]) ** 2 + (o[1] - b[1]) ** 2) ** 0.5 <= self.ball for o in self.others(g))}
             self._push(list(new))
@@ -316,14 +337,26 @@ class Review:
         self._set(f, value, "fixed")
 
     def set_none_run(self, f: int) -> int:
-        """"No ball" for f and the following frames with the same kind of proposal (same state,
-        e.g. a run of "resting" proposals), stopping at your own edits. Returns the count."""
-        st = self.P["frames"][f]["state"]
-        todo = [f]
+        """"No ball" for f and the following frames where the proposal stays on the same object
+        (each step within 1.5 ball-widths; it may blink off for up to 0.5 s), whatever its state:
+        a wall object, a fan, a head. Stops where the proposal jumps elsewhere (maybe the real
+        ball) or at your own edits. Returns the count."""
+        last = self.proposal(f)
+        todo, pending = [f], []
+        max_gap = max(1, int(round(0.5 * self.P.get("fps", 30))))
         for g in range(f + 1, self.n):
-            if self.P["frames"][g]["state"] != st or self.src.get(g) == "fixed":
+            if self.src.get(g) == "fixed":
                 break
-            todo.append(g)
+            p = self.proposal(g)
+            if not isinstance(p, list):                    # no circle here: fine, keep going a little
+                pending.append(g)
+                if len(pending) > max_gap:
+                    break
+                continue
+            if isinstance(last, list) and ((p[0] - last[0]) ** 2 + (p[1] - last[1]) ** 2) ** 0.5 > 1.5 * self.ball:
+                break                                      # jumped to something else
+            todo += pending + [g]
+            pending, last = [], p
         self._push(todo)
         for g in todo:
             self._set(g, "none", "fixed")
@@ -498,6 +531,39 @@ class FrameSource:
         return self.cv2.imdecode(np.frombuffer(b, np.uint8), self.cv2.IMREAD_COLOR)
 
 
+class FullFrames:
+    """Full-resolution frames for crop searches, decoded in chunks (seeking is unreliable on phone
+    video) and kept as JPEG: a couple of chunks in memory at a time."""
+    CHUNK = 60
+
+    def __init__(self, video: str):
+        import cv2
+        self.cv2, self.video, self.cap, self.pos, self.cache = cv2, video, None, 0, {}
+
+    def get(self, g: int):
+        cv2 = self.cv2
+        if g not in self.cache:
+            a = (g // self.CHUNK) * self.CHUNK
+            if self.cap is None or a < self.pos:
+                if self.cap is not None:
+                    self.cap.release()
+                self.cap, self.pos = cv2.VideoCapture(self.video), 0
+            while self.pos < a:
+                if not self.cap.grab():
+                    return None
+                self.pos += 1
+            keep = {k: v for k, v in self.cache.items() if abs(k // self.CHUNK - a // self.CHUNK) <= 1}
+            self.cache = keep
+            while self.pos < a + self.CHUNK:
+                ok, img = self.cap.read()
+                if not ok:
+                    break
+                self.cache[self.pos] = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 95])[1].tobytes()
+                self.pos += 1
+        b = self.cache.get(g)
+        return None if b is None else cv2.imdecode(np.frombuffer(b, np.uint8), cv2.IMREAD_COLOR)
+
+
 # ── drawing ──────────────────────────────────────────────────────────────────
 
 def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, playing: bool, mouse, msg: str):
@@ -631,6 +697,28 @@ def review(video: str, test: bool = False):
             if d <= Review.SNAP_BW * ball and (best is None or d < best[0]):
                 best = (d, [round(b[0] / scale, 1), round(b[1] / scale, 1), round(b[2] / scale, 1), round(b[3] / scale, 1)])
         return None if best is None else best[1]
+    full = FullFrames(video)
+
+    def crop_find(g, spot):
+        """YOLO on a full-resolution crop around spot in frame g (following another ball where the
+        cached full-frame pass missed it). [[cx, cy, w, h], ...] in video coordinates."""
+        try:
+            if "m" not in yolo:
+                from ultralytics import YOLO
+                yolo["m"] = YOLO("models/best4.pt") if Path("models/best4.pt").exists() else None
+            img = full.get(g)
+            if yolo["m"] is None or img is None:
+                return []
+            from core.refine import zoom_detect
+            crop_find.calls += 1
+            if crop_find.calls % 100 == 0:
+                print(f"[review] following the other ball with crops: frame {g}", flush=True)
+            return [b[:4] for b in zoom_detect(yolo["m"], img, spot, int(max(48, 3.0 * R.ball)), conf=0.05)]
+        except Exception as e:                               # a convenience: never block labelling
+            print(f"[review] crop follow: {type(e).__name__}: {e}")
+            return []
+    crop_find.calls = 0
+    R.crop_find = crop_find
     msg, msg_t = "", 0.0
 
     WIN = "VolleyVision review"
