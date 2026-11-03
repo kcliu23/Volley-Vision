@@ -42,6 +42,10 @@ it resumes where you left off.
                  for resting and slow balls). Takes a few seconds; progress in the terminal. Click the
                  ball's centre: the look is taken from there
                  o      jump to the next frame with a grey suggestion (quick pass over a checked clip)
+                 DEFAULT: shift+click marks the ball in THIS frame only (instant; on an orange one:
+                 removes it there). g = fill between your last two shift+clicks (straight line), e.g.
+                 a resting ball: shift+click it at the start and end of a stretch, press g.
+                 F = turn following on/off: then shift+click works as described above (slower)
   contacts       m      mark a touch at this frame, then its type: 1 serve, 2 pass/receive,
                         3 set, 4 attack, 5 block, 6 dig, 0 other (m on a marked frame removes it)
                  M      jump to the next marked touch
@@ -231,6 +235,25 @@ class Review:
         (a box YOLO found on a crop around the click) if given, else at the click."""
         r = max(self.ball, 12.0)
         i = self._nearest(self.others(f), xy, r)
+        if not self.follow:                                # default: this frame only (instant)
+            if i is not None:
+                self._push([f])
+                rest = [o for j, o in enumerate(self.others(f)) if j != i]
+                if rest:
+                    self.others_edit[f] = rest
+                else:
+                    self.others_edit.pop(f, None)
+                self.other_clicks = [c for c in self.other_clicks if c[0] != f]
+                return "removed the other ball (this frame)"
+            k = self._nearest(self.suggestions(f), xy, r)
+            box = self.suggestions(f)[k] if k is not None else (self.other_click_target(f, xy) if self.snap else None)
+            if box is None:
+                box = list(crop_box) if crop_box is not None else \
+                    [round(float(xy[0]), 1), round(float(xy[1]), 1), self.ball, self.ball]
+            self._push([f])
+            self.others_edit[f] = self.others(f) + [list(box)]
+            self.other_clicks = ([c for c in self.other_clicks if c[0] != f] + [(f, list(box))])[-2:]
+            return "added another ball (this frame)   g: fill between your last two shift+clicks"
         if i is not None:                                  # a confirmed ball: first fill in where it's missing
             box = self.others(f)[i]
             self._origin = box
@@ -294,6 +317,26 @@ class Review:
             return "added another ball (this frame, snapped to a YOLO box on a crop)"
         self.others_edit[f] = self.others(f) + [[round(float(xy[0]), 1), round(float(xy[1]), 1), self.ball, self.ball]]
         return "added another ball (this frame, at your click)"
+
+    def fill_others(self) -> int:
+        """Straight line between the last two shift+clicked other balls; frames in between get
+        it (unless they already have a ball there). Returns the number of frames filled."""
+        if len(self.other_clicks) < 2:
+            return 0
+        (a, pa), (b, pb) = sorted(self.other_clicks)
+        if b - a < 2:
+            return 0
+        todo = {}
+        for g in range(a + 1, b):
+            w = (g - a) / (b - a)
+            box = [round(pa[k] + w * (pb[k] - pa[k]), 1) for k in range(4)]
+            if not any(((o[0] - box[0]) ** 2 + (o[1] - box[1]) ** 2) ** 0.5 <= self.ball for o in self.others(g)):
+                todo[g] = box
+        if todo:
+            self._push(list(todo))
+            for g, box in todo.items():
+                self.others_edit[g] = self.others(g) + [box]
+        return len(todo)
 
     def next_suggestion(self, f: int) -> int | None:
         """Next frame with an unconfirmed suggestion, skipping the rest of the current run of them."""
@@ -413,6 +456,8 @@ class Review:
         return len(todo)
 
     snap = True               # the review loop's z key turns snapping off for clicks and fills
+    follow = False            # F: shift+click follows the ball through the clip (slow where YOLO can't see it)
+    other_clicks: list = []   # (frame, box) of the last shift+clicks, for g (fill between them)
 
     def _set_interp(self, f: int, xy):
         """A filled frame: on the straight line, or on a YOLO box near it (snapping on)."""
@@ -943,6 +988,13 @@ def review(video: str, test: bool = False):
         elif k == "e":
             state["extra"] = not state["extra"]; playing = False
             msg, msg_t = ("next click: another ball (on a square: remove it)" if state["extra"] else "back to normal clicks"), time.time()
+        elif k == "g":
+            m = R.fill_others(); save()
+            msg, msg_t = (f"other ball: filled {m} frames" if m else "shift+click the other ball in two frames first"), time.time()
+        elif k == "F":
+            R.follow = not R.follow
+            msg, msg_t = ("shift+click follows the ball through the clip (can take a while)" if R.follow
+                          else "shift+click marks this frame only (g fills between two)"), time.time()
         elif k == "i":
             m = R.interpolate(); save()
             msg, msg_t = (f"filled {m} frames" if m else "click the ball in two frames first"), time.time()
