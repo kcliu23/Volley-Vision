@@ -21,6 +21,7 @@ from core import paths  # noqa: E402
 from core.camera import Camera  # noqa: E402
 
 TEMPLATE = Path(__file__).with_name("ball3d_viewer.html")
+UNSURE_M, UNSURE_N = 1.0, 8        # flights with more uncertainty / fewer 2D points than this are drawn as unsure
 
 
 def build(stem: str, output: str = str(paths.OUTPUT)) -> Path:
@@ -41,7 +42,9 @@ def build(stem: str, output: str = str(paths.OUTPUT)) -> Path:
                    "vfov": round(math.degrees(2 * math.atan(cam.height / 2 / cam.f)), 3)},
         "flights": [{"id": i, "f0": f["f0"], "f1": f["f1"], "apex": f["apex_m"], "speed": f["speed_start_mps"],
                      "net": f["net_crossing"]["clears_net_by_m"] if f["net_crossing"] else None,
-                     "unc": f["depth_std_m"]} for i, f in enumerate(fl) if i in keep],
+                     "unc": f["depth_std_m"],
+                     "unsure": bool(f["depth_std_m"] > UNSURE_M or f.get("n_points", 99) < UNSURE_N)}
+                    for i, f in enumerate(fl) if i in keep],
         "frames": frames,
     }
     html = TEMPLATE.read_text().replace("/*__DATA__*/null", json.dumps(data, separators=(",", ":")))

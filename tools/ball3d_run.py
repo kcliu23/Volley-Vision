@@ -29,7 +29,10 @@ from core.ball3d import BALL_D, Link, Segment, fit_rally  # noqa: E402
 from core.camera import Camera  # noqa: E402
 
 LINK_GAP_S = 0.3          # flights further apart than this aren't linked
-FREE_PX = 6.0             # a free flight fits its 2D points within this (median px)
+FREE_X = 2.0              # a free flight fits its 2D points within this many times their own jitter
+FREE_MIN_PX = 8.0         # ... and never asks for better than this (median px): model error (calibration,
+                          # drag) is a few px; what this catches (held, rolling, wrong splits) misses by 25-50
+REACH_M = 3.5             # a touch is within a jumping player's reach
 
 
 def sizes_for(stem: str, n: int) -> np.ndarray:
@@ -68,6 +71,106 @@ def calibrate_size(flights, uv, w, size, fps, cam, min_n: int = 25, max_px: floa
             ratios.append(dg / ds)
     bias = float(np.median(ratios)) if len(ratios) >= 3 else 1.0
     return size / bias, bias
+
+
+def jitter_px(uv) -> float:
+    """2D noise of a run of points from their frame-to-frame second differences (a smooth flight
+    barely bends in one frame, so what's left is noise): robust sigma / sqrt(6)."""
+    d2 = uv[2:] - 2 * uv[1:-1] + uv[:-2]
+    if len(d2) < 4:
+        return FREE_MIN_PX / FREE_X
+    r = np.hypot(d2[:, 0], d2[:, 1])
+    return float(np.median(r) / 0.6745 / np.sqrt(6) * 0.85)   # 0.85: 2D radius -> per-axis scale
+
+
+def free_px(seg, edge) -> float:
+    ok = ~edge[seg.frames]
+    pts = seg.uv[ok] if ok.sum() >= 6 else seg.uv
+    return max(FREE_MIN_PX, FREE_X * jitter_px(pts))
+
+
+def edge_mask(stem: str, uv, cam, output) -> np.ndarray:
+    """Frames whose ball is within one ball-width of the picture's edge (the video area: phone
+    clips in a screen recording have dark side bars)."""
+    x0, y0, x1, y1 = 0, 0, cam.width, cam.height
+    sp = paths.cache_dir(stem, output) / "sample_dets.json"
+    ball = 30.0
+    if sp.exists():
+        prof = json.load(open(sp)).get("profile") or {}
+        x0, y0, x1, y1 = prof.get("content") or (x0, y0, x1, y1)
+        ball = float(prof.get("ball_px") or ball)
+    x, y = uv[:, 0], uv[:, 1]
+    with np.errstate(invalid="ignore"):
+        m = np.isfinite(x) & ((x < x0 + ball) | (x > x1 - ball) | (y < y0 + ball) | (y > y1 - ball))
+    return m, (x0, y0, x1, y1)
+
+
+def out_of_picture(fr, seen, edge) -> np.ndarray:
+    """Frames of a flight with no ball where it left at an edge and came back at an edge: it was
+    out of the picture there (not hidden behind someone)."""
+    out = []
+    i, n = 0, len(fr)
+    while i < n:
+        if seen[i]:
+            i += 1; continue
+        j = i
+        while j < n and not seen[j]:
+            j += 1
+        if i > 0 and j < n and edge[fr[i - 1]] and edge[fr[j]]:
+            out.extend(fr[i:j].tolist())
+        i = j
+    return np.array(out, float)
+
+
+def resplit(segs, spans, cam, edge, fps, min_pts: int = 5):
+    """Split flights that no single arc fits (median 2D error over free_px(), away from the edges) at
+    the point where two arcs joined by a touch fit best, if both then fit cleanly. Returns the new
+    segments, spans and {index of the first half: (last frame before, first frame after)}."""
+    def clean(seg):
+        fit = fit_rally([seg], [], cam)
+        e = np.hypot(*(cam.project(fit.at(0, seg.t)) - seg.uv).T)
+        ok = ~edge[seg.frames]
+        return float(np.median(e[ok] if ok.sum() >= 4 else e))
+
+
+    def part(seg, m):
+        lo, hi = seg.t[m][0], seg.t[m][-1]
+        o = seg.out_t[(seg.out_t >= lo) & (seg.out_t <= hi)]
+        return Segment(seg.t[m], seg.uv[m], seg.size[m], seg.w[m], frames=seg.frames[m], out_t=o, box=seg.box)
+
+    out_s, out_sp, inner = [], [], {}
+    for seg, sp in zip(segs, spans):
+        n = len(seg.t)
+        lim = free_px(seg, edge)
+        single = clean(seg) if n >= 2 * min_pts else 0.0
+        if n < 2 * min_pts or single <= lim:
+            out_s.append(seg); out_sp.append(sp); continue
+        best = None
+        for i in range(min_pts, n - min_pts + 1):
+            A, B = part(seg, np.arange(n) < i), part(seg, np.arange(n) >= i)
+            ia, ib = int(A.frames[-1]), int(B.frames[0])
+            if edge[ia] or edge[ib]:                       # leaving / entering the picture isn't a touch
+                continue
+            if any(ia < t * fps < ib for t in seg.out_t):  # nor is a stretch where it was out of the picture
+                continue
+            L = [Link(0, (ia + ib) / 2 / fps, "touch", max(1, ib - ia) / 2 / fps)]
+            fit = fit_rally([A, B], L, cam)
+            touch = fit.at(0, fit.info["touch_t"][0])[0]
+            if not (0 <= touch[2] <= REACH_M):             # nobody touches it up there (or under the floor)
+                continue
+            ea = np.hypot(*(cam.project(fit.at(0, A.t)) - A.uv).T)
+            eb = np.hypot(*(cam.project(fit.at(1, B.t)) - B.uv).T)
+            score = float(np.median(np.r_[ea, eb]))
+            if best is None or score < best[0]:
+                best = (score, i, A, B, float(np.median(ea)), float(np.median(eb)), ia, ib)
+        if best and best[0] < 0.6 * single and best[4] <= lim and best[5] <= lim:
+            _, i, A, B, _, _, ia, ib = best
+            inner[len(out_s)] = (ia, ib)
+            out_s += [A, B]
+            out_sp += [(sp[0], ia), (ib, sp[1])]
+        else:
+            out_s.append(seg); out_sp.append(sp)
+    return out_s, out_sp, inner
 
 
 def positions(stem: str, track: dict, labels: bool):
@@ -109,6 +212,11 @@ def main():
     size, bias = calibrate_size(C["flights"], uv, w, size, fps, cam)
     print(f"[ball3d] {stem}: ball boxes run {bias:.2f}x the true ball size here (from gravity on long flights); corrected")
 
+    # a ball cut by the picture's edge is clicked off-centre (only part of it shows): such points
+    # count less in the fit and not at all in the clean-flight check
+    edge, box = edge_mask(stem, uv, cam, a.output)
+    w = np.where(edge, 0.2 * w, w)
+
     # segments (2D flights) and the links between them
     segs, spans = [], []
     for fl in C["flights"]:
@@ -116,17 +224,29 @@ def main():
         ok = np.isfinite(uv[fr, 0])
         if ok.sum() < 6:
             continue
+        out = out_of_picture(np.arange(fl["f0"], fl["f1"] + 1), ok, edge)
         fr = fr[ok]
-        segs.append(Segment(fr / fps, uv[fr], size[fr], w[fr], frames=fr))
+        segs.append(Segment(fr / fps, uv[fr], size[fr], w[fr], frames=fr, out_t=out / fps, box=box))
         spans.append((int(fl["f0"]), int(fl["f1"])))
+
+    # a flight no single arc fits is usually two: a touch the 2D split missed (a block, a ball
+    # touched while hidden behind a player). Find where one arc becomes two, by physics.
+    segs, spans, inner = resplit(segs, spans, cam, edge, fps)
+    for k, (a0, a1) in inner.items():
+        print(f"[ball3d] {stem}: found a touch the 2D split missed between frames {a0} and {a1}")
+
     contacts = C["contacts"]
     chains, cur, links_all = [], [0] if segs else [], []
     for k in range(1, len(segs)):
         a0, a1 = spans[k - 1][1], spans[k][0]
         c = next((c for c in contacts if a0 - 2 <= c["frame"] <= a1 + 2), None)
-        if c is not None and (a1 - a0) / fps <= LINK_GAP_S:
+        if k - 1 in inner:                                 # a touch found by the re-split
             cur.append(k)
-            links_all.append((k - 1, c["frame"] / fps, "bounce" if c["kind"] == "bounce" else "touch"))
+            ia, ib = inner[k - 1]
+            links_all.append((k - 1, (ia + ib) / 2 / fps, "touch", max(1, ib - ia) / 2 / fps))
+        elif c is not None and (a1 - a0) / fps <= LINK_GAP_S:
+            cur.append(k)
+            links_all.append((k - 1, c["frame"] / fps, "bounce" if c["kind"] == "bounce" else "touch", None))
         else:
             chains.append(cur)
             cur = [k]
@@ -137,8 +257,8 @@ def main():
     for ch in chains:
         sub = [segs[k] for k in ch]
         idx = {k: i for i, k in enumerate(ch)}
-        links = [Link(idx[k], t, kind) for k, t, kind in links_all if k in idx and k + 1 in idx]
-        fit = fit_rally(sub, links, cam)
+        links = [Link(idx[k], t, kind, ts) for k, t, kind, ts in links_all if k in idx and k + 1 in idx]
+        fit = fit_rally(sub, links, cam)            # drag = the ball's physics value (fitting it per rally is unstable with few flights)
         for i, k in enumerate(ch):
             s = sub[i]
             f0, f1 = spans[k]
@@ -146,14 +266,14 @@ def main():
             X = fit.at(i, tt)
             sd = fit.std(i, tt)
             med = fit.seg_rms_px[i]
-            ta, za = fit.apex(i)
-            if not (tt[0] <= ta <= tt[-1]):
-                za = float(X[:, 2].max())
-            p0, v0 = fit.params[i]
-            v_start = v0 + (tt[0] - fit.tr[i]) * np.array([0, 0, -9.81])
+            ta, za = fit.apex(i, tt[0], tt[-1])
+            v_start = (fit.at(i, tt[0] + 1e-3)[0] - fit.at(i, tt[0])[0]) / 1e-3
             uvp, _ = cam.project(X), None
             e = np.hypot(*(cam.project(fit.at(i, s.t)) - s.uv).T)
-            free = float(np.median(e)) <= FREE_PX
+            inner_pts = ~edge[s.frames]
+            e = e[inner_pts] if inner_pts.sum() >= 4 else e
+            lim = free_px(s, edge)
+            free = float(np.median(e)) <= lim
             cross = None
             xs = X[:, 0]
             sgn = np.sign(xs)
@@ -166,10 +286,12 @@ def main():
                 cross = {"frame": int(f0 + j), "height_m": round(float(zc), 2), "y_m": round(float(yc), 2),
                          "clears_net_by_m": round(float(zc - BALL_D / 2 - net_h), 2)}
             flights_out.append({"f0": f0, "f1": f1, "chain": chains.index(ch), "free_flight": bool(free),
+                                "n_points": int(len(s.t)), "limit_px": round(lim, 1),
                                 "median_px": round(float(np.median(e)), 1), "apex_m": round(float(za), 2),
                                 "speed_start_mps": round(float(np.linalg.norm(v_start)), 1),
                                 "min_height_m": round(float(X[:, 2].min()), 2), "net_crossing": cross,
-                                "depth_std_m": round(float(np.median(np.linalg.norm(sd, axis=1))), 2)})
+                                "depth_std_m": round(float(np.median(np.linalg.norm(sd, axis=1))), 2),
+                                "drag_k": round(float(fit.drag), 4)})
             for g, x, d in zip(range(f0, f1 + 1), X, sd):
                 frames_out[g] = {"xyz": [round(float(v), 3) for v in x], "std": [round(float(v), 3) for v in d],
                                  "flight": len(flights_out) - 1, "free": bool(free)}

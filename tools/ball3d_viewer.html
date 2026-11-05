@@ -53,7 +53,7 @@ h1 span { color: var(--muted); font-weight: 500; }
 .hud .h { font-family: var(--display); font-weight: 700; font-size: 2.6rem; line-height: 1; font-variant-numeric: tabular-nums; }
 .hud .h small { font-size: 1.1rem; font-weight: 600; color: var(--muted); margin-left: 3px; }
 .hud .f { font-family: var(--display); font-size: 1rem; color: var(--muted); letter-spacing: .04em; font-variant-numeric: tabular-nums; }
-.views { position: absolute; right: 10px; top: 10px; display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 70%; }
+.views { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: -6px; }
 .views button, .transport button, .transport select {
   font: 600 .85rem/1 var(--body); color: var(--ink); background: var(--panel);
   border: 1px solid var(--rule); border-radius: 999px; padding: 7px 12px; cursor: pointer;
@@ -78,8 +78,10 @@ tbody tr:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); 
 tbody tr.on { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: 0; }
 .ok { color: var(--good); } .low { color: var(--warn); }
+.unsure { font: 600 .72rem/1 var(--body); letter-spacing: .05em; text-transform: uppercase; color: var(--warn);
+  border: 1px solid currentColor; border-radius: 999px; padding: 2px 6px; margin-right: 4px; }
 .notes { color: var(--muted); font-size: .88rem; max-width: 72ch; display: grid; gap: 4px; }
-@media (max-width: 560px) { h1 { font-size: 1.7rem; } .hud .h { font-size: 2rem; } .views { max-width: 100%; left: 10px; justify-content: flex-start; top: auto; bottom: 34px; } }
+@media (max-width: 560px) { h1 { font-size: 1.7rem; } .hud .h { font-size: 2rem; } .stage { aspect-ratio: 4 / 3; } .hint { display: none; } }
 </style>
 
 <div class="wrap">
@@ -88,16 +90,16 @@ tbody tr.on { background: color-mix(in srgb, var(--accent) 16%, transparent); }
     <div class="sub" id="sub"></div>
   </header>
 
+  <div class="views" role="group" aria-label="Viewpoint">
+    <button id="v-orbit" aria-pressed="true">Orbit</button>
+    <button id="v-phone">From the phone</button>
+    <button id="v-side">Side</button>
+    <button id="v-top">Top</button>
+    <button id="v-far">Far end</button>
+  </div>
   <div class="stage" id="stage">
     <canvas id="cv" aria-label="3D view of the court and the ball"></canvas>
     <div class="hud"><div class="h" id="hh">–</div><div class="f" id="ff"></div></div>
-    <div class="views" role="group" aria-label="Viewpoint">
-      <button id="v-orbit" aria-pressed="true">Orbit</button>
-      <button id="v-phone">From the phone</button>
-      <button id="v-side">Side</button>
-      <button id="v-top">Top</button>
-      <button id="v-far">Far end</button>
-    </div>
     <div class="tag" id="tag" hidden></div>
     <div class="hint" id="hint">Drag to rotate · scroll or pinch to zoom · right-drag to pan</div>
   </div>
@@ -121,7 +123,7 @@ tbody tr.on { background: color-mix(in srgb, var(--accent) 16%, transparent); }
 
   <div class="notes">
     <div>Heights are the ball's centre above the floor, in meters. The yellow line drops from the ball to its spot on the floor; at a touch that spot should be under the player. "Over the net" is how far the ball clears the tape where it crosses. Uncertainty is the fit's typical 1-sigma position error for that flight, mostly along the phone's line of sight.</div>
-    <div>Only clean free flights are shown (ball held, rolling or badly fitted stretches are left out). Frame numbers match the video.</div>
+    <div>Physics: gravity plus air drag (a volleyball slows noticeably in flight). Flights with few 2D points or a large uncertainty are marked unsure and drawn dashed: don't read exact numbers off them. Touches the 2D tracker missed (a block, a touch behind a player) are found from where one arc becomes two. Frames with no ball in play (after the rally) stay empty. Frame numbers match the video.</div>
   </div>
 </div>
 
@@ -178,8 +180,12 @@ const D = /*__DATA__*/null;
   D.flights.forEach(f => {
     const pts = D.frames.filter(r => r[4] === f.id).map(r => new THREE.Vector3(r[1], r[2], r[3]));
     if (pts.length < 2) return;
-    const m = new THREE.LineBasicMaterial({ color: new THREE.Color(flightCol.get(f.id)), transparent: true, opacity: 0.35 });
-    const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), m); scene.add(l); arcs.set(f.id, l);
+    const col = new THREE.Color(flightCol.get(f.id));
+    const m = f.unsure ? new THREE.LineDashedMaterial({ color: col, dashSize: 0.25, gapSize: 0.2, transparent: true, opacity: 0.35 })
+                       : new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.35 });
+    const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), m);
+    if (f.unsure) l.computeLineDistances();
+    scene.add(l); arcs.set(f.id, l);
   });
   const ballMat = new THREE.MeshLambertMaterial({ color: 0xffcc00, emissive: 0x332200 });
   const ball = new THREE.Mesh(new THREE.SphereGeometry(0.14, 24, 16), ballMat); scene.add(ball);
@@ -227,14 +233,15 @@ const D = /*__DATA__*/null;
   // UI
   const n = D.n, scrub = document.getElementById("scrub"), playBtn = document.getElementById("play");
   scrub.max = String(Math.max(0, n - 1));
-  const free = D.flights.length;
-  document.getElementById("sub").textContent = `${free} clean flight${free === 1 ? "" : "s"} · from ${D.source === "labels" ? "your checked labels" : "the tracker"} · ${D.fps.toFixed(1)} fps · net ${D.net.toFixed(2)} m`;
+  const free = D.flights.length, unsure = D.flights.filter(f => f.unsure).length;
+  document.getElementById("sub").textContent = `${free} flight${free === 1 ? "" : "s"}${unsure ? ` (${unsure} unsure)` : ""} · from ${D.source === "labels" ? "your checked labels" : "the tracker"} · ${D.fps.toFixed(1)} fps · net ${D.net.toFixed(2)} m`;
   const rows = document.getElementById("rows");
   D.flights.forEach((f, i) => {
     const tr = document.createElement("tr"); tr.tabIndex = 0; tr.dataset.id = f.id;
     const net = f.net == null ? "–" : `<span class="${f.net >= 0 ? "ok" : "low"}">${f.net >= 0 ? "+" : ""}${f.net.toFixed(2)} m</span>`;
     tr.innerHTML = `<td><span class="sw" style="background:${flightCol.get(f.id)}"></span>${i + 1}</td><td>${f.f0}–${f.f1}</td>` +
-      `<td>${f.apex.toFixed(2)} m</td><td>${f.speed.toFixed(1)} m/s</td><td>${net}</td><td>±${f.unc.toFixed(2)} m</td>`;
+      `<td>${f.apex.toFixed(2)} m</td><td>${f.speed.toFixed(1)} m/s</td><td>${net}</td>` +
+      `<td>${f.unsure ? '<span class="unsure">unsure</span> ' : ""}±${f.unc.toFixed(2)} m</td>`;
     const go = () => { frame = f.f0; playing = false; playBtn.textContent = "Play"; };
     tr.addEventListener("click", go); tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
     rows.appendChild(tr);

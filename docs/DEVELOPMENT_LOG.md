@@ -197,8 +197,23 @@ and other-ball labels only feed YOLO (WASB trains on the game ball alone).
   on long flights and corrected. 12 of 15 flights are clean free flights (2D fit 1-5 px); every
   net crossing clears the tape (never told about the net); the landing flight reaches the floor;
   apexes 2.9-6.3 m. Tracker output and hand labels give the same apexes on clean flights.
-- Next: fit the camera together with the flights (gravity refines focal / pose), propagate
-  calibration uncertainty, contact detection quality (needs `m` marks), a 3D viewer.
+- **Air drag** (Nov 4): a volleyball is light for its size (k = rho Cd A / 2m ~ 0.035 /m, terminal
+  ~17 m/s). Synthetic rallies with drag: the no-drag model was 34 cm off per frame and 2 m at
+  landing; with drag 5 cm and 12 cm. Drag is fixed at the ball's physics value on real clips
+  (fitting it per rally was unstable with few flights).
+- **Gaps** in test74's 3D (630 of 854 frames at first): no ball in play (after the rally), the ball
+  above the picture, and flights rejected because they held a touch the 2D split missed. Fixes:
+  re-split a flight where one arc becomes two (touch at a reachable height <= 3.5 m, clearly better
+  than one arc) -> found the block at 228/229 and a touch behind a player at 608/616; frames where
+  the ball left the picture at an edge must project outside it; edge points count less; the
+  clean-flight check uses max(8 px, 2x the flight's own jitter) (hand clicks wobble ~5 px).
+  Now 740 frames in 3D; short or very uncertain flights are marked unsure.
+- Tools: `tools.ball3d_video` (floor shadow + height drawn on the video), `tools.ball3d_viewer`
+  (interactive 3D page: orbit / from the phone / side / top / far end; the phone view matches the
+  video's court lines). Touch check against players' feet (person detector): calibration measures
+  people at 1.69 m median; clear touches sit above the toucher.
+- Next: a touch score (ball floor spot vs the toucher's feet) as the 3D accuracy number; fit the
+  camera together with the flights; propagate calibration uncertainty; `m` marks for contacts.
 
 ---
 
