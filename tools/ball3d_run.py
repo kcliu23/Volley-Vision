@@ -214,6 +214,113 @@ def resplit(segs, spans, cam, edge, fps, min_pts: int = 5):
     return out_s, out_sp, inner
 
 
+def solve_v1(uv, w, size, edge, box, fps, cam, flights, contacts, log=print):
+    """The current mechanism: the tracker's 2D flights, merged / re-split by physics, linked at
+    contacts into chains, each chain fitted. Returns [(chain index, segment, (f0, f1), fit, i)]."""
+    # segments (2D flights) and the links between them
+    segs, spans = [], []
+    for fl in flights:
+        fr = np.arange(fl["f0"], fl["f1"] + 1)
+        ok = np.isfinite(uv[fr, 0])
+        if ok.sum() < 6:
+            continue
+        out = out_of_picture(np.arange(fl["f0"], fl["f1"] + 1), ok, edge)
+        fr = fr[ok]
+        segs.append(Segment(fr / fps, uv[fr], size[fr], w[fr], frames=fr, out_t=out / fps, box=box))
+        spans.append((int(fl["f0"]), int(fl["f1"])))
+
+    # the opposite mistake: one flight cut in two by the 2D split where nothing touched it (it
+    # went out of the picture and came back, or hid behind a player). If one arc explains both
+    # pieces (passing outside the picture where it was out of it), they're one flight.
+    segs, spans, merged = remerge(segs, spans, contacts, cam, edge, uv, box, fps)
+    for (a0, a1), (b0, b1) in merged:
+        log(f"flights {a0}-{a1} and {b0}-{b1} are one flight (no touch between them): joined")
+
+    # a flight no single arc fits is usually two: a touch the 2D split missed (a block, a ball
+    # touched while hidden behind a player). Find where one arc becomes two, by physics.
+    segs, spans, inner = resplit(segs, spans, cam, edge, fps)
+    for k, (a0, a1) in inner.items():
+        log(f"found a touch the 2D split missed between frames {a0} and {a1}")
+
+    chains, cur, links_all = [], [0] if segs else [], []
+    for k in range(1, len(segs)):
+        a0, a1 = spans[k - 1][1], spans[k][0]
+        c = next((c for c in contacts if a0 - 2 <= c["frame"] <= a1 + 2), None)
+        if k - 1 in inner:                                 # a touch found by the re-split
+            cur.append(k)
+            ia, ib = inner[k - 1]
+            links_all.append((k - 1, (ia + ib) / 2 / fps, "touch", max(1, ib - ia) / 2 / fps))
+        elif c is not None and (a1 - a0) / fps <= LINK_GAP_S:
+            cur.append(k)
+            links_all.append((k - 1, c["frame"] / fps, "bounce" if c["kind"] == "bounce" else "touch", None))
+        else:
+            chains.append(cur)
+            cur = [k]
+    if cur:
+        chains.append(cur)
+
+    pieces = []
+    for ci, ch in enumerate(chains):
+        sub = [segs[k] for k in ch]
+        idx = {k: i for i, k in enumerate(ch)}
+        links = [Link(idx[k], t, kind, ts) for k, t, kind, ts in links_all if k in idx and k + 1 in idx]
+        fit = fit_rally(sub, links, cam)            # drag = the ball's physics value (fitting it per rally is unstable with few flights)
+        for i, k in enumerate(ch):
+            pieces.append((ci, sub[i], spans[k], fit, i))
+    return pieces
+
+
+def player_reach(players, fps):
+    """near(t, xyz): metres between the ball and the closest player's reach (a vertical cylinder
+    over their court spot, radius 1 m, from the floor to feet height + 1.33 x standing height,
+    i.e. standing reach plus any jump), or None where no player is known at that time."""
+    by_f = {}
+    for p in players:
+        h = p.height_m if np.isfinite(p.height_m) else 1.85
+        for k, f in enumerate(p.frames):
+            if np.isfinite(p.ground[k, 0]):
+                by_f.setdefault(int(f), []).append((p.ground[k, 0], p.ground[k, 1], p.feet_z[k] + 1.33 * h))
+    by_f = {f: np.array(v) for f, v in by_f.items()}
+
+    def near(t, x):
+        f = int(round(t * fps))
+        P = next((by_f[g] for g in (f, f - 1, f + 1, f - 2, f + 2, f - 3, f + 3) if g in by_f), None)
+        if P is None:
+            return None
+        dxy = np.maximum(0.0, np.hypot(P[:, 0] - x[0], P[:, 1] - x[1]) - 1.0)
+        dz = np.maximum(0.0, x[2] - P[:, 2])
+        return float(np.min(np.hypot(dxy, dz)))
+    return near
+
+
+def solve_v2(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_s: float = 1.5, players=None):
+    """The global rally fit: per rally (observed stretches separated by > rally_gap_s without the
+    ball), core.rally3d.solve with the tracker's contacts as hints. Same output as solve_v1."""
+    from core.rally3d import Obs, solve
+    fr_all = np.where(np.isfinite(uv[:, 0]))[0]
+    if not len(fr_all):
+        return []
+    cut = np.where(np.diff(fr_all) > rally_gap_s * fps)[0]
+    rallies = np.split(fr_all, cut + 1)
+    pieces = []
+    for ri, fr in enumerate(rallies):
+        if len(fr) < 8:
+            continue
+        full = np.arange(fr[0], fr[-1] + 1)
+        out_f = out_of_picture(full, np.isfinite(uv[full, 0]), edge).astype(int)
+        o = Obs(fr / fps, uv[fr], size[fr], w[fr], fr, edge[fr], out_f, box, fps)
+        if players:
+            o.near = player_reach(players, fps)
+        hints = [c["frame"] for c in contacts if fr[0] <= c["frame"] <= fr[-1]]
+        res, info = solve(o, cam, hints, log=log)
+        nt = len(res) - 1
+        log(f"rally {fr[0]}-{fr[-1]}: {nt} touch{'es' if nt != 1 else ''} chosen by the fit"
+            + (f"; flights still fitting badly: {[res[k][1] for k in info['bad']]}" if info["bad"] else ""))
+        for seg, span, fit, i in res:
+            pieces.append((ri, seg, span, fit, i))
+    return pieces
+
+
 def positions(stem: str, track: dict, labels: bool):
     """(uv (n, 2) with NaN where no ball, weight (n,))."""
     n = len(track["frames"])
@@ -236,6 +343,7 @@ def main():
     ap.add_argument("video")
     ap.add_argument("--labels", action="store_true", help="use your checked labels instead of the tracker's output")
     ap.add_argument("--output", default=str(paths.OUTPUT))
+    ap.add_argument("--v2", action="store_true", help="the global rally fit (core.rally3d): touches chosen by the fit")
     a = ap.parse_args()
     stem = Path(a.video).stem
     cam = Camera.load(Path("data/cameras") / f"{stem}.json")
@@ -258,58 +366,23 @@ def main():
     edge, box = edge_mask(stem, uv, cam, a.output)
     w = np.where(edge, 0.2 * w, w)
 
-    # segments (2D flights) and the links between them
-    segs, spans = [], []
-    for fl in C["flights"]:
-        fr = np.arange(fl["f0"], fl["f1"] + 1)
-        ok = np.isfinite(uv[fr, 0])
-        if ok.sum() < 6:
-            continue
-        out = out_of_picture(np.arange(fl["f0"], fl["f1"] + 1), ok, edge)
-        fr = fr[ok]
-        segs.append(Segment(fr / fps, uv[fr], size[fr], w[fr], frames=fr, out_t=out / fps, box=box))
-        spans.append((int(fl["f0"]), int(fl["f1"])))
-
-    # the opposite mistake: one flight cut in two by the 2D split where nothing touched it (it
-    # went out of the picture and came back, or hid behind a player). If one arc explains both
-    # pieces (passing outside the picture where it was out of it), they're one flight.
-    segs, spans, merged = remerge(segs, spans, C["contacts"], cam, edge, uv, box, fps)
-    for (a0, a1), (b0, b1) in merged:
-        print(f"[ball3d] {stem}: flights {a0}-{a1} and {b0}-{b1} are one flight (no touch between them): joined")
-
-    # a flight no single arc fits is usually two: a touch the 2D split missed (a block, a ball
-    # touched while hidden behind a player). Find where one arc becomes two, by physics.
-    segs, spans, inner = resplit(segs, spans, cam, edge, fps)
-    for k, (a0, a1) in inner.items():
-        print(f"[ball3d] {stem}: found a touch the 2D split missed between frames {a0} and {a1}")
-
-    contacts = C["contacts"]
-    chains, cur, links_all = [], [0] if segs else [], []
-    for k in range(1, len(segs)):
-        a0, a1 = spans[k - 1][1], spans[k][0]
-        c = next((c for c in contacts if a0 - 2 <= c["frame"] <= a1 + 2), None)
-        if k - 1 in inner:                                 # a touch found by the re-split
-            cur.append(k)
-            ia, ib = inner[k - 1]
-            links_all.append((k - 1, (ia + ib) / 2 / fps, "touch", max(1, ib - ia) / 2 / fps))
-        elif c is not None and (a1 - a0) / fps <= LINK_GAP_S:
-            cur.append(k)
-            links_all.append((k - 1, c["frame"] / fps, "bounce" if c["kind"] == "bounce" else "touch", None))
-        else:
-            chains.append(cur)
-            cur = [k]
-    if cur:
-        chains.append(cur)
+    if a.v2:
+        players = None
+        pj = Path(a.output) / stem / "players.json"
+        if pj.exists():
+            from core.players import build
+            players = build(json.load(open(pj)), cam, fps)
+            print(f"[ball3d] {stem}: {len(players)} players: a touch away from all of them costs more")
+        pieces = solve_v2(uv, w, size, edge, box, fps, cam, C["contacts"], players=players,
+                          log=lambda m: print(f"[ball3d] {stem}: " + m))
+    else:
+        pieces = solve_v1(uv, w, size, edge, box, fps, cam, C["flights"], C["contacts"],
+                          log=lambda m: print(f"[ball3d] {stem}: " + m))
 
     flights_out, frames_out = [], {}
-    for ch in chains:
-        sub = [segs[k] for k in ch]
-        idx = {k: i for i, k in enumerate(ch)}
-        links = [Link(idx[k], t, kind, ts) for k, t, kind, ts in links_all if k in idx and k + 1 in idx]
-        fit = fit_rally(sub, links, cam)            # drag = the ball's physics value (fitting it per rally is unstable with few flights)
-        for i, k in enumerate(ch):
-            s = sub[i]
-            f0, f1 = spans[k]
+    nchains = 1 + max((p[0] for p in pieces), default=-1)
+    if True:
+        for ci, s, (f0, f1), fit, i in pieces:
             tt = np.arange(f0, f1 + 1) / fps
             X = fit.at(i, tt)
             sd = fit.std(i, tt)
@@ -333,7 +406,7 @@ def main():
                 yc = X[j, 1] + wgt * (X[j + 1, 1] - X[j, 1])
                 cross = {"frame": int(f0 + j), "height_m": round(float(zc), 2), "y_m": round(float(yc), 2),
                          "clears_net_by_m": round(float(zc - BALL_D / 2 - net_h), 2)}
-            flights_out.append({"f0": f0, "f1": f1, "chain": chains.index(ch), "free_flight": bool(free),
+            flights_out.append({"f0": f0, "f1": f1, "chain": ci, "free_flight": bool(free),
                                 "n_points": int(len(s.t)), "limit_px": round(lim, 1),
                                 "median_px": round(float(np.median(e)), 1), "apex_m": round(float(za), 2),
                                 "speed_start_mps": round(float(np.linalg.norm(v_start)), 1),
@@ -348,7 +421,7 @@ def main():
     json.dump({"schema": "vv-ball3d/1", "video": a.video, "fps": fps, "source": "labels" if a.labels else "track",
                "camera": str(Path("data/cameras") / f"{stem}.json"), "flights": flights_out,
                "frames": {str(k): v for k, v in sorted(frames_out.items())}}, open(out, "w"), indent=0)
-    print(f"[ball3d] {stem}: {len(flights_out)} flights in {len(chains)} chains  →  {out}")
+    print(f"[ball3d] {stem}: {len(flights_out)} flights in {nchains} chains  →  {out}")
     print(f"  {'frames':>11s} {'free':>5s} {'2D px':>6s} {'apex m':>7s} {'speed m/s':>9s} {'lowest m':>8s} {'+-m':>5s}  net crossing")
     for fl in flights_out:
         nc = fl["net_crossing"]
