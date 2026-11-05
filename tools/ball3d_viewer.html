@@ -1,0 +1,295 @@
+<title>__CLIP__ Ball 3D</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700&family=Barlow:wght@400;500;600&display=swap">
+<style>
+/* Layout: film-room console. Viewport on top, transport under it, flight sheet below. */
+:root {
+  --bg: #eef1ee;          /* gym-floor grey with a green bias */
+  --panel: #fbfcfb;
+  --ink: #15201b;
+  --muted: #5a6962;
+  --rule: #d3dbd6;
+  --floor: #d9c9a8;       /* maple court */
+  --line3d: #1d2a24;
+  --sky: #e7ece9;
+  --accent: #1f5fbf;      /* the gym's blue band */
+  --ball: #f2b705;
+  --good: #2f8a4c;
+  --warn: #b26a00;
+  --display: "Barlow Condensed", "Arial Narrow", "Roboto Condensed", sans-serif;
+  --body: "Barlow", "Segoe UI", system-ui, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1412; --panel: #151d1a; --ink: #e4ebe7; --muted: #94a59c; --rule: #26332e;
+    --floor: #3b3326; --line3d: #c9d4ce; --sky: #121a17; --accent: #6f9ee8; --ball: #ffcc2e;
+    --good: #5fbf7d; --warn: #e0a24a; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1412; --panel: #151d1a; --ink: #e4ebe7; --muted: #94a59c; --rule: #26332e;
+  --floor: #3b3326; --line3d: #c9d4ce; --sky: #121a17; --accent: #6f9ee8; --ball: #ffcc2e;
+  --good: #5fbf7d; --warn: #e0a24a; color-scheme: dark;
+}
+html, body { background: var(--bg); color: var(--ink); }
+body {
+  font-family: var(--body); font-size: 15px; line-height: 1.5;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 20px 40px;
+}
+.wrap { max-width: 1180px; margin: 0 auto; display: grid; gap: 14px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 6px 20px; }
+h1 { font-family: var(--display); font-weight: 700; font-size: 2.1rem; letter-spacing: .01em; margin: 0; line-height: 1.05; text-wrap: balance; }
+h1 span { color: var(--muted); font-weight: 500; }
+.sub { color: var(--muted); font-size: .95rem; }
+.stage {
+  position: relative; width: 100%; aspect-ratio: 16 / 9; max-height: 70vh;
+  border-radius: 10px; overflow: hidden; background: var(--sky); border: 1px solid var(--rule);
+}
+.stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+.hud { position: absolute; left: 12px; top: 10px; pointer-events: none; display: grid; gap: 2px; }
+.hud .h { font-family: var(--display); font-weight: 700; font-size: 2.6rem; line-height: 1; font-variant-numeric: tabular-nums; }
+.hud .h small { font-size: 1.1rem; font-weight: 600; color: var(--muted); margin-left: 3px; }
+.hud .f { font-family: var(--display); font-size: 1rem; color: var(--muted); letter-spacing: .04em; font-variant-numeric: tabular-nums; }
+.views { position: absolute; right: 10px; top: 10px; display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; max-width: 70%; }
+.views button, .transport button, .transport select {
+  font: 600 .85rem/1 var(--body); color: var(--ink); background: var(--panel);
+  border: 1px solid var(--rule); border-radius: 999px; padding: 7px 12px; cursor: pointer;
+}
+.views button[aria-pressed="true"] { background: var(--accent); color: var(--panel); border-color: var(--accent); }
+button:focus-visible, select:focus-visible, input:focus-visible, tr:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tag { position: absolute; pointer-events: none; font: 700 .95rem/1 var(--display); color: var(--ink);
+  background: color-mix(in srgb, var(--panel) 80%, transparent); padding: 3px 6px; border-radius: 4px; transform: translate(12px, -50%); white-space: nowrap; }
+.hint { position: absolute; left: 12px; bottom: 10px; color: var(--muted); font-size: .8rem; pointer-events: none; }
+.transport { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.transport input[type=range] { flex: 1 1 260px; min-width: 0; accent-color: var(--accent); }
+.transport .play { min-width: 76px; background: var(--ink); color: var(--panel); border-color: var(--ink); }
+.transport label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: .9rem; }
+.sheet { background: var(--panel); border: 1px solid var(--rule); border-radius: 10px; overflow-x: auto; }
+.sheet h2 { font-family: var(--display); font-weight: 600; font-size: 1.15rem; letter-spacing: .05em; text-transform: uppercase; margin: 0; padding: 12px 14px 4px; }
+table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; min-width: 560px; }
+th, td { text-align: right; padding: 8px 14px; border-top: 1px solid var(--rule); white-space: nowrap; }
+th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+th { font: 600 .75rem/1.2 var(--body); color: var(--muted); letter-spacing: .06em; text-transform: uppercase; border-top: 0; }
+tbody tr { cursor: pointer; }
+tbody tr:hover { background: color-mix(in srgb, var(--accent) 8%, transparent); }
+tbody tr.on { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+.sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 8px; vertical-align: 0; }
+.ok { color: var(--good); } .low { color: var(--warn); }
+.notes { color: var(--muted); font-size: .88rem; max-width: 72ch; display: grid; gap: 4px; }
+@media (max-width: 560px) { h1 { font-size: 1.7rem; } .hud .h { font-size: 2rem; } .views { max-width: 100%; left: 10px; justify-content: flex-start; top: auto; bottom: 34px; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <h1>__CLIP__ <span>ball in 3D</span></h1>
+    <div class="sub" id="sub"></div>
+  </header>
+
+  <div class="stage" id="stage">
+    <canvas id="cv" aria-label="3D view of the court and the ball"></canvas>
+    <div class="hud"><div class="h" id="hh">–</div><div class="f" id="ff"></div></div>
+    <div class="views" role="group" aria-label="Viewpoint">
+      <button id="v-orbit" aria-pressed="true">Orbit</button>
+      <button id="v-phone">From the phone</button>
+      <button id="v-side">Side</button>
+      <button id="v-top">Top</button>
+      <button id="v-far">Far end</button>
+    </div>
+    <div class="tag" id="tag" hidden></div>
+    <div class="hint" id="hint">Drag to rotate · scroll or pinch to zoom · right-drag to pan</div>
+  </div>
+
+  <div class="transport">
+    <button class="play" id="play">Play</button>
+    <input type="range" id="scrub" min="0" max="1" value="0" step="1" aria-label="Frame">
+    <label for="speed">Speed
+      <select id="speed"><option value="0.25">¼×</option><option value="0.5">½×</option><option value="1" selected>1×</option><option value="2">2×</option></select>
+    </label>
+    <label for="all"><input type="checkbox" id="all" checked> All arcs</label>
+  </div>
+
+  <section class="sheet">
+    <h2>Flights</h2>
+    <table>
+      <thead><tr><th>#</th><th>Frames</th><th>Apex</th><th>Start speed</th><th>Over the net</th><th>Uncertainty</th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </section>
+
+  <div class="notes">
+    <div>Heights are the ball's centre above the floor, in meters. The yellow line drops from the ball to its spot on the floor; at a touch that spot should be under the player. "Over the net" is how far the ball clears the tape where it crosses. Uncertainty is the fit's typical 1-sigma position error for that flight, mostly along the phone's line of sight.</div>
+    <div>Only clean free flights are shown (ball held, rolling or badly fitted stretches are left out). Frame numbers match the video.</div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+const D = /*__DATA__*/null;
+(function () {
+  if (!window.THREE || !D) { document.getElementById("hint").textContent = "The 3D library didn't load."; return; }
+  THREE.Object3D.DefaultUp.set(0, 0, 1);
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+  const PAL = ["#e8590c", "#1c7ed6", "#2f9e44", "#ae3ec9", "#f08c00", "#0c8599", "#d6336c", "#5c940d", "#4263eb", "#c92a2a", "#087f5b", "#862e9c"];
+  const stage = document.getElementById("stage"), cv = document.getElementById("cv");
+  const renderer = new THREE.WebGLRenderer({ canvas: cv, antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  const scene = new THREE.Scene();
+  const cam = new THREE.PerspectiveCamera(45, 16 / 9, 0.1, 400);
+  const controls = new THREE.OrbitControls(cam, cv);
+  controls.enableDamping = true; controls.target.set(0, 0, 1.5);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x888877, 0.75));
+  const sun = new THREE.DirectionalLight(0xffffff, 0.45); sun.position.set(-10, -6, 20); scene.add(sun);
+
+  // floor + court
+  const floorMat = new THREE.MeshBasicMaterial({ color: 0xcccccc });
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(90, 70), floorMat); floor.position.set(-2, 0, -0.01); scene.add(floor);
+  const lineMat = new THREE.LineBasicMaterial({ color: 0x222222 });
+  const seg = (a, b) => [new THREE.Vector3(...a), new THREE.Vector3(...b)];
+  const hx = 9, hy = 4.5, h = D.net;
+  const courtPts = [].concat(seg([-hx,-hy,0],[hx,-hy,0]), seg([-hx,hy,0],[hx,hy,0]), seg([-hx,-hy,0],[-hx,hy,0]), seg([hx,-hy,0],[hx,hy,0]),
+                             seg([0,-hy,0],[0,hy,0]), seg([-3,-hy,0],[-3,hy,0]), seg([3,-hy,0],[3,hy,0]));
+  scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(courtPts), lineMat));
+  // net: band from h-1 to h, tape on top, antennas on the sidelines, posts ~1 m outside
+  const netMat = new THREE.MeshBasicMaterial({ color: 0x222222, transparent: true, opacity: 0.18, side: THREE.DoubleSide });
+  const netGeo = new THREE.PlaneGeometry(9, 1); netGeo.rotateX(Math.PI / 2); netGeo.rotateZ(Math.PI / 2);   // spans y (9 m) and z (1 m)
+  const net = new THREE.Mesh(netGeo, netMat); net.position.set(0, 0, h - 0.5); scene.add(net);
+  const netLines = [].concat(seg([0,-hy,h],[0,hy,h]), seg([0,-hy,h-1],[0,hy,h-1]), seg([0,-hy,h-1],[0,-hy,h+0.8]), seg([0,hy,h-1],[0,hy,h+0.8]),
+                             seg([0,-hy-1,0],[0,-hy-1,h+0.1]), seg([0,hy+1,0],[0,hy+1,h+0.1]), seg([0,-hy-1,h],[0,-hy,h]), seg([0,hy+1,h],[0,hy,h]));
+  scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(netLines), lineMat));
+
+  // the phone: a small frustum where it stood, pointing where it looked
+  const C = new THREE.Vector3(...D.camera.pos), F = new THREE.Vector3(...D.camera.fwd), DN = new THREE.Vector3(...D.camera.down);
+  const RT = new THREE.Vector3().crossVectors(DN, F).normalize();       // right = down x forward
+  const phoneMat = new THREE.LineBasicMaterial({ color: 0xd6336c });
+  const s = 0.9, ah = Math.tan(THREE.MathUtils.degToRad(D.camera.vfov / 2)), aw = ah * 16 / 9;
+  const corners = [[-1,-1],[1,-1],[1,1],[-1,1]].map(([a, b]) => C.clone().add(F.clone().multiplyScalar(s)).add(RT.clone().multiplyScalar(a * aw * s)).add(DN.clone().multiplyScalar(b * ah * s)));
+  const fr = []; corners.forEach((p, i) => { fr.push(C, p, p, corners[(i + 1) % 4]); });
+  const phoneFrustum = new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(fr), phoneMat); scene.add(phoneFrustum);
+  const phoneDot = new THREE.Mesh(new THREE.SphereGeometry(0.12, 16, 12), new THREE.MeshBasicMaterial({ color: 0xd6336c })); phoneDot.position.copy(C); scene.add(phoneDot);
+
+  // flights
+  const byF = new Map(); D.frames.forEach(r => byF.set(r[0], r));
+  const flightCol = new Map(); D.flights.forEach((f, i) => flightCol.set(f.id, PAL[i % PAL.length]));
+  const arcs = new Map();
+  D.flights.forEach(f => {
+    const pts = D.frames.filter(r => r[4] === f.id).map(r => new THREE.Vector3(r[1], r[2], r[3]));
+    if (pts.length < 2) return;
+    const m = new THREE.LineBasicMaterial({ color: new THREE.Color(flightCol.get(f.id)), transparent: true, opacity: 0.35 });
+    const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), m); scene.add(l); arcs.set(f.id, l);
+  });
+  const ballMat = new THREE.MeshLambertMaterial({ color: 0xffcc00, emissive: 0x332200 });
+  const ball = new THREE.Mesh(new THREE.SphereGeometry(0.14, 24, 16), ballMat); scene.add(ball);
+  const shadow = new THREE.Mesh(new THREE.CircleGeometry(0.16, 24), new THREE.MeshBasicMaterial({ color: 0x000000, transparent: true, opacity: 0.35 })); scene.add(shadow);
+  const dropMat = new THREE.LineBasicMaterial({ color: 0xffcc00 });
+  const drop = new THREE.Line(new THREE.BufferGeometry().setFromPoints([new THREE.Vector3(), new THREE.Vector3()]), dropMat); scene.add(drop);
+  const trailGeo = new THREE.BufferGeometry(); const trailMat = new THREE.LineBasicMaterial({ color: 0xffcc00, linewidth: 2 });
+  const trail = new THREE.Line(trailGeo, trailMat); scene.add(trail);
+
+  function theme() {
+    scene.background = new THREE.Color(css("--sky"));
+    floorMat.color.set(css("--floor")); lineMat.color.set(css("--line3d")); netMat.color.set(css("--line3d"));
+    ballMat.color.set(css("--ball")); dropMat.color.set(css("--ball")); trailMat.color.set(css("--ball"));
+  }
+  theme();
+  try { matchMedia("(prefers-color-scheme: dark)").addEventListener("change", theme); } catch (e) {}
+  new MutationObserver(theme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  // views
+  const views = {
+    orbit: { p: [-21, -15, 11], t: [0, 0, 1.5], fov: 45 },
+    side: { p: [0, -27, 3.2], t: [0, 0, 2.2], fov: 40 },
+    top: { p: [0, -0.5, 34], t: [0, 0, 0], fov: 40 },
+    far: { p: [17, 0.5, 4.5], t: [-2, 0, 1.8], fov: 50 },
+  };
+  let mode = "orbit";
+  function setView(v) {
+    mode = v;
+    document.querySelectorAll(".views button").forEach(b => b.setAttribute("aria-pressed", String(b.id === "v-" + v)));
+    phoneFrustum.visible = phoneDot.visible = v !== "phone";
+    if (v === "phone") {
+      controls.enabled = false;
+      cam.up.copy(DN).negate(); cam.position.copy(C); cam.fov = D.camera.vfov;
+      cam.lookAt(C.clone().add(F)); cam.updateProjectionMatrix();
+      document.getElementById("hint").textContent = "The phone's own view: compare with the video. Pick another view to rotate.";
+      return;
+    }
+    const q = views[v];
+    cam.up.set(0, 0, 1); controls.enabled = true;
+    cam.position.set(...q.p); controls.target.set(...q.t); cam.fov = q.fov; cam.updateProjectionMatrix(); controls.update();
+    document.getElementById("hint").textContent = "Drag to rotate · scroll or pinch to zoom · right-drag to pan";
+  }
+  ["orbit", "phone", "side", "top", "far"].forEach(v => document.getElementById("v-" + v).addEventListener("click", () => setView(v)));
+
+  // UI
+  const n = D.n, scrub = document.getElementById("scrub"), playBtn = document.getElementById("play");
+  scrub.max = String(Math.max(0, n - 1));
+  const free = D.flights.length;
+  document.getElementById("sub").textContent = `${free} clean flight${free === 1 ? "" : "s"} · from ${D.source === "labels" ? "your checked labels" : "the tracker"} · ${D.fps.toFixed(1)} fps · net ${D.net.toFixed(2)} m`;
+  const rows = document.getElementById("rows");
+  D.flights.forEach((f, i) => {
+    const tr = document.createElement("tr"); tr.tabIndex = 0; tr.dataset.id = f.id;
+    const net = f.net == null ? "–" : `<span class="${f.net >= 0 ? "ok" : "low"}">${f.net >= 0 ? "+" : ""}${f.net.toFixed(2)} m</span>`;
+    tr.innerHTML = `<td><span class="sw" style="background:${flightCol.get(f.id)}"></span>${i + 1}</td><td>${f.f0}–${f.f1}</td>` +
+      `<td>${f.apex.toFixed(2)} m</td><td>${f.speed.toFixed(1)} m/s</td><td>${net}</td><td>±${f.unc.toFixed(2)} m</td>`;
+    const go = () => { frame = f.f0; playing = false; playBtn.textContent = "Play"; };
+    tr.addEventListener("click", go); tr.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); go(); } });
+    rows.appendChild(tr);
+  });
+  let frame = D.frames.length ? D.frames[0][0] : 0, playing = false, last = performance.now();
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  playBtn.addEventListener("click", () => { playing = !playing; playBtn.textContent = playing ? "Pause" : "Play"; last = performance.now(); });
+  scrub.addEventListener("input", () => { frame = +scrub.value; playing = false; playBtn.textContent = "Play"; });
+  const speedSel = document.getElementById("speed"), allBox = document.getElementById("all");
+  addEventListener("keydown", e => {
+    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+    if (e.key === " ") { e.preventDefault(); playBtn.click(); }
+    if (e.key === "ArrowRight") { frame = Math.min(n - 1, Math.floor(frame) + 1); }
+    if (e.key === "ArrowLeft") { frame = Math.max(0, Math.floor(frame) - 1); }
+  });
+
+  const tag = document.getElementById("tag"), hh = document.getElementById("hh"), ff = document.getElementById("ff");
+  function resize() {
+    const r = stage.getBoundingClientRect();
+    renderer.setSize(r.width, r.height, false); cam.aspect = r.width / r.height; cam.updateProjectionMatrix();
+  }
+  new ResizeObserver(resize).observe(stage); resize();
+  setView("orbit");
+  let lastOn = null;
+
+  function tick(now) {
+    const dt = Math.min(0.1, (now - last) / 1000); last = now;
+    if (playing) { frame += dt * D.fps * +speedSel.value; if (frame >= n - 1) { frame = n - 1; playing = false; playBtn.textContent = "Play"; } }
+    const f = Math.floor(frame); scrub.value = String(f);
+    const r = byF.get(f);
+    ff.textContent = `FRAME ${f} · ${(f / D.fps).toFixed(2)} s`;
+    if (r) {
+      const p = new THREE.Vector3(r[1], r[2], r[3]);
+      ball.visible = shadow.visible = drop.visible = trail.visible = true;
+      ball.position.copy(p); shadow.position.set(p.x, p.y, 0.005);
+      drop.geometry.setFromPoints([p, new THREE.Vector3(p.x, p.y, 0)]);
+      const tp = []; for (let g = f - 30; g <= f; g++) { const q = byF.get(g); if (q && q[4] === r[4]) tp.push(new THREE.Vector3(q[1], q[2], q[3])); }
+      trailGeo.setFromPoints(tp);
+      hh.innerHTML = `${r[3].toFixed(2)}<small>m high</small>`;
+      const sp = p.clone().project(cam), rect = stage.getBoundingClientRect();
+      if (sp.z < 1 && Math.abs(sp.x) < 1.1 && Math.abs(sp.y) < 1.1) {
+        tag.hidden = false; tag.style.left = ((sp.x + 1) / 2 * rect.width) + "px"; tag.style.top = ((1 - sp.y) / 2 * rect.height) + "px";
+        tag.textContent = `${r[3].toFixed(1)} m`;
+      } else tag.hidden = true;
+    } else {
+      ball.visible = shadow.visible = drop.visible = trail.visible = false; tag.hidden = true; hh.textContent = "–";
+    }
+    const on = r ? r[4] : null;
+    arcs.forEach((l, id) => { l.visible = allBox.checked || id === on; l.material.opacity = id === on ? 1 : 0.35; });
+    if (on !== lastOn) { rows.querySelectorAll("tr").forEach(tr => tr.classList.toggle("on", +tr.dataset.id === on)); lastOn = on; }
+    if (controls.enabled) controls.update();
+    renderer.render(scene, cam);
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
+  if (!reduce) { /* start paused: the first frame shows the whole rally */ }
+})();
+</script>
