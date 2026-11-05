@@ -122,6 +122,47 @@ def out_of_picture(fr, seen, edge) -> np.ndarray:
     return np.array(out, float)
 
 
+def _median_err(seg, cam, edge) -> tuple[float, float, float]:
+    """(median 2D error away from the edges, of the first half, of the second half) of one arc."""
+    fit = fit_rally([seg], [], cam)
+    e = np.hypot(*(cam.project(fit.at(0, seg.t)) - seg.uv).T)
+    ok = ~edge[seg.frames]
+    m = lambda x, o: float(np.median(x[o] if o.sum() >= 3 else x)) if len(x) else 0.0
+    h = len(e) // 2
+    return m(e, ok), m(e[:h], ok[:h]), m(e[h:], ok[h:])
+
+
+def remerge(segs, spans, contacts, cam, edge, uv, box, fps, max_gap_s: float = 1.5):
+    """Join neighbouring flights with no real touch between them (no contact, or one whose
+    direction barely changes) when one arc fits both cleanly. Returns segments, spans and the
+    joined pairs."""
+    out_s, out_sp, joined = [], [], []
+    for seg, sp in zip(segs, spans):
+        if out_s:
+            A, asp = out_s[-1], out_sp[-1]
+            gap = (sp[0] - asp[1]) / fps
+            c = [c for c in contacts if asp[1] - 2 <= c["frame"] <= sp[0] + 2 and c["kind"] in ("touch", "bounce")]
+            if not c and 0 <= gap <= max_gap_s:
+                full = np.arange(asp[0], sp[1] + 1)
+                seen = np.isfinite(uv[full, 0])
+                fr = np.r_[A.frames, seg.frames]
+                out = out_of_picture(full, seen, edge)
+                M = Segment(fr / fps, np.r_[A.uv, seg.uv], np.r_[A.size, seg.size], np.r_[A.w, seg.w],
+                            frames=fr, out_t=out / fps, box=box)
+                lim = min(free_px(A, edge), free_px(seg, edge))
+                fit = fit_rally([M], [], cam)
+                def piece(P):                              # the joined arc must fit EACH piece on its own
+                    e = np.hypot(*(cam.project(fit.at(0, P.t)) - P.uv).T)
+                    ok = ~edge[P.frames]
+                    return float(np.median(e[ok] if ok.sum() >= 3 else e))
+                if piece(A) <= lim and piece(seg) <= lim:
+                    out_s[-1], out_sp[-1] = M, (asp[0], sp[1])
+                    joined.append((asp, sp))
+                    continue
+        out_s.append(seg); out_sp.append(sp)
+    return out_s, out_sp, joined
+
+
 def resplit(segs, spans, cam, edge, fps, min_pts: int = 5):
     """Split flights that no single arc fits (median 2D error over free_px(), away from the edges) at
     the point where two arcs joined by a touch fit best, if both then fit cleanly. Returns the new
@@ -228,6 +269,13 @@ def main():
         fr = fr[ok]
         segs.append(Segment(fr / fps, uv[fr], size[fr], w[fr], frames=fr, out_t=out / fps, box=box))
         spans.append((int(fl["f0"]), int(fl["f1"])))
+
+    # the opposite mistake: one flight cut in two by the 2D split where nothing touched it (it
+    # went out of the picture and came back, or hid behind a player). If one arc explains both
+    # pieces (passing outside the picture where it was out of it), they're one flight.
+    segs, spans, merged = remerge(segs, spans, C["contacts"], cam, edge, uv, box, fps)
+    for (a0, a1), (b0, b1) in merged:
+        print(f"[ball3d] {stem}: flights {a0}-{a1} and {b0}-{b1} are one flight (no touch between them): joined")
 
     # a flight no single arc fits is usually two: a touch the 2D split missed (a block, a ball
     # touched while hidden behind a player). Find where one arc becomes two, by physics.
