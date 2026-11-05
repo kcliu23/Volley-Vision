@@ -53,7 +53,7 @@ def sizes_for(stem: str, n: int) -> np.ndarray:
     return out
 
 
-def calibrate_size(flights, uv, w, size, fps, cam, min_n: int = 25, max_px: float = 4.0):
+def calibrate_size(flights, uv, w, size, fps, cam, min_n: int = 25, max_px: float = 4.0, T=None):
     """(corrected sizes, bias): bias = median over long, clean flights of (depth from gravity
     alone) / (depth from box size alone) = how much bigger the boxes are than the ball."""
     ratios = []
@@ -62,10 +62,11 @@ def calibrate_size(flights, uv, w, size, fps, cam, min_n: int = 25, max_px: floa
         fr = fr[np.isfinite(uv[fr, 0])]
         if len(fr) < min_n or np.isfinite(size[fr]).sum() < min_n // 2:
             continue
-        fit = fit_rally([Segment(fr / fps, uv[fr], np.full(len(fr), np.nan), w[fr])], [], cam)
+        tf = (T[fr] if T is not None else fr) / fps
+        fit = fit_rally([Segment(tf, uv[fr], np.full(len(fr), np.nan), w[fr])], [], cam)
         if not fit.rms_px <= max_px:
             continue
-        dg = float(np.median(cam.depth(fit.at(0, fr / fps))))
+        dg = float(np.median(cam.depth(fit.at(0, tf))))
         ds = float(np.nanmedian(cam.f * BALL_D / size[fr]))
         if 2 < dg < 60:
             ratios.append(dg / ds)
@@ -293,7 +294,7 @@ def player_reach(players, fps):
     return near
 
 
-def solve_v2(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_s: float = 1.5, players=None):
+def solve_v2(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_s: float = 1.5, players=None, T=None, net_h=None):
     """The global rally fit: per rally (observed stretches separated by > rally_gap_s without the
     ball), core.rally3d.solve with the tracker's contacts as hints. Same output as solve_v1."""
     from core.rally3d import Obs, solve
@@ -308,7 +309,8 @@ def solve_v2(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_s:
             continue
         full = np.arange(fr[0], fr[-1] + 1)
         out_f = out_of_picture(full, np.isfinite(uv[full, 0]), edge).astype(int)
-        o = Obs(fr / fps, uv[fr], size[fr], w[fr], fr, edge[fr], out_f, box, fps)
+        tf = (T[fr] if T is not None else fr) / fps
+        o = Obs(tf, uv[fr], size[fr], w[fr], fr, edge[fr], out_f, box, fps, T=T, net_h=net_h)
         if players:
             o.near = player_reach(players, fps)
         hints = [c["frame"] for c in contacts if fr[0] <= c["frame"] <= fr[-1]]
@@ -358,7 +360,16 @@ def main():
     # ball-size bias of this clip: YOLO boxes on a moving, blurred ball run larger than the ball
     # (so size alone puts it too close). Gravity alone fixes depth well on long, clean flights:
     # the median ratio there says how much bigger the boxes are than the ball.
-    size, bias = calibrate_size(C["flights"], uv, w, size, fps, cam)
+    # true frame times: screen recordings repeat a frame now and then and skip one a few frames
+    # later (core.frametime); the global fit uses them (v1 keeps evenly spaced frames)
+    T = None
+    if a.v2:
+        from core.frametime import frame_times, summary
+        T = frame_times(a.video, Path(a.output) / stem)
+        if len(T) < n:
+            T = np.r_[T, T[-1] + np.arange(1, n - len(T) + 1)]
+        print(f"[ball3d] {stem}: frame timing: {summary(T)}")
+    size, bias = calibrate_size(C["flights"], uv, w, size, fps, cam, T=T)
     print(f"[ball3d] {stem}: ball boxes run {bias:.2f}x the true ball size here (from gravity on long flights); corrected")
 
     # a ball cut by the picture's edge is clicked off-centre (only part of it shows): such points
@@ -373,7 +384,7 @@ def main():
             from core.players import build
             players = build(json.load(open(pj)), cam, fps)
             print(f"[ball3d] {stem}: {len(players)} players: a touch away from all of them costs more")
-        pieces = solve_v2(uv, w, size, edge, box, fps, cam, C["contacts"], players=players,
+        pieces = solve_v2(uv, w, size, edge, box, fps, cam, C["contacts"], players=players, T=T, net_h=net_h,
                           log=lambda m: print(f"[ball3d] {stem}: " + m))
     else:
         pieces = solve_v1(uv, w, size, edge, box, fps, cam, C["flights"], C["contacts"],
@@ -383,7 +394,7 @@ def main():
     nchains = 1 + max((p[0] for p in pieces), default=-1)
     if True:
         for ci, s, (f0, f1), fit, i in pieces:
-            tt = np.arange(f0, f1 + 1) / fps
+            tt = (T[f0:f1 + 1] if T is not None else np.arange(f0, f1 + 1)) / fps
             X = fit.at(i, tt)
             sd = fit.std(i, tt)
             med = fit.seg_rms_px[i]
