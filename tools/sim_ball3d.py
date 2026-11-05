@@ -18,7 +18,7 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.ball3d import BALL_D, G, Link, Segment, fit_rally  # noqa: E402
+from core.ball3d import BALL_D, DRAG_K, G, Link, Segment, fit_rally, traj  # noqa: E402
 from core.camera import Camera  # noqa: E402
 
 FPS = 60.0
@@ -38,9 +38,13 @@ def rally(rng):
     return pts, T
 
 
-def flight(p0, p1, T):
+def flight(p0, p1, T, k=0.0):
+    """Start velocity that takes the ball from p0 to p1 in T seconds (with drag k: shooting)."""
     v0 = (p1 - p0 - 0.5 * G * T * T) / T
-    return v0
+    if k == 0:
+        return v0
+    from scipy.optimize import fsolve
+    return fsolve(lambda v: traj(p0, v, 0.0, [T], k)[0] - p1, v0)
 
 
 def main():
@@ -52,6 +56,9 @@ def main():
     ap.add_argument("--missing", type=float, default=0.10, help="fraction of frames missing")
     ap.add_argument("--outliers", type=float, default=0.02, help="fraction of wrong 2D points")
     ap.add_argument("--no-size", action="store_true", help="don't use ball size")
+    ap.add_argument("--true-drag", type=float, default=1.0, help="true drag = this x the ball's physics value (0 = none)")
+    ap.add_argument("--drag-spread", type=float, default=0.2, help="random spread of the true drag per rally (relative)")
+    ap.add_argument("--model", choices=["drag", "nodrag", "fitdrag"], default="drag", help="what the fit assumes")
     ap.add_argument("--cal-error", action="store_true",
                     help="fit with a camera off by the calibration's own reported uncertainty (f_std, position_std_m)")
     a = ap.parse_args()
@@ -63,13 +70,15 @@ def main():
     depth_err = []
     for _ in range(a.rallies):
         pts, T = rally(rng)
+        ktrue = DRAG_K * a.true_drag * (1 + rng.uniform(-a.drag_spread, a.drag_spread))
         t0, segs, truth, links, true_c = 0.0, [], [], [], []
+        vstart = []
         for k in range(5):
-            v0 = flight(pts[k], pts[k + 1], T[k])
+            v0 = flight(pts[k], pts[k + 1], T[k], ktrue)
+            vstart.append(v0)
             n = int(T[k] * FPS)
             t = t0 + np.arange(1, n) / FPS                    # frames strictly inside the flight
-            dt = t - t0
-            X = pts[k] + np.outer(dt, v0) + 0.5 * np.outer(dt ** 2, G)
+            X = traj(pts[k], v0, t0, t, ktrue)
             uv = cam.project(X)
             depth = cam.depth(X)
             keep = (uv[:, 0] > 0) & (uv[:, 0] < W) & (uv[:, 1] > 0) & (uv[:, 1] < H) & (rng.random(len(t)) > a.missing)
@@ -95,7 +104,8 @@ def main():
             C = cam.position + rng.normal(0, 1, 3) * ps
             R = cam.R
             fcam = Camera(cam.width, cam.height, cam.f + rng.normal(0, fs), list(cam.rvec), list(-R @ C), cam.k1, cam.cx, cam.cy)
-        fit = fit_rally(segs, links, fcam)
+        fit = fit_rally(segs, links, fcam, drag={"drag": DRAG_K, "nodrag": 0.0, "fitdrag": DRAG_K}[a.model],
+                        fit_drag=a.model == "fitdrag")
         rms.append(fit.rms_px)
         for k in range(5):
             t, X = truth[k]
@@ -106,19 +116,16 @@ def main():
             sd = fit.std(k, t)
             cover.extend((np.abs(est - X) <= 2 * np.maximum(sd, 1e-6)).all(axis=1))
             depth_err.extend(np.abs(cam.depth(est) - cam.depth(X)))
-            v0 = flight(pts[k], pts[k + 1], T[k])
-            tz = v0[2] / 9.81
-            true_apex = pts[k][2] + v0[2] * tz - 0.5 * 9.81 * tz * tz if 0 < tz < T[k] else max(pts[k][2], pts[k + 1][2])
-            ta, za = fit.apex(k)
             seg_t0 = sum(T[:k])
-            if not (seg_t0 < ta < seg_t0 + T[k]):                 # apex outside the flight: compare the max height
-                tt = np.linspace(seg_t0, seg_t0 + T[k], 50)
-                za = float(fit.at(k, tt)[:, 2].max())
+            tt = np.linspace(seg_t0, seg_t0 + T[k], 200)
+            true_apex = float(traj(pts[k], vstart[k], seg_t0, tt, ktrue)[:, 2].max())
+            za = float(fit.at(k, tt)[:, 2].max())
             apex_err[KINDS[k]].append(abs(za - true_apex))
         for L, P, tc in zip(links, true_c, fit.info["touch_t"]):
             mid = 0.5 * (fit.at(L.k, tc)[0] + fit.at(L.k + 1, tc)[0])
             (land_err if L.kind == "bounce" else contact_err).append(np.linalg.norm(mid - P))
     cm = lambda v: f"{100 * np.median(v):5.1f} / {100 * np.percentile(v, 95):5.1f}"
+    print(f"model: {a.model}   true drag {a.true_drag:g}x physics value (+-{a.drag_spread:.0%})")
     print(f"{len(rms)} rallies through {a.camera}: 2D noise {a.noise_px} px, size noise {a.size_noise:.0%}"
           f"{' (size NOT used)' if a.no_size else ''}, {a.missing:.0%} missing, {a.outliers:.0%} wrong points")
     print(f"  fit: median 2D error {np.median(rms):.1f} px")
