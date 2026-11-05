@@ -78,6 +78,8 @@ class Obs:
     box: tuple | None = None
     fps: float = 60.0
     sigma: float = 3.0                   # 2D noise used for scoring (measured per rally in solve())
+    T: np.ndarray | None = None          # frame -> true time in frame units (core.frametime); None = f
+    net_h: float | None = None           # net height (m): flights can't pass through it
     near: object = None                  # near(t, xyz) -> metres outside every player's reach, or
                                          # None where there is no player data (see player_reach)
 
@@ -85,7 +87,7 @@ class Obs:
         f0, f1 = self.frames[i], self.frames[j - 1]
         o = self.out_frames[(self.out_frames > f0) & (self.out_frames < f1)]
         return Segment(self.t[i:j], self.uv[i:j], self.size[i:j], self.w[i:j], frames=self.frames[i:j],
-                       out_t=o / self.fps, box=self.box)
+                       out_t=(self.T[o] if self.T is not None else o) / self.fps, box=self.box)
 
 
 # --- fast piece fit: no drag, analytic Jacobian, robust Gauss-Newton -----------------------------
@@ -289,7 +291,7 @@ def choose(o: Obs, cam, cands: list[int]) -> list[int]:
 
 def _drag_piece_score(o: Obs, i: int, j: int, cam) -> tuple[float, object]:
     seg = o.segment(i, j)
-    fit = fit_rally([seg], [], cam)
+    fit = fit_rally([seg], [], cam, net_h=o.net_h)
     uvp = cam.project(fit.at(0, seg.t))
     r = [((uvp - seg.uv) / o.sigma * np.sqrt(seg.w)[:, None]).ravel()]
     z = cam.depth(fit.at(0, seg.t))
@@ -398,7 +400,7 @@ def _solve_once(o: Obs, cam, hints, log):
             b = bounds[k]
             tc = 0.5 * (o.t[b - 1] + o.t[b])
             links.append(Link(k - 1, tc, "touch", max(0.5 / o.fps, 0.5 * (o.t[b] - o.t[b - 1]))))
-        fit = fit_rally(segs, links, cam)
+        fit = fit_rally(segs, links, cam, net_h=o.net_h)
         drop = False                                     # wrong points: out of the final fit
         for k, sg_ in enumerate(segs):
             e = np.abs(cam.project(fit.at(k, sg_.t)) - sg_.uv).max(axis=1) / o.sigma
@@ -406,7 +408,7 @@ def _solve_once(o: Obs, cam, hints, log):
             if off.any() and (~off).sum() >= MIN_PTS:
                 sg_.w = np.where(off, 0.0, sg_.w); drop = True
         if drop:
-            fit = fit_rally(segs, links, cam)
+            fit = fit_rally(segs, links, cam, net_h=o.net_h)
         bad = []
         for k, s in enumerate(segs):
             e = np.hypot(*(cam.project(fit.at(k, s.t)) - s.uv).T)

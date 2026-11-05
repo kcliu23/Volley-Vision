@@ -31,6 +31,8 @@ import numpy as np
 import math
 
 G = np.array([0.0, 0.0, -9.81])
+NET_HALF_W = 4.5 + 0.1                # m: the net (and its antennas) spans the court's width
+NET_BAND_M = 1.0                      # m: the net is 1 m tall
 BALL_D = 0.21                      # m, volleyball diameter (65-67 cm circumference)
 BALL_M = 0.27                      # kg (260-280 g)
 AIR_RHO, BALL_CD = 1.2, 0.45
@@ -200,12 +202,14 @@ def _init_segment(seg: Segment, P: _Proj, default_depth: float) -> np.ndarray:
 def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0, size_rel: float = 0.15,
               link_sigma: float = 0.10, bounce_sigma: float = 0.05, default_depth: float = 12.0,
               loss: str = "soft_l1", time_sigma: float = 1 / 60, drag: float = DRAG_K,
-              fit_drag: bool = False) -> Fit3D:
+              fit_drag: bool = False, net_h: float | None = None, solid_sigma: float = 0.03) -> Fit3D:
     """All flights of a rally together. sigma_px: 2D position noise; size_rel: relative noise of
     the ball's pixel size; link_sigma (m): how exactly consecutive flights meet at a touch;
     time_sigma (s): how far off a detected touch time may be. Each touch's exact time is solved
     too (at attack speed one frame is ~30 cm, so a touch a frame off would bend both flights).
-    drag: air-drag constant k (0 = pure parabola); fit_drag: also fit k (one value for the rally)."""
+    drag: air-drag constant k (0 = pure parabola); fit_drag: also fit k (one value for the rally).
+    Solid things: a flight can't go through the floor or (net_h given) through the net; a ball
+    that meets them is a touch / bounce between flights, never inside one."""
     from scipy.optimize import least_squares
     P = _Proj(cam)
     K = len(segs)
@@ -240,6 +244,22 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
                 x0, y0, x1, y1 = s.box
                 inside = np.minimum.reduce([uo[:, 0] - x0, x1 - uo[:, 0], uo[:, 1] - y0, y1 - uo[:, 1]])
                 out.append(np.maximum(inside, 0.0) / sigma_px)
+        for k, s in enumerate(segs):                     # floor and net are solid
+            tg = np.linspace(s.t[0], s.t[-1], max(4, int((s.t[-1] - s.t[0]) * 120) + 2))
+            X = pos(k, th, tg)
+            out.append(np.maximum(BALL_D / 2 - X[:, 2], 0.0) / solid_sigma)
+            if net_h is not None:                       # one value per flight (fixed length)
+                x = X[:, 0]
+                worst = 0.0
+                for i in np.where(np.sign(x[:-1]) * np.sign(x[1:]) < 0)[0]:
+                    a = x[i] / (x[i] - x[i + 1])
+                    zc = X[i, 2] + a * (X[i + 1, 2] - X[i, 2])
+                    yc = X[i, 1] + a * (X[i + 1, 1] - X[i, 1])
+                    top = net_h + BALL_D / 2
+                    bot = net_h - NET_BAND_M - BALL_D / 2
+                    if abs(yc) <= NET_HALF_W and bot < zc < top:
+                        worst = max(worst, min(top - zc, zc - bot))
+                out.append(np.array([worst / solid_sigma]))
         for j, L in enumerate(links):
             if not 0 <= L.k < K - 1:
                 continue
