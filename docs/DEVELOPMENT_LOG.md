@@ -169,6 +169,39 @@ all candidates, chain the arcs that meet at contacts, search where the arcs pred
 
 ---
 
+## Phase 9 — labeling tools and the first 3D step (Oct 29 – Nov 4)
+
+Labeling: `tools.todo` (review queue: verified / old data / dev set / to review, hardest first);
+autolabel fixed (loose crop rule crash) and batch-safe; review: "WASB only" doubt label, `N`
+follows the proposal (not its state), Shift+click instant (follows balls YOLO saw through its
+saved boxes; `g` fills between two clicks for balls YOLO can't see; `F` = slower crop / look
+following). Learned on the way: tiny resting background balls are invisible to YOLO even on crops,
+and other-ball labels only feed YOLO (WASB trains on the game ball alone).
+
+3D, step 1 (one camera, screen recordings, so everything is solved from the scene):
+- **Calibration** (`core/court.py`, `core/camera.py`, `tools/calibrate_court.py`): click >= 6 known
+  court / net points; the solver finds focal length + pose (PnP over a focal search, then joint
+  least squares, with fit uncertainty). Synthetic test (`tools.sim_camera`): ~1 cm ball-ray error
+  (95%: 2-5 cm) from calibration alone, also with a partial court. test74: 6 floor points; the
+  solved camera puts the net's tape and bottom band where they are for a 2.43 m net (independent
+  check); camera 3.8 m behind the near end line, 1.36 m high, 60 deg FOV. Lesson: the court frame
+  must be right-handed (+y = left sideline) or the camera solves under the floor.
+- **Ball in 3D** (`core/ball3d.py`, `tools/ball3d_run.py`): each rally's flights fitted together
+  as gravity parabolas in meters: reprojection + ball size + touch links (with each touch's exact
+  time solved) + floor bounces, robust loss. Synthetic rallies through test74's camera
+  (`tools.sim_ball3d`, 3 px noise, 10% missing, 2% wrong points): apex heights within 1-1.5 cm,
+  touch points 4 cm, positions 5 cm median; weakest = depth along the line of sight on the far
+  court (rebounds ~20 cm). With test74's current calibration uncertainty: positions ~20 cm,
+  heights ~5 cm, so calibration is the main error source now.
+- **test74 (real):** YOLO boxes run 13% larger than the ball (blur), learned per clip from gravity
+  on long flights and corrected. 12 of 15 flights are clean free flights (2D fit 1-5 px); every
+  net crossing clears the tape (never told about the net); the landing flight reaches the floor;
+  apexes 2.9-6.3 m. Tracker output and hand labels give the same apexes on clean flights.
+- Next: fit the camera together with the flights (gravity refines focal / pose), propagate
+  calibration uncertainty, contact detection quality (needs `m` marks), a 3D viewer.
+
+---
+
 ## The pipeline today
 
 1. **Sizing pass:** YOLO on every 20th full frame: ball size (the ball-width unit), clip profile,
