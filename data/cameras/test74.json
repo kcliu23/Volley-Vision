@@ -1,0 +1,82 @@
+{
+ "schema": "vv-camera/1",
+ "width": 2622,
+ "height": 1206,
+ "f": 1864.826198176133,
+ "cx": 1311.0,
+ "cy": 603.0,
+ "k1": 0.0,
+ "rvec": [
+  1.2143894727942413,
+  -1.2113406525712422,
+  1.2023439181290165
+ ],
+ "tvec": [
+  -0.3013216740051866,
+  1.2765207992725351,
+  12.788118076750953
+ ],
+ "position_m": [
+  -12.779,
+  -0.354,
+  1.352
+ ],
+ "fov_deg": 70.22,
+ "info": {
+  "rms_px": 5.4,
+  "n_points": 8,
+  "fit_k1": false,
+  "residual_px": {
+   "far end corner left": 5.9,
+   "far end corner right": 2.8,
+   "centre line left": 5.4,
+   "centre line right": 2.2,
+   "near attack line left": 6.4,
+   "near attack line right": 5.5,
+   "net top left": 6.5,
+   "net top right": 6.5
+  },
+  "f_std": 26.2,
+  "position_std_m": [
+   0.161,
+   0.06,
+   0.05
+  ]
+ },
+ "video": "/mnt/user-data/uploads/Volley-Vision/videos/test74.mov",
+ "net_height": 2.43,
+ "points": {
+  "far end corner left": [
+   898.5,
+   711.4
+  ],
+  "far end corner right": [
+   1671.1,
+   706.2
+  ],
+  "centre line left": [
+   617.0,
+   788.3
+  ],
+  "centre line right": [
+   1926.3,
+   788.3
+  ],
+  "near attack line left": [
+   389.8,
+   853.0
+  ],
+  "near attack line right": [
+   2104.6,
+   849.5
+  ],
+  "net top left": [
+   617.0,
+   435.3
+  ],
+  "net top right": [
+   1929.8,
+   430.0
+  ]
+ }
+}
