@@ -26,11 +26,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+import json
+
 import numpy as np
 
 import math
 
 G = np.array([0.0, 0.0, -9.81])
+from core.params3d import FREE_MIN_PX, FREE_X, SOLID_SIGMA_M  # noqa: E402
 NET_HALF_W = 4.5 + 0.1                # m: the net (and its antennas) spans the court's width
 NET_BAND_M = 1.0                      # m: the net is 1 m tall
 BALL_D = 0.21                      # m, volleyball diameter (65-67 cm circumference)
@@ -202,7 +205,7 @@ def _init_segment(seg: Segment, P: _Proj, default_depth: float) -> np.ndarray:
 def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0, size_rel: float = 0.15,
               link_sigma: float = 0.10, bounce_sigma: float = 0.05, default_depth: float = 12.0,
               loss: str = "soft_l1", time_sigma: float = 1 / 60, drag: float = DRAG_K,
-              fit_drag: bool = False, net_h: float | None = None, solid_sigma: float = 0.03) -> Fit3D:
+              fit_drag: bool = False, net_h: float | None = None, solid_sigma: float = SOLID_SIGMA_M) -> Fit3D:
     """All flights of a rally together. sigma_px: 2D position noise; size_rel: relative noise of
     the ball's pixel size; link_sigma (m): how exactly consecutive flights meet at a touch;
     time_sigma (s): how far off a detected touch time may be. Each touch's exact time is solved
@@ -297,3 +300,100 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
                  seg_rms, {"cost": float(r.cost), "nfev": int(r.nfev), "status": int(r.status),
                            "touch_t": touch_t, "median_px": float(np.median(all_e)) if all_e else None,
                            "drag": kd(th)}, kd(th))
+
+
+# --- the clip's 2D observations, prepared for the fit -------------------------------------------
+# (ball size per frame and its bias, the picture's edge, frames out of the picture, and the
+# clean-flight check used in reports)
+
+def _paths():
+    from core import paths
+    return paths
+
+
+def sizes_for(stem: str, n: int) -> np.ndarray:
+    """Ball diameter in pixels per frame: your box where you fixed a frame, else autolabel's
+    proposal box (YOLO box at the ball, or the nearby median)."""
+    out = np.full(n, np.nan)
+    pp = _paths().proposals(stem)
+    if pp.exists():
+        P = json.load(open(pp))
+        for f, fr in enumerate(P["frames"][:n]):
+            if fr.get("box"):
+                out[f] = float(np.mean(fr["box"]))
+    vp = _paths().verified(stem)
+    if vp.exists():
+        for k, b in json.load(open(vp)).get("boxes", {}).items():
+            if int(k) < n and b:
+                out[int(k)] = float(np.mean(b))
+    return out
+
+
+def calibrate_size(flights, uv, w, size, fps, cam, min_n: int = 25, max_px: float = 4.0, T=None):
+    """(corrected sizes, bias): bias = median over long, clean flights of (depth from gravity
+    alone) / (depth from box size alone) = how much bigger the boxes are than the ball."""
+    ratios = []
+    for fl in flights:
+        fr = np.arange(fl["f0"], fl["f1"] + 1)
+        fr = fr[np.isfinite(uv[fr, 0])]
+        if len(fr) < min_n or np.isfinite(size[fr]).sum() < min_n // 2:
+            continue
+        tf = (T[fr] if T is not None else fr) / fps
+        fit = fit_rally([Segment(tf, uv[fr], np.full(len(fr), np.nan), w[fr])], [], cam)
+        if not fit.rms_px <= max_px:
+            continue
+        dg = float(np.median(cam.depth(fit.at(0, tf))))
+        ds = float(np.nanmedian(cam.f * BALL_D / size[fr]))
+        if 2 < dg < 60:
+            ratios.append(dg / ds)
+    bias = float(np.median(ratios)) if len(ratios) >= 3 else 1.0
+    return size / bias, bias
+
+
+def jitter_px(uv) -> float:
+    """2D noise of a run of points from their frame-to-frame second differences (a smooth flight
+    barely bends in one frame, so what's left is noise): robust sigma / sqrt(6)."""
+    d2 = uv[2:] - 2 * uv[1:-1] + uv[:-2]
+    if len(d2) < 4:
+        return FREE_MIN_PX / FREE_X
+    r = np.hypot(d2[:, 0], d2[:, 1])
+    return float(np.median(r) / 0.6745 / np.sqrt(6) * 0.85)   # 0.85: 2D radius -> per-axis scale
+
+
+def free_px(seg, edge) -> float:
+    ok = ~edge[seg.frames]
+    pts = seg.uv[ok] if ok.sum() >= 6 else seg.uv
+    return max(FREE_MIN_PX, FREE_X * jitter_px(pts))
+
+
+def edge_mask(stem: str, uv, cam, output) -> np.ndarray:
+    """Frames whose ball is within one ball-width of the picture's edge (the video area: phone
+    clips in a screen recording have dark side bars)."""
+    x0, y0, x1, y1 = 0, 0, cam.width, cam.height
+    sp = _paths().cache_dir(stem, output) / "sample_dets.json"
+    ball = 30.0
+    if sp.exists():
+        prof = json.load(open(sp)).get("profile") or {}
+        x0, y0, x1, y1 = prof.get("content") or (x0, y0, x1, y1)
+        ball = float(prof.get("ball_px") or ball)
+    x, y = uv[:, 0], uv[:, 1]
+    with np.errstate(invalid="ignore"):
+        m = np.isfinite(x) & ((x < x0 + ball) | (x > x1 - ball) | (y < y0 + ball) | (y > y1 - ball))
+    return m, (x0, y0, x1, y1)
+
+
+def out_of_picture(fr, seen, edge) -> np.ndarray:
+    """Frames of a flight with no ball where it left at an edge and came back at an edge: it was
+    out of the picture there (not hidden behind someone)."""
+    out = []
+    i, n = 0, len(fr)
+    while i < n:
+        if seen[i]:
+            i += 1; continue
+        j = i
+        while j < n and not seen[j]:
+            j += 1
+        if i > 0 and j < n and edge[fr[i - 1]] and edge[fr[j]]:
+            out.extend(fr[i:j].tolist())
+        i = j
+    return np.array(out, float)

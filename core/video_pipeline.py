@@ -82,6 +82,11 @@ def run(
           f"({pipeline + (' pipeline' if pipeline == 'finder-first' else f', {linker} linker')})")
     t0 = time.time()
 
+    # true frame times first (screen recordings repeat and skip frames): written once per clip
+    # to output/<clip>/frame_times.json for every later stage
+    from core.frametime import frame_times, summary
+    print(f"[VolleyVision] frame timing: {summary(frame_times(input_path, paths.clip_dir(stem, output_dir)))}")
+
     if pipeline == "finder-first":
         # finder-first (default): WASB on every frame, YOLO only on crops around its top
         # candidates, joint linker (core/finder_first.py)

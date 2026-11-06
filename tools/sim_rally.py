@@ -1,6 +1,14 @@
-"""Hard synthetic rallies for the 3D step: the current mechanism (v1: tracker splits + merge /
-re-split, tools.ball3d_run.solve_v1) against the global rally fit (v2: core.rally3d), scored on the
-same rallies.
+"""Synthetic rallies for the 3D step (the one simulator): known 3D truth, flown through a real
+calibrated camera, made as messy as real clips, then scored for each mechanism on the same rallies:
+
+    ideal  the true touches handed to the joint fit (core.ball3d.fit_rally): the best the physics
+           can do with this camera and this noise (what tools.sim_ball3d used to measure)
+    v1     the first mechanism (core.legacy_v1: tracker splits + merge / re-split)
+    v2     the global rally fit (core.rally3d): touches chosen by the fit
+
+--cal-error fits with a camera that is off by the calibration's own reported uncertainty, so the
+cost of a calibration error shows. Note: the rallies use the same physics as the fit, so this
+tests the search and the noise handling, not whether the physics matches real video.
 
 Each rally (drag on, through a real calibrated camera): serve -> pass -> set -> attack -> (block,
 30%) -> floor bounce -> rebound, random positions / heights / speeds. Then made as messy as real
@@ -12,7 +20,8 @@ about one fake touch per rally (a fake split).
 Scores: per-frame 3D error (median / 95%), coverage (frames with a 3D position), "teleports"
 (frames off by more than 1 m), touch recall / precision (within 3 frames).
 
-    python -m tools.sim_rally --camera data/cameras/test74.json --rallies 30
+    python -m tools.sim_rally --rallies 20                 # ideal, v1, v2
+    python -m tools.sim_rally --rallies 20 --only v2 --cal-error
 """
 from __future__ import annotations
 
@@ -25,11 +34,19 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.ball3d import BALL_D, DRAG_K, traj  # noqa: E402
+from core.ball3d import BALL_D, DRAG_K, G, Link, fit_rally, out_of_picture, traj  # noqa: E402
 from core.camera import Camera  # noqa: E402
-from tools.sim_ball3d import flight  # noqa: E402
 
 FPS = 60.0
+
+
+def flight(p0, p1, T, k=0.0):
+    """Start velocity that takes the ball from p0 to p1 in T seconds (with drag k: shooting)."""
+    v0 = (p1 - p0 - 0.5 * G * T * T) / T
+    if k == 0:
+        return v0
+    from scipy.optimize import fsolve
+    return fsolve(lambda v: traj(p0, v, 0.0, [T], k)[0] - p1, v0)
 
 
 def make_rally(rng, block: bool):
@@ -82,7 +99,8 @@ def simulate(cam: Camera, rng, a):
     size[~seen] = np.nan
     hints = [f + int(rng.integers(-2, 3)) for f in true_touch_frames if rng.random() < 0.75]
     hints += [int(rng.integers(5, n - 5)) for _ in range(rng.poisson(1.0))]
-    return dict(X=X, uv=obs_uv, size=size, seen=seen, touches=true_touch_frames, hints=sorted(hints), n=n)
+    return dict(X=X, uv=obs_uv, size=size, seen=seen, touches=true_touch_frames, hints=sorted(hints), n=n,
+                t_touch=t_touch[1:-1])
 
 
 def edge_and_box(cam, uv, ball=30.0):
@@ -106,8 +124,30 @@ def tracker_flights(seen, hints):
     return [{"f0": a, "f1": b} for a, b in fl if b - a >= 2]
 
 
+def run_ideal(cam, s, edge, box):
+    """The true touches, handed to the joint fit."""
+    from core.rally3d import Obs
+    fr = np.where(s["seen"])[0]
+    full = np.arange(fr[0], fr[-1] + 1)
+    out_f = out_of_picture(full, s["seen"][full], edge).astype(int)
+    o = Obs(fr / FPS, s["uv"][fr], s["size"][fr], np.where(edge[fr], 0.2, 1.0), fr, edge[fr], out_f, box, FPS)
+    cuts = [0] + [int(np.searchsorted(fr, tf)) for tf in s["touches"]] + [len(fr)]
+    keep = [k for k in range(len(cuts) - 1) if cuts[k + 1] - cuts[k] >= 3]
+    segs = [o.segment(cuts[k], cuts[k + 1]) for k in keep]
+    links = [Link(j, float(s["t_touch"][keep[j + 1] - 1]), "touch") for j in range(len(keep) - 1)
+             if keep[j + 1] == keep[j] + 1]
+    fit = fit_rally(segs, links, cam)
+    out = {}
+    for i, k in enumerate(keep):
+        f0, f1 = int(fr[cuts[k]]), int(fr[cuts[k + 1] - 1])
+        g = np.arange(f0, f1 + 1)
+        for f, x in zip(g, fit.at(i, g / FPS)):
+            out[int(f)] = x
+    return out, [0.5 * (fr[cuts[k] - 1] + fr[cuts[k]]) for k in keep[1:]]
+
+
 def run_v1(cam, s, edge, box):
-    from tools.ball3d_run import solve_v1
+    from core.legacy_v1 import solve_v1
     w = np.where(edge, 0.2, 1.0)
     contacts = [{"frame": float(h), "kind": "touch"} for h in s["hints"]]
     pieces = solve_v1(s["uv"], w, s["size"], edge, box, FPS, cam, tracker_flights(s["seen"], s["hints"]), contacts,
@@ -124,7 +164,6 @@ def run_v1(cam, s, edge, box):
 
 def run_v2(cam, s, edge, box):
     from core.rally3d import Obs, solve
-    from tools.ball3d_run import out_of_picture
     fr = np.where(s["seen"])[0]
     full = np.arange(fr[0], fr[-1] + 1)
     out_f = out_of_picture(full, s["seen"][full], edge).astype(int)
@@ -161,7 +200,9 @@ def main():
     ap.add_argument("--missing", type=float, default=0.10)
     ap.add_argument("--outliers", type=float, default=0.02)
     ap.add_argument("--block", type=float, default=0.3)
-    ap.add_argument("--only", choices=["v1", "v2"], default=None)
+    ap.add_argument("--only", choices=["ideal", "v1", "v2"], default=None)
+    ap.add_argument("--cal-error", action="store_true",
+                    help="fit with a camera off by the calibration's reported uncertainty (f_std, position_std_m)")
     ap.add_argument("--touch-cost", type=float, default=None)
     ap.add_argument("--seed", type=int, default=3)
     a = ap.parse_args()
@@ -171,14 +212,21 @@ def main():
     cam = Camera.load(a.camera)
     rng = np.random.default_rng(a.seed)
     rallies = [simulate(cam, rng, a) for _ in range(a.rallies)]
-    for name, run in (("v1 current", run_v1), ("v2 global", run_v2)):
+    fcam = cam                                           # the camera the fits get
+    if a.cal_error:
+        fs = cam.info.get("f_std", 0.015 * cam.f)
+        ps = np.asarray(cam.info.get("position_std_m", [0.1, 0.05, 0.05]))
+        C = cam.position + rng.normal(0, 1, 3) * ps
+        fcam = Camera(cam.width, cam.height, cam.f + rng.normal(0, fs), list(cam.rvec), list(-cam.R @ C), cam.k1,
+                      cam.cx, cam.cy)
+    for name, run in (("ideal", run_ideal), ("v1 first", run_v1), ("v2 global", run_v2)):
         if a.only and not name.startswith(a.only):
             continue
         E, cov, hit, ntrue, good, nfound, tele, t0 = [], [], 0, 0, 0, 0, 0, time.time()
         for s in rallies:
             edge, box = edge_and_box(cam, s["uv"])
             try:
-                out, touches = run(cam, s, edge, box)
+                out, touches = run(fcam, s, edge, box)
             except Exception as e:                           # count a crash as nothing found
                 print(f"  {name}: rally failed ({type(e).__name__}: {e})")
                 out, touches = {}, []

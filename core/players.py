@@ -24,12 +24,9 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-JUMP_MIN_S, JUMP_MAX_S = 0.12, 1.0
-JUMP_H = (0.15, 1.2)      # m: peak FEET height (body ~0.2-0.7 m; tucked feet rise ~0.3 m more)
-JUMP_FIT_M = 0.15         # m: rms around the gravity parabola (feet tuck and stretch, so looser than
-                          # the body would be: hips from a pose model are the better signal, later)
+from core.params3d import (JUMP_FIT_M, JUMP_H, JUMP_MAX_S, JUMP_MIN_S, LIFT_FRAC, REACH_HEIGHT_X,  # noqa: F401
+                           REACH_RADIUS_M)
 G = 9.81
-LIFT_FRAC = 0.08          # feet this far (x body height) above the ground line = in the air
 
 
 @dataclass
@@ -110,10 +107,8 @@ def stitch(tracks: dict, fps: float, max_gap_s: float = 0.5) -> dict:
     """Join track pieces the tracker split (an id change mid-jump, after an occlusion): a track
     that starts within max_gap_s after another ended, with its first box near that one's last
     box (centres within one box width, similar size), is the same player. Greedy, closest first."""
-    ids = sorted(tracks, key=lambda k: tracks[k][0][0])
     gap = max(1, int(round(max_gap_s * fps)))
     merged = {k: list(v) for k, v in tracks.items()}
-    alias = {k: k for k in ids}
     while True:
         best = None
         ends = {k: merged[k][-1] for k in merged}
@@ -140,7 +135,7 @@ def stitch(tracks: dict, fps: float, max_gap_s: float = 0.5) -> dict:
 
 
 def build(players_json: dict, cam, fps: float, min_frames: int = 15) -> list[Player]:
-    W, H = cam.width, cam.height
+    H = cam.height
     tracks: dict = {}
     for f, row in enumerate(players_json["frames"]):
         for tid, x1, y1, x2, y2, conf in row:
@@ -245,3 +240,26 @@ def build(players_json: dict, cam, fps: float, min_frames: int = 15) -> list[Pla
         height = float(np.median(hs)) if hs else float("nan")
         out.append(Player(int(tid), fr, box, ground, airborne, feet_z, height, jumps))
     return out
+
+
+def reach(players: list[Player], fps: float):
+    """near(t, xyz): metres between the ball and the closest player's reach (a vertical cylinder
+    over their court spot, radius REACH_RADIUS_M, from the floor to feet height + REACH_HEIGHT_X x
+    standing height: standing reach plus any jump), or None where no player is known then."""
+    by_f = {}
+    for p in players:
+        h = p.height_m if np.isfinite(p.height_m) else 1.85
+        for k, f in enumerate(p.frames):
+            if np.isfinite(p.ground[k, 0]):
+                by_f.setdefault(int(f), []).append((p.ground[k, 0], p.ground[k, 1], p.feet_z[k] + REACH_HEIGHT_X * h))
+    by_f = {f: np.array(v) for f, v in by_f.items()}
+
+    def near(t, x):
+        f = int(round(t * fps))
+        P = next((by_f[g] for g in (f, f - 1, f + 1, f - 2, f + 2, f - 3, f + 3) if g in by_f), None)
+        if P is None:
+            return None
+        dxy = np.maximum(0.0, np.hypot(P[:, 0] - x[0], P[:, 1] - x[1]) - REACH_RADIUS_M)
+        dz = np.maximum(0.0, x[2] - P[:, 2])
+        return float(np.min(np.hypot(dxy, dz)))
+    return near

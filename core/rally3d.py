@@ -25,7 +25,7 @@ first version), this module picks the touch moments and the flights TOGETHER:
 6. re-check     a flight that still fits badly gets a candidate at every frame and the rally is
                 solved again; if it still fits badly it's flagged, not trusted
 
-One tuned number: TOUCH_COST (set on synthetic rallies: tools.sim_rally).
+Set numbers (TOUCH_COST first) live in core.params3d, each marked with how it was set.
 """
 from __future__ import annotations
 
@@ -35,30 +35,14 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from core.ball3d import BALL_D, G, Link, Segment, fit_rally
-
-SIGMA_PX = 3.0            # 2D noise of a ball position
-SIZE_REL = 0.15           # relative noise of a ball size
-HUBER = 2.0               # robust: residuals beyond this many sigma count linearly
-TOUCH_COST = 12.0         # score of one touch (tuned on synthetic rallies)
-LINK_SIGMA_M = 0.30       # how well two independently fitted pieces must meet at a touch
-REACH_M = 3.5             # touches happen within reach of a (jumping) player
-MAX_SPEED = 35.0          # m/s: faster than any rec hit
-MAX_FLIGHT_S = 2.5
-MIN_PTS = 4
-GRID_S = 0.15
-TURN_DEG = 25.0
-DV_SOFT = 3.0             # m/s: a touch changes the ball's velocity; one that barely does is a
-                          # flight split by model error, not a touch (soft: costs up to 2x more)
+from core.params3d import (DV_SOFT, GRID_S, HUBER, LINK_SIGMA_M, MAX_FLIGHT_S, MAX_SPEED, MIN_PTS,  # noqa: F401
+                           OUT_CAP, OUT_SIGMA, PLAYER_COST, PLAYER_SOFT_M, REACH_M, SIGMA_PX, SIZE_REL,
+                           TOUCH_COST, TURN_DEG)
 
 
 def huber(r):
     a = np.abs(r)
     return np.where(a <= HUBER, 0.5 * a * a, HUBER * a - 0.5 * HUBER * HUBER)
-
-
-OUT_CAP = 4.0             # a 2D residual costs at most this (|r| = 3 sigma): a wrong point (a mis-click,
-OUT_SIGMA = 6.0           # another ball) is cheaper to ignore than to explain with extra touches;
-                          # points beyond OUT_SIGMA in the final fit are dropped from it
 
 
 def capped(r):
@@ -81,7 +65,7 @@ class Obs:
     T: np.ndarray | None = None          # frame -> true time in frame units (core.frametime); None = f
     net_h: float | None = None           # net height (m): flights can't pass through it
     near: object = None                  # near(t, xyz) -> metres outside every player's reach, or
-                                         # None where there is no player data (see player_reach)
+                                         # None where there is no player data (core.players.reach)
 
     def segment(self, i: int, j: int) -> Segment:
         f0, f1 = self.frames[i], self.frames[j - 1]
@@ -174,11 +158,6 @@ def dv_penalty(va, vb) -> float:
 def _vel_fast(piece, t):
     (cost, p0, v0, t0) = piece
     return v0 + G * (t - t0)
-
-
-PLAYER_SOFT_M = 0.7       # a touch this far outside every player's reach costs ~63% of PLAYER_COST more
-PLAYER_COST = 12.0        # at most this much extra for a touch with no player near it (a player
-                          # out of the picture or missed by the detector still allows a touch)
 
 
 def player_penalty(o: "Obs", tc: float, x) -> float:
@@ -431,3 +410,35 @@ def _solve_once(o: Obs, cam, hints, log):
         d = (cam.project(fit.at(k, s.t)) - s.uv)[~o.edge[bounds[k]:bounds[k + 1]]]
         resid.extend(d.ravel().tolist())
     return pieces, {"bad": bad, "touch_t": fit.info.get("touch_t", []), "resid": np.array(resid)}
+
+
+def solve_clip(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_s: float = 1.5,
+               players=None, T=None, net_h=None):
+    """A whole clip: split into rallies (stretches with no ball for > rally_gap_s), solve() each
+    with the tracker's contacts as hints. T: true frame times (core.frametime); players: from
+    core.players.build. Returns [(rally, segment, (f0, f1), fit, i)]."""
+    from core.ball3d import out_of_picture
+    fr_all = np.where(np.isfinite(uv[:, 0]))[0]
+    if not len(fr_all):
+        return []
+    near = None
+    if players:
+        from core.players import reach
+        near = reach(players, fps)
+    rallies = np.split(fr_all, np.where(np.diff(fr_all) > rally_gap_s * fps)[0] + 1)
+    pieces = []
+    for ri, fr in enumerate(rallies):
+        if len(fr) < 8:
+            continue
+        full = np.arange(fr[0], fr[-1] + 1)
+        out_f = out_of_picture(full, np.isfinite(uv[full, 0]), edge).astype(int)
+        tf = (T[fr] if T is not None else fr) / fps
+        o = Obs(tf, uv[fr], size[fr], w[fr], fr, edge[fr], out_f, box, fps, T=T, net_h=net_h, near=near)
+        hints = [c["frame"] for c in contacts if fr[0] <= c["frame"] <= fr[-1]]
+        res, info = solve(o, cam, hints, log=log)
+        nt = len(res) - 1
+        log(f"rally {fr[0]}-{fr[-1]}: {nt} touch{'es' if nt != 1 else ''} chosen by the fit"
+            + (f"; flights still fitting badly: {[res[k][1] for k in info['bad']]}" if info["bad"] else ""))
+        for seg, span, fit, i in res:
+            pieces.append((ri, seg, span, fit, i))
+    return pieces
