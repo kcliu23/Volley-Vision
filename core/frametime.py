@@ -22,8 +22,7 @@ from pathlib import Path
 
 import numpy as np
 
-REPEAT = 0.15      # change below this x local level = the same picture again
-SKIP = 1.3         # change above this x local level, next to a repeat = the skipped moment
+from core.params3d import REPEAT, SKIP  # noqa: F401
 
 
 def frame_changes(video: str, size=(480, 270)) -> np.ndarray:
