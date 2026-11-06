@@ -4,7 +4,9 @@ The clips are screen recordings, so the phone's lens specs don't apply (the pict
 and maybe cropped). Everything is solved from the court instead:
   unknowns   focal length f (pixels; square pixels, principal point at the picture centre),
              camera pose (radial distortion k1 only on request: phone video is already undistorted)
-  data       >= 6 clicked points with known court positions (core.court), not all on one line
+  data       clicked points with known court positions (core.court), and/or clicks anywhere
+             along known lines (2+ per line; core.court.named_lines): a line counts where its
+             corners can't be seen (faint far lines, a net wider than the court)
 
 solve() searches f coarse-to-fine (best pose for each f by PnP), then refines everything together
 by least squares and reports the reprojection error and the uncertainty of f and of the camera
@@ -142,18 +144,54 @@ def _pnp(X, uv, f, cx, cy, k1=0.0):
     return best
 
 
+def _fit_line2d(pts):
+    """Total-least-squares 2D line through clicks: (point on it, unit direction)."""
+    P = np.asarray(pts, float)
+    c = P.mean(axis=0)
+    _, _, vt = np.linalg.svd(P - c)
+    return c, vt[0]
+
+
+def _intersect2d(l1, l2):
+    (p, d), (q, e) = l1, l2
+    A = np.array([d, -e]).T
+    if abs(np.linalg.det(A)) < 1e-6:
+        return None
+    s = np.linalg.solve(A, q - p)
+    return p + s[0] * d
+
+
+def _intersect3d(a, b, c, d):
+    """Where 3D segments a-b and c-d cross (None if they don't meet)."""
+    u, v, w = b - a, d - c, a - c
+    A = np.array([[u @ u, -(u @ v)], [u @ v, -(v @ v)]])
+    if abs(np.linalg.det(A)) < 1e-9:
+        return None
+    s, t = np.linalg.solve(A, [-(w @ u), -(w @ v)])
+    P, Q = a + s * u, c + t * v
+    return P if np.linalg.norm(P - Q) < 1e-6 else None
+
+
 def solve(points: dict, width: int, height: int, net_height: float = 2.43, fit_k1: bool | None = None,
-          cx: float | None = None, cy: float | None = None) -> Camera:
-    """points: {keypoint name (core.court): (u, v) pixel}. Returns the Camera with info:
-    rms_px, n_points, f_std, position_std_m (1-sigma, from the fit), per-point residuals."""
+          cx: float | None = None, cy: float | None = None, line_clicks: dict | None = None) -> Camera:
+    """points: {keypoint name (core.court): (u, v)}; line_clicks: {line name (core.court.named_lines):
+    [(u, v), ...]} - clicks anywhere along a line, 2+ per line. Points must sit on the projected
+    point; line clicks only on the projected line (any position along it), so a line can be used
+    where its corners are hard to see. Returns the Camera with info: rms_px (points and line clicks
+    together, px), n_points, n_line_clicks, f_std, position_std_m (1-sigma, from the fit),
+    residual_px per point, line_px per line (rms distance of its clicks)."""
+    import cv2
     from scipy.optimize import least_squares
-    from core.court import keypoints
+    from core.court import keypoints, named_lines
     kp = keypoints(net_height)
+    NL = named_lines(net_height)
     names = [n for n in points if n in kp]
-    if len(names) < 6:
-        raise ValueError(f"need at least 6 known points, got {len(names)}")
-    X = np.array([kp[n] for n in names], float)
-    uv = np.array([points[n] for n in names], float)
+    X = np.array([kp[n] for n in names], float).reshape(-1, 3)
+    uv = np.array([points[n] for n in names], float).reshape(-1, 2)
+    lc = {n: np.asarray(v, float) for n, v in (line_clicks or {}).items() if n in NL and len(v) >= 2}
+    LA = {n: np.asarray(NL[n][0], float) for n in lc}
+    LB = {n: np.asarray(NL[n][1], float) for n in lc}
+    n_lc = sum(len(v) for v in lc.values())
     cx = width / 2 if cx is None else cx
     cy = height / 2 if cy is None else cy
     if fit_k1 is None:
@@ -162,65 +200,152 @@ def solve(points: dict, width: int, height: int, net_height: float = 2.43, fit_k
         # ~4.5 px with it, ~3 px without)
         fit_k1 = False
 
-    # 1. focal length: coarse log grid, then a finer one around the best
-    grid = np.exp(np.linspace(math.log(0.25 * width), math.log(5.0 * width), 60))
-    errs = [_pnp(X, uv, f, cx, cy)[0] for f in grid]
-    i = int(np.argmin(errs))
-    lo, hi = grid[max(0, i - 1)], grid[min(len(grid) - 1, i + 1)]
-    fine = np.linspace(lo, hi, 30)
-    errs = [_pnp(X, uv, f, cx, cy)[0] for f in fine]
-    f0 = float(fine[int(np.argmin(errs))])
-    rms0, rv, tv = _pnp(X, uv, f0, cx, cy)
-    if rv is None:
-        raise ValueError("no camera pose fits these points (check the point names)")
+    # starting correspondences: clicked points + where clicked lines cross (in the picture, and
+    # in 3D: a sideline and a floor cross-line meet at a known court point, seen or not)
+    init_X, init_uv = list(X), list(uv)
+    fits = {n: _fit_line2d(v) for n, v in lc.items()}
+    ln = list(lc)
+    for i in range(len(ln)):
+        for j in range(i + 1, len(ln)):
+            P3 = _intersect3d(LA[ln[i]], LB[ln[i]], LA[ln[j]], LB[ln[j]])
+            if P3 is None:
+                continue
+            q = _intersect2d(fits[ln[i]], fits[ln[j]])
+            if q is None or not (-2 * width < q[0] < 3 * width and -2 * height < q[1] < 3 * height):
+                continue
+            if any(np.allclose(P3, x) for x in init_X):
+                continue
+            init_X.append(P3); init_uv.append(q)
+    init_X, init_uv = np.array(init_X, float).reshape(-1, 3), np.array(init_uv, float).reshape(-1, 2)
+    if 2 * len(names) + n_lc < 10:
+        raise ValueError("need more clicks (about 6 points, or 3+ lines with 2-3 clicks each)")
 
-    # 2. everything together: f (log), k1, rvec, tvec
+    # 1. focal length candidates: from PnP over a grid when the starting points are not all on
+    # the floor; with only floor points every focal length fits them, so try a spread
+    planar = len(init_X) == 0 or np.allclose(init_X[:, 2], init_X[0, 2])
+    if not planar and len(init_X) >= 6:
+        grid = np.exp(np.linspace(math.log(0.25 * width), math.log(5.0 * width), 60))
+        errs = np.array([_pnp(init_X, init_uv, f, cx, cy)[0] for f in grid])
+        f_cands = list(grid[np.argsort(errs)[:3]])
+    else:
+        f_cands = list(width * np.array([0.45, 0.6, 0.75, 0.9, 1.1, 1.4]))
+
     def unpack(p):
-        f = math.exp(p[0])
-        k1 = p[1] if fit_k1 else 0.0
-        return f, k1, p[2:5], p[5:8]
+        return math.exp(p[0]), (p[1] if fit_k1 else 0.0), p[2:5], p[5:8]
 
-    def resid(p):
-        import cv2
+    def proj(p, P):
         f, k1, r, t = unpack(p)
         K = np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]], float)
-        pr, _ = cv2.projectPoints(X, r, t, K, np.array([k1, 0, 0, 0, 0], float))
-        return (pr.reshape(-1, 2) - uv).ravel()
+        pr, _ = cv2.projectPoints(np.asarray(P, float).reshape(-1, 3), r, t, K, np.array([k1, 0, 0, 0, 0], float))
+        return pr.reshape(-1, 2)
 
-    p0 = np.r_[math.log(f0), 0.0, rv, tv]
+    def line_dist(p, n):
+        """Signed px distance of line n's clicks from where the camera draws it."""
+        R = cv2.Rodrigues(np.asarray(p[2:5], float))[0]
+        a, b = LA[n], LB[n]
+        za, zb = (R @ a + p[5:8])[2], (R @ b + p[5:8])[2]
+        # the part of the (extended) line in front of the camera: depth z(s) = za + s (zb - za) > 0.5
+        s0, s1 = -1.0, 2.0
+        if abs(zb - za) > 1e-9:
+            sc = (0.5 - za) / (zb - za)
+            if zb > za:
+                s0 = max(s0, sc + 1e-3)
+            else:
+                s1 = min(s1, sc - 1e-3)
+        elif za <= 0.5:
+            s1 = s0 - 1
+        if s1 <= s0:
+            return np.full(len(lc[n]), 50.0)
+        e = proj(p, np.array([a + s0 * (b - a), a + s1 * (b - a)]))
+        d = e[1] - e[0]
+        d = d / max(np.linalg.norm(d), 1e-9)
+        nrm = np.array([-d[1], d[0]])
+        return (lc[n] - e[0]) @ nrm
+
+    def resid(p):
+        r = [(proj(p, X) - uv).ravel()] if len(X) else []
+        r += [line_dist(p, n) for n in lc]
+        return np.concatenate(r) if r else np.zeros(1)
+
     lo = np.r_[math.log(0.2 * width), -0.5, [-np.inf] * 6]
     hi = np.r_[math.log(10 * width), 0.5, [np.inf] * 6]
-    r = least_squares(resid, p0, method="trf", bounds=(lo, hi))
+    starts = []                                            # (f, rvec, tvec) to start the fit from
+    if len(init_X) >= 4:
+        for f0 in f_cands:
+            _, rv, tv = _pnp(init_X, init_uv, f0, cx, cy)
+            if rv is not None:
+                starts.append((f0, rv, tv))
+    if not starts:
+        # too few points to start from (e.g. only the net and the sidelines): try plausible
+        # phone spots behind the near end line, looking at the court
+        for x0 in (-13.0, -10.0, -16.0, -20.0):
+            for y0 in (0.0,):
+                for f0 in width * np.array([0.7, 0.5, 1.0]):
+                    C = np.array([x0, y0, 1.4])
+                    fwd = np.array([0.0, 0.0, 1.0]) - C
+                    fwd /= np.linalg.norm(fwd)
+                    right = np.cross(fwd, [0.0, 0.0, 1.0]); right /= np.linalg.norm(right)
+                    down = np.cross(fwd, right)
+                    R = np.array([right, down, fwd])          # camera axes: x right, y down, z forward
+                    starts.append((f0, cv2.Rodrigues(R)[0].ravel(), -R @ C))
+    best = None
+    for f0, rv, tv in starts:
+        p0 = np.clip(np.r_[math.log(f0), 0.0, rv, tv], lo + 1e-9, hi - 1e-9)
+        try:
+            r = least_squares(resid, p0, method="trf", bounds=(lo, hi))
+        except ValueError:
+            continue
+        R = cv2.Rodrigues(r.x[2:5])[0]
+        if (-R.T @ r.x[5:8])[2] <= 0:                      # camera under the floor: mirror image
+            continue
+        if best is None or r.cost < best.cost:
+            best = r
+        if not len(init_X) >= 4 and math.sqrt(2 * best.cost / max(len(r.fun), 1)) < 2.0:
+            break                                          # a phone-spot start that fits: done
+    if best is None:
+        raise ValueError("no camera fits these clicks (check the names)")
+    r = best
     f, k1, rvec, tvec = unpack(r.x)
-    res = resid(r.x).reshape(-1, 2)
-    rms = float(np.sqrt(np.mean(np.sum(res ** 2, axis=1))))
+    res_all = resid(r.x)
+    nres = len(res_all)
+    res_pts = res_all[:2 * len(names)].reshape(-1, 2)
+    per_click = np.r_[np.hypot(res_pts[:, 0], res_pts[:, 1]), np.abs(res_all[2 * len(names):])]
+    rms = float(np.sqrt(np.mean(per_click ** 2)))
     cam = Camera(width, height, f, list(rvec), list(tvec), k1, cx, cy)
 
     # 3. uncertainty from the fit: covariance of the parameters, propagated to f and position
-    info = {"rms_px": round(rms, 2), "n_points": len(names), "fit_k1": bool(fit_k1),
-            "residual_px": {n: round(float(np.hypot(*e)), 1) for n, e in zip(names, res)}}
-    dof = 2 * len(names) - (8 if fit_k1 else 7)
+    line_px, k = {}, 2 * len(names)
+    for n in lc:
+        e = res_all[k:k + len(lc[n])]; k += len(lc[n])
+        line_px[n] = round(float(np.sqrt(np.mean(e ** 2))), 1)
+    info = {"rms_px": round(rms, 2), "n_points": len(names), "n_line_clicks": int(n_lc), "fit_k1": bool(fit_k1),
+            "residual_px": {n: round(float(np.hypot(*e)), 1) for n, e in zip(names, res_pts)},
+            "line_px": line_px}
+    dof = nres - (8 if fit_k1 else 7)
     if dof > 0:
         J = r.jac if fit_k1 else np.delete(r.jac, 1, axis=1)
-        s2 = float(np.sum(res ** 2)) / dof
+        s2 = float(np.sum(res_all ** 2)) / dof
         try:
             cov = np.linalg.inv(J.T @ J) * max(s2, 1.0)    # never claim better than 1 px clicks
             info["f_std"] = round(float(f * math.sqrt(cov[0, 0])), 1)
-            # camera position = -R(r)^T t: numerical Jacobian w.r.t. (r, t)
             idx = slice(2, 8) if fit_k1 else slice(1, 7)
             pr = np.r_[rvec, tvec]
 
             def pos(q):
-                import cv2
                 return -cv2.Rodrigues(q[:3])[0].T @ q[3:]
             Jp = np.zeros((3, 6))
-            for k in range(6):
-                dq = np.zeros(6); dq[k] = 1e-6
-                Jp[:, k] = (pos(pr + dq) - pos(pr - dq)) / 2e-6
+            for kk in range(6):
+                dq = np.zeros(6); dq[kk] = 1e-6
+                Jp[:, kk] = (pos(pr + dq) - pos(pr - dq)) / 2e-6
             pc = Jp @ cov[idx, idx] @ Jp.T
             info["position_std_m"] = [round(float(math.sqrt(max(v, 0))), 3) for v in np.diag(pc)]
         except np.linalg.LinAlgError:
             pass
+    # distance along the court is only fixed by something across it on the floor
+    cross = {"centre line", "near attack line", "far attack line", "far end line", "near end line"}
+    floor_x = {round(kp[n][0], 2) for n in names if kp[n][2] == 0}
+    if not (cross & set(lc)) and len(floor_x) < 2:
+        info["warning"] = "add a line across the court (centre / attack / end line): distance is a guess without one"
     cam.info = info
     return cam
 
