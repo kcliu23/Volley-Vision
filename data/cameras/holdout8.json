@@ -1,0 +1,102 @@
+{
+ "schema": "vv-camera/1",
+ "width": 2622,
+ "height": 1206,
+ "f": 1819.1100675612747,
+ "cx": 1311.0,
+ "cy": 603.0,
+ "k1": 0.0,
+ "rvec": [
+  1.19484681999912,
+  -1.2613580053392455,
+  1.249027212478011
+ ],
+ "tvec": [
+  -0.7758151050482176,
+  1.2718496787263012,
+  12.65199753722735
+ ],
+ "position_m": [
+  -12.656,
+  -0.022,
+  1.459
+ ],
+ "fov_deg": 71.56,
+ "info": {
+  "rms_px": 12.63,
+  "n_points": 12,
+  "fit_k1": false,
+  "residual_px": {
+   "far end corner left": 15.3,
+   "far end corner right": 13.4,
+   "far attack line left": 23.7,
+   "far attack line right": 20.2,
+   "centre line left": 17.1,
+   "centre line right": 9.7,
+   "near attack line left": 2.1,
+   "near attack line right": 1.9,
+   "net bottom left": 7.3,
+   "net bottom right": 8.3,
+   "net top left": 3.2,
+   "net top right": 2.1
+  },
+  "f_std": 45.8,
+  "position_std_m": [
+   0.296,
+   0.121,
+   0.1
+  ]
+ },
+ "video": "holdout/holdout8.mov",
+ "net_height": 2.43,
+ "points": {
+  "far end corner left": [
+   802.3,
+   700.9
+  ],
+  "far end corner right": [
+   1588.9,
+   700.9
+  ],
+  "far attack line left": [
+   690.5,
+   742.9
+  ],
+  "far attack line right": [
+   1695.6,
+   742.9
+  ],
+  "centre line left": [
+   520.9,
+   791.8
+  ],
+  "centre line right": [
+   1842.4,
+   790.1
+  ],
+  "near attack line left": [
+   325.1,
+   856.5
+  ],
+  "near attack line right": [
+   2024.2,
+   849.5
+  ],
+  "net bottom left": [
+   541.9,
+   571.6
+  ],
+  "net bottom right": [
+   1837.1,
+   575.1
+  ],
+  "net top left": [
+   540.1,
+   430.0
+  ],
+  "net top right": [
+   1835.4,
+   442.2
+  ]
+ }
+}

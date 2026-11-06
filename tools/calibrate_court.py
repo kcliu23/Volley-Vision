@@ -18,8 +18,13 @@ antenna (on the sideline) crosses the top tape / the bottom band of the net, and
   u / Backspace  remove the current point (or the last one placed)
   Enter          save to data/cameras/<clip>.json     q / Esc  quit (asks to save if changed)
 
+Re-solve saved calibrations from their clicked points (after a solver change; no window):
+    python -m tools.calibrate_court holdout/holdout*.mov --resolve
+
 Good calibrations: 8+ points spread over the picture, including some net/antenna points
 (heights) and some far-court points. rms under ~2 px; the green lines on the real lines.
+Only click points you can actually see: a guessed corner (a line too faint to see, an antenna
+that isn't there) pulls the whole camera off. Skip it (s).
 """
 from __future__ import annotations
 
@@ -60,13 +65,38 @@ def background(video: str, n: int = 25):
     return np.median(np.stack(frames), axis=0).astype(np.uint8)
 
 
+def resolve_saved(video: str):
+    """Solve a saved calibration again from its clicked points and save it back."""
+    from core.camera import Camera, solve
+    stem = Path(video).stem
+    out = CAM_DIR / f"{stem}.json"
+    if not out.exists():
+        print(f"[calibrate] {stem}: no saved calibration ({out}); click it first")
+        return
+    d = json.load(open(out))
+    old = Camera.load(out)
+    cam = solve(d["points"], old.width, old.height, d.get("net_height", 2.43))
+    cam.save(out, {k: d[k] for k in ("video", "net_height", "points") if k in d})
+    print(f"[calibrate] {stem}: rms {old.info.get('rms_px')} -> {cam.info['rms_px']} px; focal {old.f:.0f} -> {cam.f:.0f}; "
+          f"k1 {old.k1:+.2f} -> {cam.k1:+.2f}; camera {[round(float(v), 2) for v in old.position]} -> "
+          f"{[round(float(v), 2) for v in cam.position]} m  → {out}")
+
+
 def main():
     import cv2
     from core.camera import solve
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("video")
+    ap.add_argument("video", nargs="+")
     ap.add_argument("--net", default="men", help="men (2.43 m), women (2.24 m), or a height in meters")
+    ap.add_argument("--resolve", action="store_true", help="re-solve the saved calibration(s) from their points, no window")
     a = ap.parse_args()
+    if a.resolve:
+        for v in a.video:
+            resolve_saved(v)
+        return
+    if len(a.video) > 1:
+        raise SystemExit("one clip at a time when clicking (several only with --resolve)")
+    a.video = a.video[0]
     net = NET_HEIGHT.get(a.net) or float(a.net)
     stem = Path(a.video).stem
     out = CAM_DIR / f"{stem}.json"
