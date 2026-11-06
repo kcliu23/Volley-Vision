@@ -3,7 +3,7 @@
 The clips are screen recordings, so the phone's lens specs don't apply (the picture is scaled
 and maybe cropped). Everything is solved from the court instead:
   unknowns   focal length f (pixels; square pixels, principal point at the picture centre),
-             optional radial distortion k1 (only with enough points spread out), camera pose
+             camera pose (radial distortion k1 only on request: phone video is already undistorted)
   data       >= 6 clicked points with known court positions (core.court), not all on one line
 
 solve() searches f coarse-to-fine (best pose for each f by PnP), then refines everything together
@@ -157,7 +157,10 @@ def solve(points: dict, width: int, height: int, net_height: float = 2.43, fit_k
     cx = width / 2 if cx is None else cx
     cy = height / 2 if cy is None else cy
     if fit_k1 is None:
-        fit_k1 = len(names) >= 10
+        # off by default: phone video comes out of the phone already undistorted, and on the
+        # holdout clips a fitted k1 only bent the camera toward guessed clicks (lines off by
+        # ~4.5 px with it, ~3 px without)
+        fit_k1 = False
 
     # 1. focal length: coarse log grid, then a finer one around the best
     grid = np.exp(np.linspace(math.log(0.25 * width), math.log(5.0 * width), 60))
@@ -220,3 +223,184 @@ def solve(points: dict, width: int, height: int, net_height: float = 2.43, fit_k
             pass
     cam.info = info
     return cam
+
+
+# --- snapping to the painted lines ---------------------------------------------------------------
+
+def _ridge_maps(gray: np.ndarray, sigmas=(1.2, 2.5)):
+    """Second derivatives (scale-normalized, max over scales by strength) of the picture: a thin
+    BRIGHT line has a strongly negative second derivative across it and ~0 along it."""
+    import cv2
+    g = gray.astype(np.float32)
+    best = None
+    for s in sigmas:
+        b = cv2.GaussianBlur(g, (0, 0), s)
+        hxx = cv2.Sobel(b, cv2.CV_32F, 2, 0, ksize=3) * s * s
+        hyy = cv2.Sobel(b, cv2.CV_32F, 0, 2, ksize=3) * s * s
+        hxy = cv2.Sobel(b, cv2.CV_32F, 1, 1, ksize=3) * s * s
+        if best is None:
+            best = [hxx, hyy, hxy]
+        else:                                           # keep the scale with the stronger ridge
+            tr_new = -(hxx + hyy)
+            tr_old = -(best[0] + best[1])
+            m = tr_new > tr_old
+            for k, h in enumerate((hxx, hyy, hxy)):
+                best[k] = np.where(m, h, best[k])
+    return best
+
+
+def _sample(img, x, y):
+    """Bilinear lookup, NaN outside."""
+    h, w = img.shape
+    ok = (x >= 0) & (x < w - 1) & (y >= 0) & (y < h - 1)
+    out = np.full(np.shape(x), np.nan, np.float32)
+    xi, yi = np.floor(x[ok]).astype(int), np.floor(y[ok]).astype(int)
+    fx, fy = x[ok] - xi, y[ok] - yi
+    out[ok] = (img[yi, xi] * (1 - fx) * (1 - fy) + img[yi, xi + 1] * fx * (1 - fy)
+               + img[yi + 1, xi] * (1 - fx) * fy + img[yi + 1, xi + 1] * fx * fy)
+    return out
+
+
+def refine_to_lines(cam: Camera, image: np.ndarray, points: dict, net_height: float = 2.43,
+                    radii=(30, 12, 6, 3), step_px: float = 12.0, click_sigma: float = 6.0,
+                    k1_sigma: float = 0.05, skip=(), check_radius: float = 25.0, log=print) -> Camera:
+    """EXPERIMENTAL, not used by the tools: on the holdout clips (faint lines, few of them found)
+    the refit drifted along the focal-length / distance trade-off and made held-out lines worse.
+    Its last step is still useful as a check: with radii=() nothing is fitted, and
+    info["line_px"] says how far the given camera draws each line from where it is found.
+
+    Snap a clicked calibration onto the painted court lines and the net's tape / band.
+
+    Each court line (core.court.lines) is looked for as a whole: within +- radius px of where the
+    current camera draws it, the straight line (offset + small tilt) along which the picture has
+    the strongest thin ridge running the same way (second derivative across it, so reflections
+    and lines at an angle don't count), lighter or darker than the floor, whichever is clearer.
+    Summed over the whole visible length, so wood grain, players and glare don't win; a line that
+    isn't clearly there, or has a similar line next to it, is skipped. The camera (focal length,
+    distortion, pose) is then refit to put the court lines on the found ones, each line counting
+    about the same, with your clicks kept as a weak anchor (click_sigma px) and distortion kept
+    small (k1_sigma). Repeated with a shrinking search radius. Returns a new Camera; info["lines"]
+    says how many lines were found and how far off they sit."""
+    import cv2
+    from scipy.optimize import least_squares
+    from core.court import keypoints, lines
+
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
+    hxx, hyy, hxy = _ridge_maps(gray)
+    H, W = gray.shape
+    kp = keypoints(net_height)
+    names = [n for n in points if n in kp]
+    Xc = np.array([kp[n] for n in names], float)
+    uvc = np.array([points[n] for n in names], float)
+    segs = [(np.asarray(a, float), np.asarray(b, float)) for a, b in lines(net_height)]
+    segs = [s for s in segs if not (s[0][0] == s[1][0] == 0 and s[0][2] != s[1][2])]   # antennas: no
+    cx, cy = cam.cx, cam.cy
+    # noise level of the ridge response, for a "real line here" threshold
+    tr = hxx + hyy
+    noise = float(np.median(np.abs(tr - np.median(tr)))) * 1.4826 + 1e-6
+
+    def proj(p, X):
+        f, k1, r, t = math.exp(p[0]), p[1], p[2:5], p[5:8]
+        K = np.array([[f, 0, cx], [0, f, cy], [0, 0, 1]], float)
+        pr, _ = cv2.projectPoints(np.asarray(X, float).reshape(-1, 3), r, t, K, np.array([k1, 0, 0, 0, 0], float))
+        return pr.reshape(-1, 2)
+
+    def depth_ok(p, X):
+        R = cv2.Rodrigues(np.asarray(p[2:5], float))[0]
+        return (X @ R.T + p[5:8])[:, 2] > 0.5
+
+    def oriented(px, py, n_, sign):
+        rxx, ryy, rxy = _sample(hxx, px, py), _sample(hyy, px, py), _sample(hxy, px, py)
+        across = -sign * (n_[0] ** 2 * rxx + 2 * n_[0] * n_[1] * rxy + n_[1] ** 2 * ryy)
+        along = np.abs(n_[1] ** 2 * rxx - 2 * n_[0] * n_[1] * rxy + n_[0] ** 2 * ryy)
+        return np.where(across > 2 * along, across, 0.0)          # a line running this way
+
+    def find(p, radius):
+        """Each court line as a straight line in the picture: within +- radius px of where the camera
+        puts it, the offset and small tilt whose length best follows a bright ridge (summed along
+        the whole visible line, so wood grain, reflections and players don't win; a line that
+        isn't clearly there is skipped). Returns (3D samples, target point, normal, line id)."""
+        Xs, qs, ns, ids = [], [], [], []
+        offs = np.arange(-radius, radius + 0.25, 0.5)
+        tilts = np.tan(np.radians(np.arange(-2.0, 2.01, 0.25)))
+        for li, (a, b) in enumerate(segs):
+            X = a + np.linspace(0.02, 0.98, 200)[:, None] * (b - a)
+            X = X[depth_ok(p, X)]
+            if len(X) < 10:
+                continue
+            u = proj(p, X)
+            m = (u[:, 0] > radius) & (u[:, 0] < W - radius) & (u[:, 1] > radius) & (u[:, 1] < H - radius)
+            X, u = X[m], u[m]
+            if len(X) < 10:
+                continue
+            plen = float(np.sum(np.linalg.norm(np.diff(u, axis=0), axis=1)))
+            if plen < 60:
+                continue
+            keep = np.linspace(0, len(X) - 1, max(10, min(len(X), int(plen / step_px)))).astype(int)
+            X, u = X[keep], u[keep]
+            t = u[-1] - u[0]
+            t = t / np.linalg.norm(t)
+            n_ = np.array([-t[1], t[0]])
+            c = u.mean(axis=0)
+            sa = (u - c) @ t                                       # along-line position of each sample
+            # painted lines are usually lighter than the floor, sometimes darker (a shared
+            # basketball line): each court line takes whichever runs along it more clearly
+            grids = []
+            for sign in (1.0, -1.0):
+                grid = np.zeros((len(offs), len(tilts)))
+                for j, tl in enumerate(tilts):
+                    for i, d in enumerate(offs):
+                        q = u + (d + sa[:, None] * tl) * n_
+                        sc = oriented(q[:, 0], q[:, 1], n_, sign)
+                        grid[i, j] = np.nanmean(sc) if np.isfinite(sc).any() else 0.0
+                grids.append(grid)
+            grid = max(grids, key=lambda g_: g_.max())
+            i, j = np.unravel_index(int(np.argmax(grid)), grid.shape)
+            top = grid[i, j]
+            if abs(offs[i]) > radius - 2:                          # best at the search edge: not this line
+                continue
+            if top < 3 * noise or top < 2.5 * np.median(grid):
+                continue
+            far = np.abs(offs - offs[i]) > 4
+            if far.any() and grid[far].max() > 0.8 * top:            # two similar lines: ambiguous
+                continue
+            d, tl = offs[i], tilts[j]
+            for X_, s_, u_ in zip(X, sa, u):
+                Xs.append(X_); qs.append(c + s_ * t + (d + s_ * tl) * n_); ns.append(n_); ids.append(li)
+        return np.array(Xs), np.array(qs), np.array(ns), np.array(ids)
+
+    p = np.r_[math.log(cam.f), cam.k1, np.asarray(cam.rvec, float), np.asarray(cam.tvec, float)]
+    stats = {}
+    for radius in radii:
+        Xs, qs, ns, ids = find(p, radius)
+        if len(Xs):
+            m = ~np.isin(ids, list(skip))                         # lines held out (for checking)
+            Xs, qs, ns, ids = Xs[m], qs[m], ns[m], ids[m]
+        if len(set(ids.tolist())) < 3:
+            log(f"[calibrate] snapping: fewer than 3 lines found within {radius} px; keeping the clicks")
+            break
+        wt = 1.0 / np.sqrt(np.bincount(ids)[ids] / 10.0)            # each line counts about the same
+
+        def resid(q):
+            r_line = np.sum((proj(q, Xs) - qs) * ns, axis=1) * wt       # distance across the line
+            r_click = ((proj(q, Xc) - uvc) / click_sigma).ravel()
+            return np.r_[r_line, r_click, (q[1] / k1_sigma)]
+        sol = least_squares(resid, p, loss="soft_l1", f_scale=1.5, method="trf")
+        p = sol.x
+        rl = np.sum((proj(p, Xs) - qs) * ns, axis=1)
+        stats = {"lines": int(len(set(ids.tolist()))), "samples": int(len(Xs)), "radius_px": radius, "median_px": round(float(np.median(np.abs(rl))), 2),
+                 "within_2px": round(float(np.mean(np.abs(rl) < 2)), 2)}
+    new = Camera(cam.width, cam.height, math.exp(p[0]), list(p[2:5]), list(p[5:8]), float(p[1]), cx, cy)
+    # where the final camera draws each line vs where it is found (within check_radius px)
+    Xs, qs, ns, ids = find(p, check_radius)
+    line_px = {}
+    if len(Xs):
+        off = np.sum((proj(p, Xs) - qs) * ns, axis=1)
+        line_px = {int(li): round(float(np.median(np.abs(off[ids == li]))), 2) for li in sorted(set(ids.tolist()))}
+    res = proj(p, Xc) - uvc
+    info = dict(cam.info)
+    info.update({"lines": stats, "line_px": line_px, "clicks_rms_px": round(float(np.sqrt(np.mean(np.sum(res ** 2, axis=1)))), 2),
+                 "residual_px": {n: round(float(np.hypot(*e)), 1) for n, e in zip(names, res)},
+                 "snapped": bool(stats)})
+    new.info = info
+    return new
