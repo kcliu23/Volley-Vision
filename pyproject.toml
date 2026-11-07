@@ -64,7 +64,7 @@ known-first-party = ["core", "tools", "training"]
 # --- tests --------------------------------------------------------------------------------------
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q"
+addopts = "-q -m 'not slow'"
 markers = [
     "data: needs local clips / outputs (videos/, output/, data/) - skipped when they are missing",
     "slow: takes more than a few seconds",

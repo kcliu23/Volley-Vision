@@ -18,9 +18,22 @@ filling) is still there: `--pipeline classic`.
 ## Usage
 
 ```bash
-pip install -r requirements.txt
+pip install -e ".[ml,dev]"          # once: installs the project and its dependencies (pyproject.toml)
+pre-commit install                  # once: ruff checks every commit
 python main.py videos/test42.MP4
 ```
+
+## Development
+
+```bash
+ruff check .                        # style + likely bugs (config in pyproject.toml)
+pytest                              # fast tests, ~5 s; tests that need local clips skip without them
+pytest -m slow                      # + the 3D accuracy gate on synthetic rallies, ~1.5 min
+```
+
+CI (`.github/workflows/ci.yml`) runs ruff and the fast tests on every push, and the slow gate
+weekly or by hand. Hand-made data (labels, calibrations) is saved through `core.safe_io`
+(temp file + swap, rolling backups): use it for anything a person spent time on.
 
 The first run of a clip includes the sparse YOLO pass (every 20th frame), the WASB pass and
 the YOLO crops; re-runs reuse the caches and take seconds.

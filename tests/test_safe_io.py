@@ -1,37 +1,55 @@
-"""python -m tests.test_safe_io : saving hand-made data can't lose it."""
+"""core.safe_io: saving hand-made data can't lose it."""
 import json
-import sys
-import tempfile
-import time
-from pathlib import Path
 
-from core.safe_io import backup, backups, load_json, save_json
+import pytest
+
+import core.safe_io as S
 
 
-def main():
-    d = Path(tempfile.mkdtemp())
-    p = d / "clip.json"
-    res = []
-    save_json(p, {"v": 1})
-    res.append(("save", json.load(open(p)) == {"v": 1} and not list(d.glob("*.tmp"))))
-    backup(p)
-    p.write_text("{ broken")                                   # crash mid-write in an old version
-    res.append(("damaged -> backup", load_json(p, log=lambda m: None) == {"v": 1}))
-    n = len(backups(p))
-    time.sleep(1.1)
-    backup(p)                                                  # a damaged file never becomes a backup
-    res.append(("no damaged backup", len(backups(p)) == n))
+@pytest.fixture
+def clock(monkeypatch):
+    """Backups are named by the second: tick a fake clock instead of sleeping."""
+    t = [0]
+
+    def strftime(fmt):
+        t[0] += 1
+        return f"20260101-{t[0]:06d}"
+    monkeypatch.setattr(S.time, "strftime", strftime)
+
+
+def test_save_is_complete_and_leaves_no_temp(tmp_path):
+    p = tmp_path / "clip.json"
+    S.save_json(p, {"v": 1})
+    assert json.load(open(p)) == {"v": 1} and not list(tmp_path.glob("*.tmp"))
+
+
+def test_damaged_file_loads_the_backup(tmp_path, clock):
+    p = tmp_path / "clip.json"
+    S.save_json(p, {"v": 1})
+    S.backup(p)
+    p.write_text("{ broken")
+    assert S.load_json(p, log=lambda m: None) == {"v": 1}
+
+
+def test_damaged_file_never_becomes_a_backup(tmp_path, clock):
+    p = tmp_path / "clip.json"
+    S.save_json(p, {"v": 1})
+    S.backup(p)
+    p.write_text("{ broken")
+    assert S.backup(p) is None and len(S.backups(p)) == 1
+
+
+def test_keeps_the_newest_five(tmp_path, clock):
+    p = tmp_path / "clip.json"
     for i in range(7):
-        save_json(p, {"v": i})
-        backup(p, keep=5)
-        time.sleep(1.05)
-    res.append(("keep 5", len(backups(p)) == 5))
-    fails = 0
-    for name, ok in res:
-        fails += not ok
-        print(f"{'PASS' if ok else 'FAIL'}  {name}")
-    sys.exit(1 if fails else 0)
+        S.save_json(p, {"v": i})
+        S.backup(p, keep=5)
+    kept = [json.load(open(b))["v"] for b in S.backups(p)]
+    assert kept == [2, 3, 4, 5, 6]
 
 
-if __name__ == "__main__":
-    main()
+def test_no_backup_and_damaged_raises(tmp_path):
+    p = tmp_path / "clip.json"
+    p.write_text("{ broken")
+    with pytest.raises(json.JSONDecodeError):
+        S.load_json(p, log=lambda m: None)

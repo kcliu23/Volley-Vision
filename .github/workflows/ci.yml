@@ -1,0 +1,30 @@
+name: ci
+on:
+  push:
+  pull_request:
+  workflow_dispatch:          # run by hand (Actions tab), e.g. for the slow accuracy gate
+  schedule:
+    - cron: "17 9 * * 1"      # Mondays: the slow accuracy gate too
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: sudo apt-get update && sudo apt-get install -y libgl1     # OpenCV needs it
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: pytest                                     # fast tests (tests needing local clips skip)
+
+  accuracy:
+    if: github.event_name != 'push' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11", cache: pip }
+      - run: sudo apt-get update && sudo apt-get install -y libgl1
+      - run: pip install -e ".[dev]"
+      - run: pytest -m slow

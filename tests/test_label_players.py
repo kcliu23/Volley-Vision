@@ -1,6 +1,6 @@
 """Headless replays of real labeling sessions for tools.label_players (no window needed).
 
-    python -m tests.test_label_players            # needs videos/test74.mov + output/test74/pose.json
+    pytest tests/test_label_players.py            # needs videos/test74.mov + output/test74/pose.json
 
 Each scenario feeds the tool clicks and keys the way a person does, then checks the saved file.
 Run it after any change to the labeling tool.
@@ -14,11 +14,14 @@ import tempfile
 from pathlib import Path
 
 import cv2
+import pytest
 
 import tools.label_players as T
 
 CLIP = "test74"
 VIDEO = f"videos/{CLIP}.mov"
+if not all(Path(p).exists() for p in (VIDEO, f"output/{CLIP}/pose.json", f"data/player_ids/{CLIP}.json")):
+    pytest.skip("needs the local test74 clip, its pose.json and labels", allow_module_level=True)
 POSE = json.load(open(f"output/{CLIP}/pose.json"))["frames"]
 W, H = 2622, 1206
 SCALE = min(T.MAX_W / W, (T.MAX_H - T.TOP_H) / H, 1.0)
@@ -145,6 +148,16 @@ def scenario_pose_rerun():
             tot += 1
             agree += names.get(f"{tid}@{max(c)}" if c else str(tid)) == r["player"]
     return tot > 0 and agree / tot > 0.98, f"{agree}/{tot} saved boxes keep their number ({report})"
+
+
+pytestmark = pytest.mark.data
+
+
+@pytest.mark.parametrize("scenario", [scenario_swap, scenario_plain_fix, scenario_undo, scenario_autosave,
+                                      scenario_damaged_file, scenario_pose_rerun], ids=lambda f: f.__name__[9:])
+def test_scenario(scenario):
+    ok, msg = scenario()
+    assert ok, msg
 
 
 if __name__ == "__main__":

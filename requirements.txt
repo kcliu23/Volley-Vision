@@ -1,4 +1,4 @@
-ultralytics>=8.0.0
-opencv-python>=4.9.0
-numpy>=1.26.0
-torch>=2.1.0
+# Dependencies live in pyproject.toml. Install the project (editable) with:
+#   pip install -e ".[ml,dev]"        # everything: models, training, tests
+#   pip install -e ".[dev]"           # core + tests only (no torch / YOLO)
+-e .[ml,dev]
