@@ -40,3 +40,13 @@ models/archive/
 
 # large model weights (over GitHub's 100 MB limit; keep them locally / on Drive)
 models/tracknet/*.pt
+
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+*.tmp
+
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+*.tmp
