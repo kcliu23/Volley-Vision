@@ -70,7 +70,7 @@ def main():
     ap.add_argument("--clips", nargs="*")
     ap.add_argument("--output", default=str(paths.OUTPUT))
     a = ap.parse_args()
-    stems = sorted(p.stem for p in LABELS.glob("*.json") if not a.clips or p.stem in a.clips)
+    stems = sorted(p.stem for p in LABELS.glob("*.json") if ".backup" not in p.name and not p.name.endswith(".tmp") and (not a.clips or p.stem in a.clips))
     for stem in stems:
         video = next((str(p) for d in ("videos", "holdout") for p in [Path(d) / f"{stem}.mov"] if p.exists()), None)
         r = score(stem, video, a.output) if video else None
