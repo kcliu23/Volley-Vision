@@ -102,12 +102,12 @@ class Camera:
                 "fov_deg": round(self.fov_deg, 2), "info": self.info}
 
     @classmethod
-    def from_json(cls, d: dict) -> "Camera":
+    def from_json(cls, d: dict) -> Camera:
         return cls(d["width"], d["height"], d["f"], d["rvec"], d["tvec"], d.get("k1", 0.0),
                    d.get("cx"), d.get("cy"), d.get("info", {}))
 
     @classmethod
-    def load(cls, path) -> "Camera":
+    def load(cls, path) -> Camera:
         return cls.from_json(json.load(open(path)))
 
     def save(self, path, extra: dict | None = None):
@@ -184,6 +184,7 @@ def solve(points: dict, width: int, height: int, net_height: float = 2.43, fit_k
     residual_px per point, line_px per line (rms distance of its clicks)."""
     import cv2
     from scipy.optimize import least_squares
+
     from core.court import keypoints, named_lines
     kp = keypoints(net_height)
     NL = named_lines(net_height)
@@ -410,6 +411,7 @@ def refine_to_lines(cam: Camera, image: np.ndarray, points: dict, net_height: fl
     says how many lines were found and how far off they sit."""
     import cv2
     from scipy.optimize import least_squares
+
     from core.court import keypoints, lines
 
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY) if image.ndim == 3 else image
@@ -492,7 +494,7 @@ def refine_to_lines(cam: Camera, image: np.ndarray, points: dict, net_height: fl
             if far.any() and grid[far].max() > 0.8 * top:            # two similar lines: ambiguous
                 continue
             d, tl = offs[i], tilts[j]
-            for X_, s_, u_ in zip(X, sa, u):
+            for X_, s_, _u in zip(X, sa, u):
                 Xs.append(X_); qs.append(c + s_ * t + (d + s_ * tl) * n_); ns.append(n_); ids.append(li)
         return np.array(Xs), np.array(qs), np.array(ns), np.array(ids)
 

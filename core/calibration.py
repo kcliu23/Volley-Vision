@@ -36,7 +36,7 @@ class Calibration:
         self.models = models            # source -> {"coef": [...], "intercept": b}
 
     @classmethod
-    def load(cls, path: str | Path = DEFAULT_PATH) -> "Calibration":
+    def load(cls, path: str | Path = DEFAULT_PATH) -> Calibration:
         return cls(json.load(open(path))["models"])
 
     def save(self, path: str | Path = DEFAULT_PATH, meta: dict | None = None):
@@ -51,7 +51,7 @@ class Calibration:
     def prob(self, source: str, conf, size_ratio=None, aspect=None) -> np.ndarray:
         return 1.0 / (1.0 + np.exp(-self.logit(source, conf, size_ratio, aspect)))
 
-    def for_finder(self, name: str) -> "Calibration":
+    def for_finder(self, name: str) -> Calibration:
         """The same calibration with the finder slot ("tracknet" in the linkers) scored by the
         model fitted for finder `name` (e.g. "wasb"). Unchanged if name is "tracknet"."""
         if name == "tracknet":

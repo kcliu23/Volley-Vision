@@ -12,7 +12,6 @@ import math
 
 import numpy as np
 
-
 from core.camera import Camera, solve
 from core.court import keypoints
 

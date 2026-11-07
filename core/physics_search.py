@@ -66,8 +66,8 @@ def targets(track, flights, ball: float, zoom: dict, fps: float, contact_s: floa
 def search(stem: str, video: str, tg: dict, ball: float, model, ftag: str, root=paths.OUTPUT) -> dict:
     """YOLO on a crop around every target (batched on a GPU, as core.finder_first.crop_finds).
     Returns {"found": {frame: {"c": [x, y], "cands": [...]}}, "crops": n, ...} (cached)."""
-    from core.refine import zoom_detect_many
     from core.device import BATCH, yolo_device
+    from core.refine import zoom_detect_many
     key = hashlib.md5(json.dumps(sorted((f, v) for f, v in tg.items())).encode()).hexdigest()[:12]
     cp = paths.cache_dir(stem, root) / f"crops_guided_{ftag}.json"
     if cp.exists():

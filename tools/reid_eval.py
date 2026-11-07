@@ -19,7 +19,6 @@ from pathlib import Path
 
 import numpy as np
 
-
 from core import paths
 from core.safe_io import file_key
 
@@ -27,9 +26,10 @@ LABELS = Path("data/player_ids")
 
 
 def score(stem: str, video: str, output: str):
+    import cv2
+
     from core.camera import Camera
     from core.reid import build_ids
-    import cv2
     L = json.load(open(LABELS / f"{stem}.json"))
     pj = paths.clip_dir(stem, output) / "pose.json"
     if L.get("pose_key") not in (None, file_key(pj)):

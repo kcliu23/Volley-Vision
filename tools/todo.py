@@ -18,7 +18,6 @@ import json
 import re
 from pathlib import Path
 
-
 from core import paths
 
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".avi", ".mkv")
@@ -85,7 +84,7 @@ def main():
     q = sorted(groups.get("to review", []), key=lambda x: -float(x[1].split("%")[0]))
     if q:
         print("\nTo review, most flagged first (hard clips teach the most):")
-        for stem, info, path in (q if a.all else q[:10]):
+        for _stem, info, path in (q if a.all else q[:10]):
             print(f"  python -m tools.review {path:28s} # {info}")
         if len(q) > 10 and not a.all:
             print(f"  ... {len(q) - 10} more (--all)")

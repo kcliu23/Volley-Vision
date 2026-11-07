@@ -15,7 +15,6 @@ import json
 import math
 
 
-
 def _load(stem, zkey="zoom"):
     from core import paths
     d = json.load(open(paths.dets(stem)))
@@ -99,11 +98,11 @@ def _cases():
 
 def _joint(stem, d, a):
     """Joint linker on cached full-frame YOLO + zoom + TrackNet candidates (saved score calibration)."""
-    from core.joint_linker import link as joint_link
+    from core import paths
     from core.calibration import Calibration
+    from core.joint_linker import link as joint_link
     from core.tracknet import correct
     from tools.calibrate import ball_px
-    from core import paths
     ball = ball_px(d)
     tp = paths.tracknet(stem)
     tn = correct(json.load(open(tp))["frames"], ball) if tp.exists() else None
@@ -119,7 +118,9 @@ def run(linker_name="rule", verbose=True, tracknet=False):
     cache, passed, results = {}, 0, []
     if linker_name == "finder-first":
         import glob
+
         from ultralytics import YOLO
+
         from core.finder_first import track as ff_track
         model = YOLO("models/best4.pt")
         for stem in dict.fromkeys(c[0] for c in _cases()):

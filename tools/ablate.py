@@ -25,7 +25,6 @@ import json
 import math
 import time
 
-
 from core import paths
 
 FINDER = "models/wasb/wasb_ft2.pth.tar"
@@ -72,8 +71,8 @@ def run_variant(name, d2, cands, cal, ball, a, stem=None):
     crops where the flights predict the ball), then the joint linker again (1 or 2 rounds;
     needs the video and runs YOLO, results cached)."""
     if name in ("guided", "guided2"):
-        from core.flights import from_track
         from core import physics_search as ps
+        from core.flights import from_track
         from core.profile import link_args  # noqa: F401  (a already holds the link args)
         if "m" not in _YOLO:
             from ultralytics import YOLO
@@ -93,8 +92,9 @@ def run_variant(name, d2, cands, cal, ball, a, stem=None):
         SEARCH_LOG[stem] = stats
         return t
     from dataclasses import fields
-    from core.joint_linker import JointParams
+
     from core.finder_first import FINDER_ONLY_BIAS
+    from core.joint_linker import JointParams
     jp = JointParams(tn_only_bias=FINDER_ONLY_BIAS)
     if name.startswith("joint:"):
         types = {f.name: f.type for f in fields(JointParams)}
@@ -110,7 +110,9 @@ def run_variant(name, d2, cands, cal, ball, a, stem=None):
         return link(d2, cands, cal, a["fps"], W, H, ball, jp, **kw)
     if name == "arcs" or name.startswith("arcs:"):   # physics backbone (core.flight_model); "arcs:key=v,..."
         from dataclasses import replace as _rep
-        from core.flight_model import link as arc_link, ArcParams, ChainParams
+
+        from core.flight_model import ArcParams, ChainParams
+        from core.flight_model import link as arc_link
         ap_, cp_ = ArcParams(), ChainParams()
         if ":" in name:
             for kv in name.split(":", 1)[1].split(","):
@@ -123,8 +125,8 @@ def run_variant(name, d2, cands, cal, ball, a, stem=None):
     if name == "classic":
         from core import finders
         from core.linker import link as rule_link
-        from core.tracknet_fill import apply as fill
         from core.profile import link_args
+        from core.tracknet_fill import apply as fill
         TN = "models/tracknet/FT_TrackNet_best.pt"
         d = json.load(open(paths.dets(stem)))
         fr = [list(f) for f in d["frames"]]
@@ -144,7 +146,7 @@ def finish(t, variant="joint"):
     """Flights, as in the pipeline (finder-only points go onto the fitted arc).
     A variant may end in "|key=value,..." to change apply_flights' options (e.g. "joint|max_fill_s=0.3",
     "joint|none" = no flights at all, the linker's own track)."""
-    from core.flights import from_track, apply_flights
+    from core.flights import apply_flights, from_track
     opts = {}
     if "|" in variant:
         variant, o = variant.split("|", 1)
@@ -186,11 +188,11 @@ def main():
     ap.add_argument("--clips", nargs="*")
     ap.add_argument("--out", default=None, help="save per-clip results (json)")
     a = ap.parse_args()
+    import tools.calibrate as C
     from core import finders
     from core.calibration import Calibration
-    from core.finder_first import CROP_TOP, CROP_P
+    from core.finder_first import CROP_P, CROP_TOP
     from tools.regression import _cases
-    import tools.calibrate as C
     cal = Calibration.load().for_finder(finders.calib_name(FINDER))
     gt = paths.gt_stems()
     groups = [("holdout", [s for s in paths.holdout_stems() if paths.verified(s).exists()]),

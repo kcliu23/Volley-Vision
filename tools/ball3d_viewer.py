@@ -14,7 +14,6 @@ import json
 import math
 from pathlib import Path
 
-
 from core import paths
 from core.camera import Camera
 

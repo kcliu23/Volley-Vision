@@ -21,7 +21,6 @@ from pathlib import Path
 import cv2
 
 
-
 def dump(video: str, model, out_path: Path, conf: float, imgsz: int) -> Path:
     cap = cv2.VideoCapture(video)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
@@ -29,8 +28,8 @@ def dump(video: str, model, out_path: Path, conf: float, imgsz: int) -> Path:
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
 
-    from core.refine import small_gray, frame_changed_pixels, DUP_MAX_CHANGED
-    from core.device import predict, yolo_device, BATCH
+    from core.device import BATCH, predict, yolo_device
+    from core.refine import DUP_MAX_CHANGED, frame_changed_pixels, small_gray
     frames, dup, prev = [], [], None
     t0 = time.time()
     print(f"  YOLO on {yolo_device()}, {BATCH} frames per batch", flush=True)

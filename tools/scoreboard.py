@@ -26,7 +26,6 @@ import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
-
 from core import paths
 
 CUR_YOLO = "models/best4.pt"
@@ -44,8 +43,8 @@ def find_video(stem: str, dirs: list[str]) -> str | None:
 
 
 def run_one(stem, video, root, yolo, finder, reuse_yolo, reuse_finder, pipeline):
-    from core.video_pipeline import run
     from core import finders
+    from core.video_pipeline import run
 
     def reuse(src, dst):
         if src.exists() and not dst.exists():

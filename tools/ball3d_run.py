@@ -22,7 +22,6 @@ from pathlib import Path
 
 import numpy as np
 
-
 from core import paths
 from core.ball3d import BALL_D, calibrate_size, edge_mask, free_px, sizes_for
 from core.camera import Camera
@@ -157,6 +156,7 @@ def plot(path, flights, frames, cam, net_h, stem):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
+
     from core.court import lines
     fig = plt.figure(figsize=(15, 9))
     ax1 = fig.add_subplot(221)

@@ -15,12 +15,12 @@ import json
 import time
 from pathlib import Path
 
-
 from core import paths
 
 
 def detect(video: str, out: Path, model: str = "yolov8m.pt", imgsz: int = 1280, conf: float = 0.25) -> Path:
     from ultralytics import YOLO
+
     from core.device import yolo_device
     m = YOLO(model)
     frames, t0 = [], time.time()

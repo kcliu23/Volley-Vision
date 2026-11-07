@@ -22,10 +22,9 @@ from pathlib import Path
 
 import numpy as np
 
-
 from core import paths
 from core.camera import Camera
-from core.court import LENGTH, WIDTH, ATTACK
+from core.court import ATTACK, LENGTH, WIDTH
 
 
 def main():
@@ -80,7 +79,6 @@ def main():
             cv2.line(img, (int(u[0]), int(u[1])), (int(s[0]), int(s[1])), (0, 220, 255), 2, cv2.LINE_AA)
             cv2.drawMarker(img, (int(s[0]), int(s[1])), (0, 0, 255), cv2.MARKER_TILTED_CROSS, 34, 4)
             cv2.circle(img, (int(u[0]), int(u[1])), 24, (0, 255, 255), 3, cv2.LINE_AA)
-            sd = np.linalg.norm(fr.get("std") or [0, 0, 0])
             cv2.putText(img, f"{X[2]:.1f} m", (int(u[0]) + 30, int(u[1]) - 10), cv2.FONT_HERSHEY_SIMPLEX, 1.4,
                         (0, 255, 255), 4, cv2.LINE_AA)
             trail.append((X[0], X[1]))
@@ -90,7 +88,7 @@ def main():
         pts = [p for p in trail if p is not None]
         for p, q in zip(pts[:-1], pts[1:]):
             cv2.line(mini, top(*p), top(*q), (0, 200, 255), 2, cv2.LINE_AA)
-        for pid, g, air, fz, hm in people.get(f, []):
+        for pid, g, air, fz, _hm in people.get(f, []):
             col = (0, 140, 255) if air else (255, 220, 0)
             ring = cam.project(np.c_[0.35 * np.cos(np.linspace(0, 2 * np.pi, 24)) + g[0],
                                      0.35 * np.sin(np.linspace(0, 2 * np.pi, 24)) + g[1], np.zeros(24)])

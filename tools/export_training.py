@@ -45,7 +45,6 @@ from pathlib import Path
 
 import cv2
 
-
 from core import paths
 
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".avi", ".mkv")
@@ -136,12 +135,12 @@ def export_yolo(clips, out: Path, every: int, neg_every: int, skip_existing: set
     """Images named like Roboflow's (<clip>_<frame>_jpg.rf.<tag>.jpg) so every tool that reads
     volleyball_combined reads these the same way."""
     import random
+
     from core.other_balls import auto as auto_others
     stats = {"images": 0, "frames": 0, "ball": 0, "no_ball": 0, "hand_fixed": 0, "skipped_existing": 0,
              "ball_left_picture": 0, "other_balls": 0, "other_balls_checked": 0, "hard_negatives": 0}
     for c in clips:
         V, video, split = c["V"], c["video"], c["split"]
-        W, H = V["width"], V["height"]
         labels = {int(k): x for k, x in V["labels"].items()}
         boxes = {int(k): x for k, x in V.get("boxes", {}).items()}
         src = {int(k): x for k, x in V.get("src", {}).items()}

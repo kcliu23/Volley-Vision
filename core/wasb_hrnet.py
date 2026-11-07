@@ -9,20 +9,13 @@
 # Modified by Bowen Cheng (bcheng9@illinois.edu)
 # ------------------------------------------------------------------------------
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
 
-import os
 import logging
+import os
 
 import torch
 import torch.nn as nn
-
 
 BN_MOMENTUM = 0.1
 logger = logging.getLogger(__name__)
@@ -38,7 +31,7 @@ class BasicBlock(nn.Module):
     expansion = 1
 
     def __init__(self, inplanes, planes, stride=1, downsample=None):
-        super(BasicBlock, self).__init__()
+        super().__init__()
         self.conv1 = conv3x3(inplanes, planes, stride)
         self.bn1 = nn.BatchNorm2d(planes, momentum=BN_MOMENTUM)
         self.relu = nn.ReLU(inplace=True)
@@ -70,7 +63,7 @@ class Bottleneck(nn.Module):
     expansion = 4
 
     def __init__(self, inplanes, planes, stride=1, downsample=None):
-        super(Bottleneck, self).__init__()
+        super().__init__()
         self.conv1 = nn.Conv2d(inplanes, planes, kernel_size=1, bias=False)
         self.bn1 = nn.BatchNorm2d(planes, momentum=BN_MOMENTUM)
         self.conv2 = nn.Conv2d(planes, planes, kernel_size=3, stride=stride,
@@ -110,7 +103,7 @@ class Bottleneck(nn.Module):
 class HighResolutionModule(nn.Module):
     def __init__(self, num_branches, blocks, num_blocks, num_inchannels,
                  num_channels, fuse_method, multi_scale_output=True):
-        super(HighResolutionModule, self).__init__()
+        super().__init__()
         self._check_branches(
             num_branches, blocks, num_blocks, num_inchannels, num_channels)
 
@@ -128,20 +121,17 @@ class HighResolutionModule(nn.Module):
     def _check_branches(self, num_branches, blocks, num_blocks,
                         num_inchannels, num_channels):
         if num_branches != len(num_blocks):
-            error_msg = 'NUM_BRANCHES({}) <> NUM_BLOCKS({})'.format(
-                num_branches, len(num_blocks))
+            error_msg = f'NUM_BRANCHES({num_branches}) <> NUM_BLOCKS({len(num_blocks)})'
             logger.error(error_msg)
             raise ValueError(error_msg)
 
         if num_branches != len(num_channels):
-            error_msg = 'NUM_BRANCHES({}) <> NUM_CHANNELS({})'.format(
-                num_branches, len(num_channels))
+            error_msg = f'NUM_BRANCHES({num_branches}) <> NUM_CHANNELS({len(num_channels)})'
             logger.error(error_msg)
             raise ValueError(error_msg)
 
         if num_branches != len(num_inchannels):
-            error_msg = 'NUM_BRANCHES({}) <> NUM_INCHANNELS({})'.format(
-                num_branches, len(num_inchannels))
+            error_msg = f'NUM_BRANCHES({num_branches}) <> NUM_INCHANNELS({len(num_inchannels)})'
             logger.error(error_msg)
             raise ValueError(error_msg)
 
@@ -163,7 +153,7 @@ class HighResolutionModule(nn.Module):
                             num_channels[branch_index], stride, downsample))
         self.num_inchannels[branch_index] = \
             num_channels[branch_index] * block.expansion
-        for i in range(1, num_blocks[branch_index]):
+        for _i in range(1, num_blocks[branch_index]):
             layers.append(block(self.num_inchannels[branch_index],
                                 num_channels[branch_index]))
 
@@ -257,7 +247,7 @@ blocks_dict = {
 class HRNet(nn.Module):
 
     def __init__(self, cfg, **kwargs):
-        super(HRNet, self).__init__()
+        super().__init__()
 
         self._frames_in  = cfg['frames_in']
         self._frames_out = cfg['frames_out']
@@ -339,7 +329,7 @@ class HRNet(nn.Module):
         deconv_cfg = extra.DECONV
 
         deconv_layers = []
-        for i in range(deconv_cfg.NUM_DECONVS): 
+        for i in range(deconv_cfg.NUM_DECONVS):
             output_channels                        = input_channels
             deconv_kernel, padding, output_padding = self._get_deconv_cfg(deconv_cfg.KERNEL_SIZE[i])
 
@@ -409,7 +399,7 @@ class HRNet(nn.Module):
         layers = []
         layers.append(block(inplanes, planes, stride, downsample))
         inplanes = planes * block.expansion
-        for i in range(1, blocks):
+        for _i in range(1, blocks):
             layers.append(block(inplanes, planes))
 
         return nn.Sequential(*layers)
@@ -497,13 +487,13 @@ class HRNet(nn.Module):
                 nn.init.constant_(m.bias, 0)
         if os.path.isfile(pretrained):
             pretrained_dict = torch.load(pretrained)
-            logger.info('=> loading pretrained model {}'.format(pretrained))
+            logger.info(f'=> loading pretrained model {pretrained}')
             model_dict = self.state_dict()
             pretrained_dict = {k: v for k, v in pretrained_dict.items()
                                if k in model_dict.keys()}
             for k, _ in pretrained_dict.items():
                 logger.info(
-                    '=> loading {} pretrained model {}'.format(k, pretrained))
+                    f'=> loading {k} pretrained model {pretrained}')
             model_dict.update(pretrained_dict)
             self.load_state_dict(model_dict)
 
@@ -541,19 +531,19 @@ if __name__=='__main__':
 # WASB-SBDT license:
 #
 # MIT License
-# 
+#
 # Copyright (c) 2023 NTT Communications Corporation
-# 
+#
 # Permission is hereby granted, free of charge, to any person obtaining a copy
 # of this software and associated documentation files (the "Software"), to deal
 # in the Software without restriction, including without limitation the rights
 # to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
 # copies of the Software, and to permit persons to whom the Software is
 # furnished to do so, subject to the following conditions:
-# 
+#
 # The above copyright notice and this permission notice shall be included in all
 # copies or substantial portions of the Software.
-# 
+#
 # THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 # IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
 # FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE

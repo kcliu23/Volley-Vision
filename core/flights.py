@@ -23,7 +23,8 @@ ball positions; with calibration it becomes "height ≈ 0".
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict, field
+from dataclasses import asdict, dataclass, field
+
 import numpy as np
 
 
@@ -187,7 +188,6 @@ def segment(frames, xs, ys, sizes, fps, params: FlightParams | None = None, tau=
         cosang = (vin[0] * vout[0] + vin[1] * vout[1]) / max(s_in * s_out, 1e-6)
         ratio = s_out / max(s_in, 1e-6)
         # bounce: falling in, rising out, keeps sideways direction, loses energy, low in the picture
-        same_dir = vin[0] * vout[0] > 0 and abs(vout[0]) >= P.bounce_keep_dir * abs(vin[0])
         low = y >= ylo + P.bounce_low_frac * (yhi - ylo)
         # sideways direction isn't required: a bounce near a wall or with spin can reverse it
         is_bounce = vin[1] > 0 and vout[1] < 0 and ratio <= P.bounce_max_gain and low

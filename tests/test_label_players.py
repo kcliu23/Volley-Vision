@@ -15,7 +15,6 @@ from pathlib import Path
 
 import cv2
 
-
 import tools.label_players as T
 
 CLIP = "test74"

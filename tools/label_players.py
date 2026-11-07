@@ -48,7 +48,6 @@ from pathlib import Path
 
 import numpy as np
 
-
 from core import paths
 from core.safe_io import backup, file_key, load_json, save_json
 
@@ -89,6 +88,7 @@ def frame_cache(video: str, stem: str, scale: float):
 
 def main():
     import cv2
+
     from core.camera import Camera
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("video")

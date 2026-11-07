@@ -71,7 +71,6 @@ from pathlib import Path
 
 import numpy as np
 
-
 from core import paths
 from core.safe_io import backup, load_json, save_json
 
@@ -827,7 +826,7 @@ def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, pl
             cv2.line(img, (xs(g), y0 + 32), (xs(g), y0 + 42), (60, 60, 255), 1)
         elif R.is_edited(g):
             cv2.line(img, (xs(g), y0 + 32), (xs(g), y0 + 42), (0, 220, 255), 1)
-    for g, kind in R.contacts.items():                      # marked touches: white ticks above the timeline
+    for g, _kind in R.contacts.items():                      # marked touches: white ticks above the timeline
         cv2.line(img, (xs(g), y0 + 1), (xs(g), y0 + 8), (255, 255, 255), 2)
     cv2.line(img, (xs(f), y0), (xs(f), H), (255, 255, 255), 2)
     return img
@@ -1072,8 +1071,8 @@ def main():
     ap.add_argument("videos", nargs="+")
     ap.add_argument("--test", action="store_true", help="mark as a test clip (kept out of training)")
     a = ap.parse_args()
-    from tools.todo import old_data_clips
     from core import paths
+    from tools.todo import old_data_clips
     old = old_data_clips(paths.YOLO_DATASETS / "volleyball_combined")
     for v in a.videos:
         stem = Path(v).stem

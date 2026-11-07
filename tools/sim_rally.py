@@ -30,7 +30,6 @@ import time
 
 import numpy as np
 
-
 from core.ball3d import BALL_D, DRAG_K, G, Link, fit_rally, out_of_picture, traj
 from core.camera import Camera
 
@@ -150,7 +149,7 @@ def run_v1(cam, s, edge, box):
     pieces = solve_v1(s["uv"], w, s["size"], edge, box, FPS, cam, tracker_flights(s["seen"], s["hints"]), contacts,
                       log=lambda m: None)
     out, touches = {}, []
-    for k, (ci, seg, (f0, f1), fit, i) in enumerate(pieces):
+    for k, (ci, _seg, (f0, f1), fit, i) in enumerate(pieces):
         fr = np.arange(f0, f1 + 1)
         for f, x in zip(fr, fit.at(i, fr / FPS)):
             out[int(f)] = x
@@ -167,7 +166,7 @@ def run_v2(cam, s, edge, box):
     o = Obs(fr / FPS, s["uv"][fr], s["size"][fr], np.where(edge[fr], 0.2, 1.0), fr, edge[fr], out_f, box, FPS)
     pieces, info = solve(o, cam, s["hints"], log=lambda m: None)
     out, touches = {}, []
-    for k, (seg, (f0, f1), fit, i) in enumerate(pieces):
+    for k, (_seg, (f0, f1), fit, i) in enumerate(pieces):
         g = np.arange(f0, f1 + 1)
         for f, x in zip(g, fit.at(i, g / FPS)):
             out[int(f)] = x

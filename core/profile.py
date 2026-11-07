@@ -87,7 +87,7 @@ def camera_motion(path: str, step: int = 1, width: int = 480):
 
 def build(path: str, dets: dict, with_camera: bool = True) -> dict:
     """Profile for a clip; reuses dup flags / content box already in dets if present."""
-    from core.refine import video_dup_flags, content_box
+    from core.refine import content_box, video_dup_flags
     n = len(dets["frames"])
     times = frame_times(path, n)
     dts = np.diff(times) if len(times) > 1 else np.array([1 / (dets.get("fps") or 30)])

@@ -24,14 +24,12 @@ import argparse
 import glob
 import json
 import math
-import sys
 from pathlib import Path
 
 import numpy as np
 
-
 from core import paths
-from core.finder_first import crop_finds, subset_finds, CROP_TOP, CROP_P  # (shared with the pipeline)
+from core.finder_first import CROP_P, CROP_TOP, crop_finds, subset_finds  # (shared with the pipeline)
 
 TN = "models/tracknet/FT_TrackNet_best.pt"
 CROP_PX = 640 * 640           # YOLO input of one crop ...
@@ -75,15 +73,16 @@ def main():
                     help="strict crop rule: crop only the finder's top candidate with calibrated probability >= this")
     a = ap.parse_args()
     from ultralytics import YOLO
+
+    import tools.calibrate as C
     from core import finders
     from core.calibration import fit
-    from core.linker import link as rule_link
-    from core.tracknet_fill import apply as fill
-    from core.joint_linker import link as joint_link
+    from core.flights import apply_flights, from_track
     from core.joint_linker import JointParams
+    from core.joint_linker import link as joint_link
+    from core.linker import link as rule_link
     from core.profile import link_args
-    from core.flights import from_track, apply_flights
-    import tools.calibrate as C
+    from core.tracknet_fill import apply as fill
 
     gt = paths.gt_stems()
     hold = [s for s in paths.holdout_stems() if paths.verified(s).exists()]

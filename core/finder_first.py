@@ -51,8 +51,8 @@ def sparse_dets(video: str, model, out_path: Path, every: int = SAMPLE_EVERY, co
         d = json.load(open(out_path))
         if d.get("every") == every and d.get("imgsz") == imgsz:
             return d
-    from core.refine import small_gray, frame_changed_pixels, DUP_MAX_CHANGED
-    from core.device import predict, BATCH
+    from core.device import BATCH, predict
+    from core.refine import DUP_MAX_CHANGED, frame_changed_pixels, small_gray
     cap = cv2.VideoCapture(video)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
     w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -193,9 +193,10 @@ def track(video: str, model, finder: str = DEFAULT_FINDER, cal=None, crop_top: i
     crop_p = CROP_P if crop_p == "default" else crop_p
     from core import finders
     from core.calibration import Calibration
-    from core.profile import get as get_profile, link_args
-    from core.joint_linker import link as joint_link
     from core.joint_linker import JointParams
+    from core.joint_linker import link as joint_link
+    from core.profile import get as get_profile
+    from core.profile import link_args
 
     stem = Path(video).stem
     d = sparse_dets(video, model, paths.cache_dir(stem, root) / "sample_dets.json", log=log)
@@ -227,8 +228,8 @@ def track(video: str, model, finder: str = DEFAULT_FINDER, cal=None, crop_top: i
         # 5. physics-guided search: YOLO where the flights say the ball must be, then link again.
         #    Measured 2026-10-28 (tools.ablate): holdout 95.3 -> 95.6%, dev 91.5 -> 92.6%,
         #    checked 97.1 -> 97.8% on-ball, wrong / false equal or lower, same regression cases.
-        from core.flights import from_track
         from core import physics_search as ps
+        from core.flights import from_track
         tg = ps.targets(t, from_track(t)[0], ball, d2["zoom"], a["fps"])
         res = ps.search(stem, video, tg, ball, model, ftag, root=root)
         d2["zoom"] = ps.merge_zoom(d2["zoom"], res["found"])

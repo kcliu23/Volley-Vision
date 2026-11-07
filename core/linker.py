@@ -25,6 +25,7 @@ Positions are pixel coords in the original frame.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
 import numpy as np
 
 DETECTED, WEAK, FILLED, NONE = "detected", "weak", "filled", "none"
@@ -190,7 +191,7 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
         arr = np.array([[i, c[0], c[1], max(c[2], c[3])] for i, _, c in pts_all])
         drop = set()
         span_need = P.static_s * fps
-        for j, (i, k, c) in enumerate(pts_all):
+        for _j, (i, k, c) in enumerate(pts_all):
             r = max(0.3 * max(c[2], c[3]), 0.1 * med)
             near = arr[np.hypot(arr[:, 1] - c[0], arr[:, 2] - c[1]) <= r]
             fr = np.unique(near[:, 0])
@@ -393,7 +394,7 @@ def link(frames: list, fps: float, width: int, height: int, params: LinkParams |
     keys = sorted(owner)
     resting_pts: dict = {}
     win = max(4, int(round(P.static_s * fps)))
-    from core.cost_linker import _gravity           # clip gravity, px/frame², from confident arcs
+    from core.cost_linker import _gravity  # clip gravity, px/frame², from confident arcs
     by_frame = {i: [(c[0], c[1], max(c[2], c[3]), None, c[4]) for c in C[i]] for i in range(n) if not dup[i]}
     g_px = _gravity(by_frame, [not d for d in dup], med)
     if keys:

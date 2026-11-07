@@ -35,9 +35,24 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from core.ball3d import BALL_D, G, Link, Segment, fit_rally
-from core.params3d import (DV_SOFT, GRID_S, HUBER, LINK_SIGMA_M, MAX_FLIGHT_S, MAX_SPEED, MIN_PTS,  # noqa: F401
-                           OUT_CAP, OUT_SIGMA, PLAYER_COST, PLAYER_SOFT_M, REACH_M, SIGMA_PX, SIZE_REL,
-                           TOUCH_COST, TURN_DEG)
+from core.params3d import (  # noqa: F401
+    DV_SOFT,
+    GRID_S,
+    HUBER,
+    LINK_SIGMA_M,
+    MAX_FLIGHT_S,
+    MAX_SPEED,
+    MIN_PTS,
+    OUT_CAP,
+    OUT_SIGMA,
+    PLAYER_COST,
+    PLAYER_SOFT_M,
+    REACH_M,
+    SIGMA_PX,
+    SIZE_REL,
+    TOUCH_COST,
+    TURN_DEG,
+)
 
 
 def huber(r):
@@ -161,7 +176,7 @@ def _vel_fast(piece, t):
     return v0 + G * (t - t0)
 
 
-def player_penalty(o: "Obs", tc: float, x) -> float:
+def player_penalty(o: Obs, tc: float, x) -> float:
     """Extra cost of a touch at time tc, ball at x, from the players: nothing next to a player
     (or on the floor: a bounce), up to PLAYER_COST far from all of them."""
     if o.near is None or x[2] < 0.3:

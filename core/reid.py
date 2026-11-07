@@ -168,7 +168,7 @@ def build_ids(pose_frames: dict, video: str, cam, fps: float):
         _, a, b = best
         groups[a] = groups[a] + groups.pop(b)
     out = {}
-    for n, (gid, g) in enumerate(sorted(groups.items(), key=lambda kv: -sum(len(T[t]["frames"]) for t in kv[1]))):
+    for n, (_gid, g) in enumerate(sorted(groups.items(), key=lambda kv: -sum(len(T[t]["frames"]) for t in kv[1]))):
         for t in g:
             out[t] = {"player": n, "side": side(g), "on_court": any(T[t2]["on_court"] for t2 in g)}
     return out

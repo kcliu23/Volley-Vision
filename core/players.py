@@ -24,9 +24,17 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from core.params3d import (  # noqa: F401
+    ANKLE_H,
+    JUMP_FIT_M,
+    JUMP_H,
+    JUMP_MAX_S,
+    JUMP_MIN_S,
+    LIFT_FRAC,
+    REACH_HEIGHT_X,
+    REACH_RADIUS_M,
+)
 
-from core.params3d import (ANKLE_H, JUMP_FIT_M, JUMP_H, JUMP_MAX_S, JUMP_MIN_S, LIFT_FRAC, REACH_HEIGHT_X,  # noqa: F401
-                           REACH_RADIUS_M)
 G = 9.81
 
 
@@ -139,7 +147,7 @@ def build(players_json: dict, cam, fps: float, min_frames: int = 15) -> list[Pla
     H = cam.height
     tracks: dict = {}
     for f, row in enumerate(players_json["frames"]):
-        for tid, x1, y1, x2, y2, conf in row:
+        for tid, x1, y1, x2, y2, _conf in row:
             if tid < 0:
                 continue
             tracks.setdefault(tid, []).append((f, x1, y1, x2, y2))

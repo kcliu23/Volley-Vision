@@ -131,7 +131,7 @@ def solve_v1(uv, w, size, edge, box, fps, cam, flights, contacts, log=print):
     # a flight no single arc fits is usually two: a touch the 2D split missed (a block, a ball
     # touched while hidden behind a player). Find where one arc becomes two, by physics.
     segs, spans, inner = resplit(segs, spans, cam, edge, fps)
-    for k, (a0, a1) in inner.items():
+    for _k, (a0, a1) in inner.items():
         log(f"found a touch the 2D split missed between frames {a0} and {a1}")
 
     chains, cur, links_all = [], [0] if segs else [], []

@@ -16,7 +16,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from core.linker import LinkParams, FILLED, LINKER_VERSION
+from core.linker import FILLED, LINKER_VERSION, LinkParams
 
 
 class FrameReader:
@@ -112,7 +112,7 @@ def _crop(img: np.ndarray, center, half: int):
 def zoom_detect_many(model, jobs: list, imgsz: int = 640, conf: float = 0.02) -> list[list]:
     """jobs: [(img, center, half), ...]. YOLO on each (2*half)^2 crop, several crops per forward
     pass (core.device). Returns one [[cx, cy, w, h, conf], ...] list per job, in frame coords."""
-    from core.device import predict, BATCH
+    from core.device import BATCH, predict
     crops = [_crop(img, c, h) for img, c, h in jobs]
     out = []
     for i in range(0, len(crops), BATCH):
@@ -138,7 +138,7 @@ def ahead_targets(track, horizon: int, fit_pts: int = 6):
     Extrapolates each run's local arc into the frames where the ball was lost, so
     zoom search can look for it along the route it was on. Stops at the frame edge.
     """
-    from core.linker import _predict, NONE
+    from core.linker import NONE, _predict
     n = len(track.state)
     tau = track.tau if getattr(track, "tau", None) else None
     have = [s != NONE and p is not None for s, p in zip(track.state, track.pos)]
@@ -196,7 +196,8 @@ def link_with_zoom(dets: dict, video: str, model, params: LinkParams | None = No
     fps, W, H = dets["fps"], dets["width"], dets["height"]
     zkey = "zoom" if linker == "rule" else f"zoom_{linker}"
     if linker == "cost":
-        from core.cost_linker import link as _cost_link, COST_LINKER_VERSION as ver
+        from core.cost_linker import COST_LINKER_VERSION as ver
+        from core.cost_linker import link as _cost_link
 
         def link(frames, fps, W, H, P, dup_flags=None, content=None, times=None):
             return _cost_link(frames, fps, W, H, dup_flags=dup_flags, content=content, link_params=P,

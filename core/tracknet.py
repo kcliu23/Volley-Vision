@@ -30,8 +30,8 @@ DEFAULT_CKPT = "models/tracknet/FT_TrackNet_best.pt"
 # ── network (TrackNetV3, MIT) ───────────────────────────────────────────────
 
 def _build(in_dim: int, out_dim: int):
-    import torch.nn as nn
     import torch
+    import torch.nn as nn
 
     class Conv2DBlock(nn.Module):
         def __init__(self, i, o):

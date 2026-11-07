@@ -26,13 +26,13 @@ and the rally ball chosen globally).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 
 import numpy as np
 
 from core.cost_linker import CostParams, _gravity
-from core.linker import LinkParams, finalize, DETECTED, WEAK
+from core.linker import DETECTED, WEAK, LinkParams, finalize
 
 JOINT_LINKER_VERSION = 1
 
@@ -100,12 +100,12 @@ def build_points(dets: dict, tn_frames, cal, ball: float, P: JointParams, fps: f
             if not sel:
                 continue
             lg = cal.logit(src, [r[4] for r in sel])
-            for r, l in zip(sel, lg):
-                pts.append([src, r[1], r[2], r[3], float(np.clip(l, -P.logit_clip, P.logit_clip))])
+            for r, lgt in zip(sel, lg):
+                pts.append([src, r[1], r[2], r[3], float(np.clip(lgt, -P.logit_clip, P.logit_clip))])
         pts = [p for p in pts if 1 / (1 + math.exp(-p[4])) >= P.p_min]
         pts.sort(key=lambda p: -p[4])
         merged = []                                   # [x, y, size, logit, has_yolo, has_tn, state_src]
-        for src, x, y, s, l in pts:
+        for src, x, y, s, lgt in pts:
             for m in merged:
                 if math.hypot(m[0] - x, m[1] - y) <= P.merge_bw * ball:
                     if src == "tracknet":
@@ -116,11 +116,11 @@ def build_points(dets: dict, tn_frames, cal, ball: float, P: JointParams, fps: f
                         m[4] = True
                     break
             else:
-                merged.append([x, y, s if src != "tracknet" else size_at(f, x, y), l,
+                merged.append([x, y, s if src != "tracknet" else size_at(f, x, y), lgt,
                                src != "tracknet", src == "tracknet", src])
         res = []
-        for x, y, s, l, hy, ht, src in merged[:P.top_k]:
-            lg = l + (P.agree_bonus if (hy and ht) else 0.0) - (P.tn_only_bias if (ht and not hy) else 0.0)
+        for x, y, s, lgt, hy, ht, _src in merged[:P.top_k]:
+            lg = lgt + (P.agree_bonus if (hy and ht) else 0.0) - (P.tn_only_bias if (ht and not hy) else 0.0)
             p = 1 / (1 + math.exp(-lg))
             state = (DETECTED if p >= 0.5 else WEAK) if hy else "tracknet"
             res.append((x, y, s, lg, state, p))

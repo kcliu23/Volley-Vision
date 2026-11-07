@@ -20,7 +20,6 @@ import math
 
 import numpy as np
 
-
 from core import paths
 from core.calibration import SOURCES, features, fit
 
@@ -99,7 +98,6 @@ def collect(clips: list[tuple[str, str]]) -> dict:
 
 
 def train_clips() -> list[tuple[str, str]]:
-    gt = set(paths.gt_stems())
     out = []
     for p in sorted(paths.VERIFIED.glob("*.json")):
         V = json.load(open(p))

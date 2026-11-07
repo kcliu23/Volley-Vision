@@ -50,6 +50,14 @@ ignore = [
     "B905",   # zip() strict=: added where lengths can differ, not everywhere
 ]
 
+[tool.ruff.lint.per-file-ignores]
+# helper closures defined inside a loop and called in that same iteration (checked by hand)
+"core/camera.py" = ["B023"]
+"core/legacy_v1.py" = ["B023"]
+"tools/calibrate_court.py" = ["B023"]
+"tools/eval_finder_first.py" = ["B023"]
+"tools/export_training.py" = ["B023"]
+
 [tool.ruff.lint.isort]
 known-first-party = ["core", "tools", "training"]
 

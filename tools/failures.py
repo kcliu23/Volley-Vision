@@ -32,7 +32,6 @@ from pathlib import Path
 
 import numpy as np
 
-
 from core import paths
 from tools.scoreboard import CUR_FINDER, CUR_YOLO, find_video, run_one
 

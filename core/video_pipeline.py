@@ -6,16 +6,14 @@ pipeline="classic": YOLO on every frame (cached), rule linker + zoom search, Tra
     filling -> flights + contacts -> render.
 The old single-pass tracker (run_legacy) is archived in core/archive/legacy_pipeline.py.
 """
-import cv2
 import json
 import os
 import tempfile
 import time
 from pathlib import Path
 
+import cv2
 import numpy as np
-
-
 
 # ── two-pass pipeline ─────────────────────────────────────────────────────────
 
@@ -64,11 +62,13 @@ def run(
     """pipeline: "finder-first" (default; uses finder + the crop rule crop_top / crop_p, crop_p=None
     for no threshold) or "classic" (uses linker, zoom, tracknet)."""
     from ultralytics import YOLO
-    from core.linker import link as rule_link, LinkParams
-    from core.refine import link_with_zoom
-    from core.render import draw_trail, draw_ball, draw_touch_rings, finish_video
-    from tools.dump_detections import dump
+
     from core import paths
+    from core.linker import LinkParams
+    from core.linker import link as rule_link
+    from core.refine import link_with_zoom
+    from core.render import draw_ball, draw_touch_rings, draw_trail, finish_video
+    from tools.dump_detections import dump
 
     cap = cv2.VideoCapture(input_path)
     if not cap.isOpened():
@@ -119,7 +119,8 @@ def run(
             track = link_with_zoom(dets, input_path, model, LinkParams(), linker=linker,
                                    log=lambda m: print("[VolleyVision]" + m))
         else:
-            from core.profile import get as get_profile, link_args
+            from core.profile import get as get_profile
+            from core.profile import link_args
             get_profile(input_path, dets)
             a = link_args(dets)
             if linker == "cost":
@@ -155,8 +156,8 @@ def run(
     # 3. flights: split the track into flights (one parabola each). Always applied: gaps follow
     #    the arc and finder-only points go onto it (smooth path). Each boundary is a contact,
     #    classified touch / bounce / other from where the people are (skipped with touches=False).
-    from core.flights import from_track, apply_flights
     from core import finders
+    from core.flights import apply_flights, from_track
     flights, found = from_track(track)
     track.pos, track.state = apply_flights(track, flights, found, place_tracknet=finders.place_on_arc(arc_finder))
     if not touches:

@@ -23,14 +23,14 @@ Time is real time in nominal frames (tau), so variable frame rate is handled.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 import math
+from dataclasses import dataclass, field
 
 import numpy as np
 
 from core.cost_linker import _gravity
 from core.joint_linker import JointParams, build_points
-from core.linker import LinkParams, finalize, DETECTED, WEAK
+from core.linker import DETECTED, WEAK, LinkParams, finalize
 
 
 @dataclass

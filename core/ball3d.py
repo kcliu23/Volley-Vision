@@ -24,17 +24,22 @@ uncertainties from the fit.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-
 import json
+import math
+from dataclasses import dataclass, field
 
 import numpy as np
 
-import math
-
 G = np.array([0.0, 0.0, -9.81])
-from core.params3d import (ANCHOR_OVER_M, ANCHOR_REACH_M, ANCHOR_SIGMA_M, FREE_MIN_PX, FREE_X,  # noqa: E402
-                           SOLID_SIGMA_M)
+from core.params3d import (  # noqa: E402
+    ANCHOR_OVER_M,
+    ANCHOR_REACH_M,
+    ANCHOR_SIGMA_M,
+    FREE_MIN_PX,
+    FREE_X,
+    SOLID_SIGMA_M,
+)
+
 NET_HALF_W = 4.5 + 0.1                # m: the net (and its antennas) spans the court's width
 NET_BAND_M = 1.0                      # m: the net is 1 m tall
 BALL_D = 0.21                      # m, volleyball diameter (65-67 cm circumference)

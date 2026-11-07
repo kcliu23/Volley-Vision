@@ -38,7 +38,6 @@ from pathlib import Path
 
 import numpy as np
 
-
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".avi", ".mkv")
 
 
@@ -77,8 +76,8 @@ def _box_sizes(track_rows, dets, ball_px):
 def propose(video: str, out_dir: str = "data/proposals", tracknet: str | None = None,
             output_dir: str = "output", model_path: str = "models/best4.pt", classic: bool = False,
             finder: str = "models/wasb/wasb_ft2.pth.tar") -> Path:
+    from core import finders, paths
     from core.video_pipeline import run
-    from core import paths, finders
     stem = Path(video).stem
     if classic:
         run(input_path=video, output_dir=output_dir, model_path=model_path, tracknet=tracknet, render=False,
@@ -94,6 +93,7 @@ def propose(video: str, out_dir: str = "data/proposals", tracknet: str | None = 
         dp = paths.dets(stem, output_dir)
         if not dp.exists():           # full-frame YOLO: other-ball suggestions + hard negatives need it
             from ultralytics import YOLO
+
             from tools.dump_detections import dump
             print("[autolabel] full-frame YOLO pass (for other balls / hard negatives; cached)")
             dump(video, YOLO(model_path), paths.ensure(dp), 0.05, 1280)

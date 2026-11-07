@@ -107,7 +107,7 @@ class Triplets(Dataset):
         if self.train and self.zoom_prob > 0 and random.random() < self.zoom_prob:
             box = random.uniform(*self.zoom_range)
         imgs, hms, xys = [], [], []
-        for j, (path, xy) in enumerate(run[i:i + FRAMES]):
+        for _j, (path, xy) in enumerate(run[i:i + FRAMES]):
             img = cv2.imread(path)
             h0, w0 = img.shape[:2]
             if isinstance(box, float):                     # pick the crop once, from the first frame's size

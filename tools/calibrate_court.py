@@ -41,7 +41,6 @@ from pathlib import Path
 
 import numpy as np
 
-
 from core.court import LINE_ORDER, NET_HEIGHT, ORDER, keypoints, lines
 
 ITEMS = LINE_ORDER + ORDER          # lines first, then points
@@ -105,6 +104,7 @@ def resolve_saved(video: str):
 
 def main():
     import cv2
+
     from core.camera import solve
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("video", nargs="+")

@@ -23,9 +23,10 @@ Gap filling, repeated frames and output format are shared with core.linker.final
 from __future__ import annotations
 
 from dataclasses import dataclass
+
 import numpy as np
 
-from core.linker import LinkParams, finalize, DETECTED, WEAK
+from core.linker import DETECTED, WEAK, LinkParams, finalize
 
 COST_LINKER_VERSION = 2   # bump when behaviour changes (invalidates cached zoom searches)
 
