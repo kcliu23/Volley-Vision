@@ -20,6 +20,8 @@ from collections import defaultdict
 
 import numpy as np
 
+ANKLE_H = 0.09         # m: the pose model's ankle point is this far above the floor
+
 RUN_MPS = 6.0          # fastest a player covers ground between two pieces
 SLACK_M = 1.5          # plus this (feet jitter, a missed step)
 MAX_GAP_S = 4.0        # pieces further apart in time aren't joined
@@ -55,7 +57,7 @@ def _tracklets(pose_frames, cam):
             t["boxes"].append((f, _torso_box(p["kp"], p["box"])))
             a = _feet(p["kp"])
             if a is not None:
-                g = cam.floor_point([a])[0][:2]
+                g = cam.floor_point([a], ANKLE_H)[0][:2]
                 t["spots"].append((f, float(g[0]), float(g[1])))
     for t in T.values():
         t["f0"], t["f1"] = min(t["frames"]), max(t["frames"])

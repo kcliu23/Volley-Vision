@@ -54,9 +54,11 @@ def frame_cache(video: str, stem: str, scale: float):
     import cv2
     d = paths.cache_dir(stem) / "label_frames"
     cap = cv2.VideoCapture(video)
-    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
-    done = d.exists() and len(list(d.glob("*.jpg"))) >= n - 2
-    if not done:
+    n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))          # the container's count: can be a few too many
+    done = d.exists() and len(list(d.glob("*.jpg"))) >= n - 5
+    if done:
+        n = len(list(d.glob("*.jpg")))                  # the frames that really decoded
+    else:
         d.mkdir(parents=True, exist_ok=True)
         print(f"[label] {stem}: preparing {n} frames (once) ...", flush=True)
         f = 0
@@ -150,7 +152,8 @@ def main():
     cv2.namedWindow(WIN, cv2.WINDOW_AUTOSIZE)
     cv2.setMouseCallback(WIN, on_mouse)
     while True:
-        img = cv2.imread(str(fdir / f"{cur:05d}.jpg"))
+        fp = fdir / f"{cur:05d}.jpg"
+        img = cv2.imread(str(fp)) if fp.exists() else None
         if img is None:
             img = np.zeros((int(H * scale), int(W * scale), 3), np.uint8)
         canvas = np.zeros((img.shape[0] + TOP_H, img.shape[1], 3), np.uint8)

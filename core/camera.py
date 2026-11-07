@@ -79,11 +79,13 @@ class Camera:
         d = np.c_[n, np.ones(len(n))] @ self.R            # camera -> world (R^T applied to rows)
         return self.position, d / np.linalg.norm(d, axis=1, keepdims=True)
 
-    def floor_point(self, uv) -> np.ndarray:
-        """Where pixels hit the floor (z = 0): (N, 3); NaN for rays that never reach it."""
+    def floor_point(self, uv, height: float = 0.0) -> np.ndarray:
+        """Where pixels hit the floor (z = 0), or the level plane z = height (an ankle is ~0.09 m
+        up: projecting it to the floor itself lands ~6% too far away): (N, 3); NaN for rays that
+        never reach it."""
         c, d = self.rays(uv)
         with np.errstate(divide="ignore", invalid="ignore"):
-            s = -c[2] / d[:, 2]
+            s = (height - c[2]) / d[:, 2]
         out = c + s[:, None] * d
         out[(s <= 0) | ~np.isfinite(s)] = np.nan
         return out
