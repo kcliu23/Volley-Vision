@@ -24,6 +24,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+ANKLE_H = 0.09         # m: the pose model's ankle point is this far above the floor
+
 from core.params3d import (JUMP_FIT_M, JUMP_H, JUMP_MAX_S, JUMP_MIN_S, LIFT_FRAC, REACH_HEIGHT_X,  # noqa: F401
                            REACH_RADIUS_M)
 G = 9.81
@@ -316,7 +318,7 @@ def touch_evidence(pose_frames: dict, f: int, ball_uv, cam, ball_px: float, near
         spot = None
         side = face_side                                    # facing the camera = far side (+x)
         if best is not None:
-            g_ = cam.floor_point([best])[0][:2]
+            g_ = cam.floor_point([best], ANKLE_H)[0][:2]
             feet_side = int(np.sign(g_[0])) if abs(g_[0]) > 0.4 else 0
             if side == 0 or feet_side == 0 or feet_side == side:   # feet agree with the facing
                 spot = (float(g_[0]), float(g_[1]))
