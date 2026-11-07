@@ -1,7 +1,8 @@
 """Propose ball labels for every frame of new videos, for a human to check in tools.review.
 
     python -m tools.autolabel videos/test40.mov videos/test41.mov
-    python -m tools.autolabel --dir ~/Videos/games            # every video in a folder
+    python -m tools.autolabel --dir ~/Videos/games            # every video in a folder (batch;
+                                                              # a failing clip is skipped, not fatal)
     python -m tools.autolabel videos/test40.mov --classic      # the old pipeline (+ --tracknet)
 
 Runs the finder-first pipeline with the loose crop rule (fewest missed balls: a miss costs
@@ -91,6 +92,7 @@ def propose(video: str, out_dir: str = "data/proposals", tracknet: str | None = 
         tn = correct(json.load(open(tpath))["frames"], float(prof.get("ball_px") or 30.0)) \
             if (tracknet and tpath.exists()) else None
     else:
+        from core.finder_first import TOP
         dp = paths.dets(stem, output_dir)
         if not dp.exists():           # full-frame YOLO: other-ball suggestions + hard negatives need it
             from ultralytics import YOLO
@@ -98,7 +100,7 @@ def propose(video: str, out_dir: str = "data/proposals", tracknet: str | None = 
             print("[autolabel] full-frame YOLO pass (for other balls / hard negatives; cached)")
             dump(video, YOLO(model_path), paths.ensure(dp), 0.05, 1280)
         run(input_path=video, output_dir=output_dir, model_path=model_path, render=False,
-            pipeline="finder-first", finder=finder, crop_p=None)
+            pipeline="finder-first", finder=finder, crop_top=TOP, crop_p=None)   # loose crop rule
         dets = json.load(open(dp))
         sample = json.load(open(paths.cache_dir(stem, output_dir) / "sample_dets.json"))
         prof = sample.get("profile") or {}
@@ -229,7 +231,9 @@ def main():
     if not vids:
         ap.error("give video files or --dir")
     gt = {Path(g).name.replace("_gt.json", "") for g in glob.glob("data/gt/*_gt.json")}
-    for v in vids:
+    done, failed = [], []
+    for i, v in enumerate(vids, 1):
+        print(f"[autolabel] ({i}/{len(vids)}) {Path(v).name}", flush=True)
         stem = Path(v).stem
         if stem in gt and not a.include_gt:
             print(f"[autolabel] {stem}: has ground truth (test set), skipped")
@@ -237,8 +241,16 @@ def main():
         if (Path(a.out) / f"{stem}.json").exists() and not a.redo:
             print(f"[autolabel] {stem}: already proposed, skipped (--redo to redo)")
             continue
-        propose(v, a.out, None if a.no_tracknet else a.tracknet, model_path=a.model, classic=a.classic,
-                finder=a.finder)
+        try:                          # one bad clip shouldn't stop an overnight batch
+            propose(v, a.out, None if a.no_tracknet else a.tracknet, model_path=a.model, classic=a.classic,
+                    finder=a.finder)
+            done.append(stem)
+        except Exception as e:
+            print(f"[autolabel] {stem}: FAILED ({type(e).__name__}: {e}), moving on", flush=True)
+            failed.append(stem)
+    if len(vids) > 1:
+        print(f"[autolabel] done: {len(done)} proposed, {len(failed)} failed"
+              + (f" ({', '.join(failed)})" if failed else ""))
 
 
 if __name__ == "__main__":

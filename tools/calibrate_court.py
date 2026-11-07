@@ -22,6 +22,7 @@ antenna (on the sideline) crosses the top tape / the bottom band of the net, and
   next:  ]  n  ->  Tab  s  or the "next >" button     back:  [  b  <-  or the "< back" button
                  (go back to any line or point to add clicks, undo them, or redo them)
   u / Backspace  remove the current point or the current line's last click (or the last one placed)
+  e              contrast boost on / off: faint lines (far side) stand out
   Enter          save to data/cameras/<clip>.json     q / Esc  quit (asks to save if changed)
 
 Re-solve saved calibrations from their clicked points (after a solver change; no window):
@@ -77,6 +78,16 @@ def background(video: str, n: int = 25):
     return np.median(np.stack(frames), axis=0).astype(np.uint8)
 
 
+def enhance(img):
+    """Local contrast boost: faint painted lines on a light floor stand out (grey picture)."""
+    import cv2
+    L = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)[:, :, 0]
+    L = cv2.createCLAHE(clipLimit=4.0, tileGridSize=(16, 16)).apply(L)
+    blur = cv2.GaussianBlur(L, (0, 0), 8)
+    L = cv2.addWeighted(L, 2.5, blur, -1.5, 0)
+    return cv2.cvtColor(L, cv2.COLOR_GRAY2BGR)
+
+
 def resolve_saved(video: str):
     """Solve a saved calibration again from its clicked points and save it back."""
     from core.camera import Camera, solve
@@ -124,7 +135,13 @@ def main():
     bg = background(a.video)
     H, W = bg.shape[:2]
     scale = min(MAX_W / W, (MAX_H - TOP_H) / H, 1.0)
-    shown = cv2.resize(bg, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale != 1 else bg.copy()
+    plain = bg
+    boosted = enhance(bg)                               # faint lines made visible (key e)
+    views = {False: plain, True: boosted}
+    small = {k: (cv2.resize(v, None, fx=scale, fy=scale, interpolation=cv2.INTER_AREA) if scale != 1 else v.copy())
+             for k, v in views.items()}
+    state_view = {"boost": False}
+    shown = small[False]
     kp = keypoints(net)
     cur = next((i for i, n in enumerate(ITEMS) if n not in pts and len(lcl.get(n, [])) < 2), 0)
     state = {"mouse": None, "click": None}
@@ -179,7 +196,7 @@ def main():
             mx, my = state["mouse"]
             x0, y0 = int(mx / scale), int((my - TOP_H) / scale)
             r = 40
-            crop = bg[max(0, y0 - r):y0 + r, max(0, x0 - r):x0 + r]
+            crop = views[state_view["boost"]][max(0, y0 - r):y0 + r, max(0, x0 - r):x0 + r]
             if crop.size:
                 z = cv2.resize(crop, None, fx=3, fy=3, interpolation=cv2.INTER_NEAREST)
                 zh, zw = z.shape[:2]
@@ -193,7 +210,7 @@ def main():
         is_line = name in LINE_ORDER
         what = (f"LINE: {name.upper()} - click 2-3 spots anywhere along it ({len(lcl.get(name, []))} so far)"
                 if is_line else f"POINT: {name.upper()} - only if you can see it")
-        top = f"{what}   ({cur + 1}/{len(ITEMS)})   u undo  Enter save  q quit"
+        top = f"{what}   ({cur + 1}/{len(ITEMS)})   u undo  e boost  Enter save  q quit"
         cv2.putText(img, top, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1, cv2.LINE_AA)
 
         def done_mark(n):
@@ -254,6 +271,9 @@ def main():
             cur = (cur + 1) % len(ITEMS)
         elif k in ("[", "b"):
             cur = (cur - 1) % len(ITEMS)
+        elif k == "e":
+            state_view["boost"] = not state_view["boost"]
+            shown = small[state_view["boost"]]
         elif k == "u" or key == 8 or key == 127:
             if name in pts:
                 pts.pop(name)

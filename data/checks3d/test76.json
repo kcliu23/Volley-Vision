@@ -1,0 +1,14 @@
+{
+  "clip": "test76",
+  "note": "What really happens, from KC (Nov 6), to check the 3D against. Near side = the camera's side of the net (x < 0).",
+  "touches": [
+    {"frame": 122, "side": "near", "what": "overhand pass (set) at the net, too tight to the net",
+     "check": "ball on the near side of the net (x < 0), within ~1 m of it"},
+    {"frame": 172, "side": "near", "what": "near-side player pushes the ball over; a far-side player (p4) goes up against it at the net",
+     "check": "ball on top of the net: x ~ 0, height ~ net top"}
+  ],
+  "flights": [
+    {"frames": [123, 171], "check": "tight set: stays on the near side, close to the net plane"}
+  ],
+  "seen_in_ball3d_nov6": "122: x ~ +0.2..+0.3 (far side, wrong); 172-176: x ~ +0.7..+1.2 (about 1 m past the net, wrong)"
+}
