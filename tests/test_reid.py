@@ -1,7 +1,7 @@
-"""core.reid.build_ids on synthetic tracker pieces (no video: colours are skipped)."""
+"""core.people.reid.build_ids on synthetic tracker pieces (no video: colours are skipped)."""
 import numpy as np
 
-from core.reid import build_ids
+from core.people.reid import build_ids
 
 
 class FlatCamera:

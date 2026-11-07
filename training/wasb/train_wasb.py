@@ -1,4 +1,4 @@
-"""Fine-tune WASB (core/wasb_hrnet.py, MIT) on a TrackNet-format export of your checked clips.
+"""Fine-tune WASB (core/ball/wasb_hrnet.py, MIT) on a TrackNet-format export of your checked clips.
 
     python training/wasb/train_wasb.py --data /content/data/tracknet_v2 --init wasb_volleyball_best.pth.tar \
         --out /content/drive/MyDrive/VolleyVision/wasb_ft_v2 --epochs 15
@@ -26,7 +26,7 @@ Fewer false balls (optional; WASB fine-tuned on 16 clips fired on heads, hands a
 
 Each epoch: validation F1 (strongest blob >= 0.5 within 4 px of the label, as in the paper),
 <out>/last.pth.tar (for --resume) and <out>/best.pth.tar (best val F1). Checkpoints carry
-"vv": {"input_wh": [W, H], "resize": "stretch"}, so core.wasb runs them the way they were trained.
+"vv": {"input_wh": [W, H], "resize": "stretch"}, so core.ball.wasb runs them the way they were trained.
 """
 from __future__ import annotations
 
@@ -46,7 +46,7 @@ import torch
 from torch.utils.data import DataLoader, Dataset
 
 HERE = Path(__file__).resolve()
-for p in (HERE.parents[2], HERE.parent, Path.cwd()):       # find core/wasb_hrnet.py (repo or next to this file)
+for p in (HERE.parents[2], HERE.parent, Path.cwd()):       # find core/ball/wasb_hrnet.py (repo or next to this file)
     sys.path.insert(0, str(p))
 
 MEAN = np.array([0.485, 0.456, 0.406], np.float32)
@@ -208,8 +208,8 @@ def evaluate(model, loader, dev, dist: float = 4.0) -> dict:
 
 
 def build_model(init: str | None, dev):
-    from core.wasb import CFG, _Cfg
-    from core.wasb_hrnet import HRNet
+    from core.ball.wasb import CFG, _Cfg
+    from core.ball.wasb_hrnet import HRNet
     m = HRNet(_Cfg(CFG))
     if init:
         sd = torch.load(init, map_location="cpu", weights_only=False)

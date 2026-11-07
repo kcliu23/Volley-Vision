@@ -150,7 +150,7 @@ def scenario_pose_rerun():
     return tot > 0 and agree / tot > 0.98, f"{agree}/{tot} saved boxes keep their number ({report})"
 
 
-pytestmark = pytest.mark.data
+pytestmark = [pytest.mark.data, pytest.mark.slow]   # replays the real video: ~2 min
 
 
 @pytest.mark.parametrize("scenario", [scenario_swap, scenario_plain_fix, scenario_undo, scenario_autosave,

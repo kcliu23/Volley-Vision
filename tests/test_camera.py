@@ -1,10 +1,10 @@
-"""core.camera: projection round trips and the calibration solve on synthetic cameras."""
+"""core.geometry.camera: projection round trips and the calibration solve on synthetic cameras."""
 import numpy as np
 import pytest
 
-from core.camera import Camera, solve
-from core.court import keypoints, named_lines
-from tools.sim_camera import H, W, random_camera
+from core.geometry.camera import Camera, solve
+from core.geometry.court import keypoints, named_lines
+from evaluation.sim_camera import H, W, random_camera
 
 
 def visible(cam, X):

@@ -41,7 +41,7 @@ from pathlib import Path
 
 import numpy as np
 
-from core.court import LINE_ORDER, NET_HEIGHT, ORDER, keypoints, lines
+from core.geometry.court import LINE_ORDER, NET_HEIGHT, ORDER, keypoints, lines
 
 ITEMS = LINE_ORDER + ORDER          # lines first, then points
 LINE_CLICKS = 3                     # clicks per line before moving on by itself
@@ -87,7 +87,7 @@ def enhance(img):
 
 def resolve_saved(video: str):
     """Solve a saved calibration again from its clicked points and save it back."""
-    from core.camera import Camera, solve
+    from core.geometry.camera import Camera, solve
     stem = Path(video).stem
     out = CAM_DIR / f"{stem}.json"
     if not out.exists():
@@ -105,7 +105,7 @@ def resolve_saved(video: str):
 def main():
     import cv2
 
-    from core.camera import solve
+    from core.geometry.camera import solve
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("video", nargs="+")
     ap.add_argument("--net", default="men", help="men (2.43 m), women (2.24 m), or a height in meters")

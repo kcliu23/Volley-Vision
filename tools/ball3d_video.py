@@ -22,9 +22,9 @@ from pathlib import Path
 
 import numpy as np
 
-from core import paths
-from core.camera import Camera
-from core.court import ATTACK, LENGTH, WIDTH
+from core.common import paths
+from core.geometry.camera import Camera
+from core.geometry.court import ATTACK, LENGTH, WIDTH
 
 
 def main():
@@ -40,7 +40,7 @@ def main():
     people = {}
     pp = Path(a.output) / stem / "players.json"
     if pp.exists():
-        from core.players import build
+        from core.people.players import build
         for P in build(json.load(open(pp)), cam, B["fps"]):
             for i, f in enumerate(P.frames):
                 if np.isfinite(P.ground[i, 0]):

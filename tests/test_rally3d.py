@@ -1,4 +1,4 @@
-"""Accuracy gate for the global rally fit (core.rally3d) on synthetic rallies (tools.sim_rally).
+"""Accuracy gate for the global rally fit (core.scene3d.rally3d) on synthetic rallies (evaluation.sim_rally).
 
 Slow (about a minute per rally): run with  pytest -m slow . The numbers are well inside what v2
 scores on the 20-rally benchmark (5.4 cm median, 100% touch recall), so a failure means a real
@@ -9,8 +9,8 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 
-from tools.sim_camera import random_camera
-from tools.sim_rally import edge_and_box, run_v2, score, simulate
+from evaluation.sim_camera import random_camera
+from evaluation.sim_rally import edge_and_box, run_v2, score, simulate
 
 pytestmark = pytest.mark.slow
 MESS = SimpleNamespace(noise_px=3.0, missing=0.10, outliers=0.02, block=0.3)

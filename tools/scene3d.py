@@ -16,7 +16,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from core import paths
+from core.common import paths
 
 
 def step(*args):
@@ -39,7 +39,7 @@ def main():
     if not paths.track(stem, a.output).exists():
         sys.exit(f"[scene3d] {stem}: no 2D track yet. Run first:\n  python main.py {a.video}")
 
-    from core.frametime import frame_times, summary
+    from core.common.frametime import frame_times, summary
     print(f"[scene3d] {stem}: frame timing: {summary(frame_times(a.video, paths.clip_dir(stem, a.output)))}")
     if not a.no_players and not (paths.clip_dir(stem, a.output) / "players.json").exists():
         step("tools.players", a.video, "--output", a.output)

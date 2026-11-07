@@ -8,8 +8,8 @@
 
 Load -> solve -> save. Needs data/cameras/<clip>.json (tools.calibrate_court) and
 output/<clip>/{track,contacts}.json; uses output/<clip>/players.json when there (tools.players)
-and the clip's true frame times (core.frametime). The solving is core.rally3d.solve_clip (touches
-and arcs chosen together); the physics is core.ball3d; every set number is in core.params3d.
+and the clip's true frame times (core.common.frametime). The solving is core.scene3d.rally3d.solve_clip (touches
+and arcs chosen together); the physics is core.scene3d.ball3d; every set number is in core.scene3d.params3d.
 
 Writes output/<clip>/ball3d.json and ball3d.png (top view, side view, 3D) and prints per flight:
 apex height, speed, 2D fit error, lowest point, and where it crosses the net plane.
@@ -22,9 +22,9 @@ from pathlib import Path
 
 import numpy as np
 
-from core import paths
-from core.ball3d import BALL_D, calibrate_size, edge_mask, free_px, sizes_for
-from core.camera import Camera
+from core.common import paths
+from core.geometry.camera import Camera
+from core.scene3d.ball3d import BALL_D, calibrate_size, edge_mask, free_px, sizes_for
 
 
 def positions(stem: str, track: dict, labels: bool):
@@ -49,7 +49,7 @@ def main():
     ap.add_argument("video")
     ap.add_argument("--labels", action="store_true", help="use your checked labels instead of the tracker's output")
     ap.add_argument("--output", default=str(paths.OUTPUT))
-    ap.add_argument("--v1", action="store_true", help="the first mechanism (core.legacy_v1), for comparison")
+    ap.add_argument("--v1", action="store_true", help="the first mechanism (core.scene3d.legacy_v1), for comparison")
     ap.add_argument("--v2", action="store_true", help=argparse.SUPPRESS)   # the default now; kept so old commands work
     a = ap.parse_args()
     stem = Path(a.video).stem
@@ -63,10 +63,10 @@ def main():
     size = sizes_for(stem, n)
 
     # true frame times: screen recordings repeat a frame now and then and skip one a few frames
-    # later (core.frametime); the global fit uses them (v1 keeps evenly spaced frames)
+    # later (core.common.frametime); the global fit uses them (v1 keeps evenly spaced frames)
     T = None
     if not a.v1:
-        from core.frametime import frame_times, summary
+        from core.common.frametime import frame_times, summary
         T = frame_times(a.video, paths.clip_dir(stem, a.output))
         if len(T) < n:
             T = np.r_[T, T[-1] + np.arange(1, n - len(T) + 1)]
@@ -82,15 +82,15 @@ def main():
     w = np.where(edge, 0.2 * w, w)
 
     if a.v1:
-        from core.legacy_v1 import solve_v1
+        from core.scene3d.legacy_v1 import solve_v1
         pieces = solve_v1(uv, w, size, edge, box, fps, cam, C["flights"], C["contacts"],
                           log=lambda m: print(f"[ball3d] {stem}: " + m))
     else:
-        from core.rally3d import solve_clip
+        from core.scene3d.rally3d import solve_clip
         players = None
         pj = paths.clip_dir(stem, a.output) / "players.json"
         if pj.exists():
-            from core.players import build
+            from core.people.players import build
             players = build(json.load(open(pj)), cam, fps)
             print(f"[ball3d] {stem}: {len(players)} players: a touch away from all of them costs more")
         poses = None
@@ -157,7 +157,7 @@ def plot(path, flights, frames, cam, net_h, stem):
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    from core.court import lines
+    from core.geometry.court import lines
     fig = plt.figure(figsize=(15, 9))
     ax1 = fig.add_subplot(221)
     ax2 = fig.add_subplot(223)

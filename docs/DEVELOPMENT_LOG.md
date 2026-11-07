@@ -17,7 +17,7 @@ learned models plus physics, and every change measured before it ships.
 | `data/gt` (dev) | 10 clips, every 5th frame labeled; test7/12/17 also in training | early development, still reported |
 | `data/verified` (checked) | 16+ clips (test45–63), every frame checked | training data; also scored ("did it learn them") |
 | `holdout/` | 10 clips, every frame checked, **never trained on** | **the real test; decisions are made here** (since 2026-10-27) |
-| regression cases | 12 known-tricky moments from real bugs (`tools.regression`) | a change that re-breaks an old bug fails here |
+| regression cases | 12 known-tricky moments from real bugs (`evaluation.regression`) | a change that re-breaks an old bug fails here |
 
 "On-ball" = the track is within one ball-width of the label. Also reported: wrong place, missed,
 false ball (a ball reported where there is none).
@@ -119,7 +119,7 @@ to `core/archive/` and `tools/archive/`.
 
 ## Phase 7 — simplification by measurement (Oct 28)
 
-Built `tools/ablate.py`: score any variant of the tracker on the same cached inputs (holdout, dev,
+Built `evaluation/ablate.py`: score any variant of the tracker on the same cached inputs (holdout, dev,
 checked, regression cases). Then removed or tuned one piece at a time:
 
 | Change | Evidence | Decision |
@@ -152,17 +152,17 @@ vs 535 s. YOLO work ~3× lower; WASB is now the slowest stage.
 Idea: the ball between touches is a gravity arc, so build the track from physics: find arcs in
 all candidates, chain the arcs that meet at contacts, search where the arcs predict the ball.
 
-- **Physics-guided search** (`core/physics_search.py`): after the first pass, YOLO crops where each
+- **Physics-guided search** (`core/ball/physics_search.py`): after the first pass, YOLO crops where each
   flight predicts the ball but nothing confirmed it (gaps inside flights, just before/after
   contacts), then the linker runs again. **Consistent small gain on every set:** holdout 95.3 →
   95.6%, dev 91.5 → 92.6%, checked 97.1 → 97.8% on-ball; wrong and false equal or lower; same
   regression cases. Cost ~0.5 extra crops per frame. **Adopted as default** (`--no-guided` to skip).
-- **Physics-first tracker** (`core/flight_model.py`): seed-and-grow robust arc fitting (each new
+- **Physics-first tracker** (`core/ball/flight_model.py`): seed-and-grow robust arc fitting (each new
   point must agree with the whole arc), gravity estimated from the clip's own arcs, arcs chained
   and cut where they meet. **Scored lower:** holdout 92.8% on-ball (3.2% wrong, 7.6% false) vs
   95.3%; it breaks on short, fast flights around spikes and digs (regression cases test12, test21)
   and didn't fix the second ball (test34). Looser tolerances didn't help. Kept as an experimental
-  `tools.ablate` variant (`arcs`), to re-test after WASB improves.
+  `evaluation.ablate` variant (`arcs`), to re-test after WASB improves.
 - **Conclusion:** WASB as the backbone, physics as the assist (choosing, smoothing, filling,
   guided search, contacts; and exact 3D physics later for the analyses). The remaining losses are
   mostly frames no detector proposes (about 60% of lost frames), which only a better WASB fixes.
@@ -179,17 +179,17 @@ following). Learned on the way: tiny resting background balls are invisible to Y
 and other-ball labels only feed YOLO (WASB trains on the game ball alone).
 
 3D, step 1 (one camera, screen recordings, so everything is solved from the scene):
-- **Calibration** (`core/court.py`, `core/camera.py`, `tools/calibrate_court.py`): click >= 6 known
+- **Calibration** (`core/geometry/court.py`, `core/geometry/camera.py`, `tools/calibrate_court.py`): click >= 6 known
   court / net points; the solver finds focal length + pose (PnP over a focal search, then joint
-  least squares, with fit uncertainty). Synthetic test (`tools.sim_camera`): ~1 cm ball-ray error
+  least squares, with fit uncertainty). Synthetic test (`evaluation.sim_camera`): ~1 cm ball-ray error
   (95%: 2-5 cm) from calibration alone, also with a partial court. test74: 6 floor points; the
   solved camera puts the net's tape and bottom band where they are for a 2.43 m net (independent
   check); camera 3.8 m behind the near end line, 1.36 m high, 60 deg FOV. Lesson: the court frame
   must be right-handed (+y = left sideline) or the camera solves under the floor.
-- **Ball in 3D** (`core/ball3d.py`, `tools/ball3d_run.py`): each rally's flights fitted together
+- **Ball in 3D** (`core/scene3d/ball3d.py`, `tools/ball3d_run.py`): each rally's flights fitted together
   as gravity parabolas in meters: reprojection + ball size + touch links (with each touch's exact
   time solved) + floor bounces, robust loss. Synthetic rallies through test74's camera
-  (`tools.sim_ball3d`, now `tools.sim_rally` "ideal", 3 px noise, 10% missing, 2% wrong points): apex heights within 1-1.5 cm,
+  (`tools.sim_ball3d`, now `evaluation.sim_rally` "ideal", 3 px noise, 10% missing, 2% wrong points): apex heights within 1-1.5 cm,
   touch points 4 cm, positions 5 cm median; weakest = depth along the line of sight on the far
   court (rebounds ~20 cm). With test74's current calibration uncertainty: positions ~20 cm,
   heights ~5 cm, so calibration is the main error source now.
@@ -217,30 +217,30 @@ and other-ball labels only feed YOLO (WASB trains on the game ball alone).
 
 ## Phase 10 — players, the global rally fit, true frame times (Nov 4 – 5)
 
-- **Players** (`tools/players.py`, `core/players.py`): person detector + ByteTrack every frame;
+- **Players** (`tools/players.py`, `core/people/players.py`): person detector + ByteTrack every frame;
   split tracks stitched; feet -> floor spot; jumps = the feet rise along a gravity parabola
   (0.15-1.2 m) between a takeoff and a landing spot; standing height from the box top. test74: 57
   tracks, 12 jumps (blockers ~0.5 m, the hitter 0.7-0.85 m); no appearance Re-ID yet.
-- **Global rally fit** (`core/rally3d.py`): touches and arcs chosen together. Candidates (touch
+- **Global rally fit** (`core/scene3d/rally3d.py`): touches and arcs chosen together. Candidates (touch
   hints, 2D turns, gap edges, a 0.15 s grid) -> fast no-drag arc per pair -> dynamic programming
   for the cheapest chain -> drag refine (drop / add touches) -> joint fit -> dense re-check of bad
   flights. Score = fit error + a cost per touch + continuity + reach + "a touch must change the
   velocity" + "a touch must be near a player" (floor bounces exempt); a wrong point costs at most
-  a capped amount (cheaper to ignore than to explain with touches). Synthetic (`tools.sim_rally`,
+  a capped amount (cheaper to ignore than to explain with touches). Synthetic (`evaluation.sim_rally`,
   20 hard rallies: block, occlusions, out of the picture, 10% missing, 2% wrong points, imperfect
   hints): v1 11.8 cm median / 117 m at 95%, 11% teleports, touches 88% / 80%; global fit 5.4 /
   45 cm, 0.5% teleports, touches 100% / 100%. Caveat: the rallies use the fit's own physics.
-- **True frame times** (`core/frametime.py`): screen recordings repeat a frame every ~9 frames and
+- **True frame times** (`core/common/frametime.py`): screen recordings repeat a frame every ~9 frames and
   skip one 3-5 frames later; in between the picture is a frame late (35% of test75's frames, 16%
   of test74's). Found from the picture alone (change between frames ~0 at a repeat, ~2x at a
   skip, paired). Before the fix the fit explained the timing error with fake touches. test75: fit
   error 1.2-6.6 px -> 0.6-2.7 px, 7 touches -> the 4 real ones + a floor bounce; test74: 1-7 px ->
   1-3 px on almost every flight.
 - **Solid floor and net** in the joint fit: a flight can't pass through either.
-- **Cleanup:** every set number in `core/params3d.py`, marked with how it was set (synthetic /
+- **Cleanup:** every set number in `core/scene3d/params3d.py`, marked with how it was set (synthetic /
   real / guess); `tools/ball3d_run.py` is load -> solve -> save; observation helpers in
-  `core/ball3d.py`, player reach in `core/players.py`; v1 moved to `core/legacy_v1.py` (to delete
-  once checked on real touch labels); one simulator (`tools/sim_rally.py`, with "ideal" = true
+  `core/scene3d/ball3d.py`, player reach in `core/people/players.py`; v1 moved to `core/scene3d/legacy_v1.py` (to delete
+  once checked on real touch labels); one simulator (`evaluation/sim_rally.py`, with "ideal" = true
   touches); one command per clip (`tools/scene3d.py`); frame times computed at the start of the
   pipeline. Same results before and after (test74, test75: identical flights and positions).
 - Still weak: the block exchange on test74 (230-236, 8 px); short flights' depth; touch accuracy

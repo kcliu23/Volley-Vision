@@ -71,8 +71,8 @@ from pathlib import Path
 
 import numpy as np
 
-from core import paths
-from core.safe_io import backup, load_json, save_json
+from core.common import paths
+from core.common.safe_io import backup, load_json, save_json
 
 SPEEDS = [0.25, 0.5, 1.0, 2.0, 4.0]
 MAX_W, MAX_H = 1500, 860
@@ -138,7 +138,7 @@ class Review:
         """Confident YOLO boxes away from the game ball that you haven't confirmed."""
         if not self.dets or f >= len(self.dets):
             return []
-        from core.other_balls import auto
+        from core.ball.other_balls import auto
         mine = self.others(f)
         return [o for o in auto(self.dets[f], self.game_xy(f), self.ball)
                 if not any(((o[0] - m[0]) ** 2 + (o[1] - m[1]) ** 2) ** 0.5 <= self.ball for m in mine)]
@@ -711,7 +711,7 @@ class Follower:
             m, img = self._model(), self.full.get(g)
             if m is None or img is None:
                 return []
-            from core.refine import zoom_detect
+            from core.ball.refine import zoom_detect
             self.calls += 1
             if self.calls % 100 == 0:
                 print(f"[review] following the other ball: frame {g}", flush=True)
@@ -873,7 +873,7 @@ def review(video: str, test: bool = False):
                 yolo["m"] = YOLO("models/best4.pt") if Path("models/best4.pt").exists() else None
             if yolo["m"] is None:
                 return None
-            from core.refine import zoom_detect
+            from core.ball.refine import zoom_detect
             c = (xy[0] * scale, xy[1] * scale)
             half = int(max(48, 5.0 * ball * scale))
             boxes = zoom_detect(yolo["m"], img, c, half, conf=0.05)
@@ -1071,7 +1071,7 @@ def main():
     ap.add_argument("videos", nargs="+")
     ap.add_argument("--test", action="store_true", help="mark as a test clip (kept out of training)")
     a = ap.parse_args()
-    from core import paths
+    from core.common import paths
     from tools.todo import old_data_clips
     old = old_data_clips(paths.YOLO_DATASETS / "volleyball_combined")
     for v in a.videos:

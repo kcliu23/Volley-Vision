@@ -1,4 +1,4 @@
-from core.court import ATTACK, LENGTH, ORDER, WIDTH, keypoints, named_lines
+from core.geometry.court import ATTACK, LENGTH, ORDER, WIDTH, keypoints, named_lines
 
 
 def test_court_size():

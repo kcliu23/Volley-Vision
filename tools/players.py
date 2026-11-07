@@ -1,7 +1,7 @@
 """Detect and track the people in a clip (for the 3D step: where players stand, when they jump,
 who touches the ball).
 
-    python -m tools.players videos/test74.mov [--model yolov8m.pt] [--imgsz 1280]
+    python -m tools.players videos/test74.mov [--model models/yolov8m.pt] [--imgsz 1280]
 
 A COCO person detector (Ultralytics) with its ByteTrack tracker, every frame. Writes
 output/<clip>/players.json:
@@ -15,13 +15,13 @@ import json
 import time
 from pathlib import Path
 
-from core import paths
+from core.common import paths
 
 
-def detect(video: str, out: Path, model: str = "yolov8m.pt", imgsz: int = 1280, conf: float = 0.25) -> Path:
+def detect(video: str, out: Path, model: str = "models/yolov8m.pt", imgsz: int = 1280, conf: float = 0.25) -> Path:
     from ultralytics import YOLO
 
-    from core.device import yolo_device
+    from core.common.device import yolo_device
     m = YOLO(model)
     frames, t0 = [], time.time()
     for i, r in enumerate(m.track(source=video, stream=True, persist=True, classes=[0], conf=conf, imgsz=imgsz,
@@ -42,7 +42,7 @@ def detect(video: str, out: Path, model: str = "yolov8m.pt", imgsz: int = 1280, 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("video")
-    ap.add_argument("--model", default="yolov8m.pt")
+    ap.add_argument("--model", default="models/yolov8m.pt")
     ap.add_argument("--imgsz", type=int, default=1280)
     ap.add_argument("--output", default=str(paths.OUTPUT))
     a = ap.parse_args()

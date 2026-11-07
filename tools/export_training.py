@@ -45,7 +45,7 @@ from pathlib import Path
 
 import cv2
 
-from core import paths
+from core.common import paths
 
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".avi", ".mkv")
 
@@ -136,7 +136,7 @@ def export_yolo(clips, out: Path, every: int, neg_every: int, skip_existing: set
     volleyball_combined reads these the same way."""
     import random
 
-    from core.other_balls import auto as auto_others
+    from core.ball.other_balls import auto as auto_others
     stats = {"images": 0, "frames": 0, "ball": 0, "no_ball": 0, "hand_fixed": 0, "skipped_existing": 0,
              "ball_left_picture": 0, "other_balls": 0, "other_balls_checked": 0, "hard_negatives": 0}
     for c in clips:

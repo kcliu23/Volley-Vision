@@ -18,7 +18,7 @@ import json
 import re
 from pathlib import Path
 
-from core import paths
+from core.common import paths
 
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".avi", ".mkv")
 OLD_RE = re.compile(r"^((?:test|holdout)\d*)_\d+_")

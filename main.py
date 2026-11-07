@@ -42,7 +42,7 @@ def main():
         print(f"Error: video file not found at {args.input}")
         sys.exit(1)
 
-    from core.video_pipeline import run
+    from core.pipeline import run
     run(input_path=args.input, output_dir=args.output, model_path=args.model, linker=args.linker,
         zoom=not args.no_zoom, redetect=args.redetect, trail_len=args.trail_len,
         show_preview=args.preview, touches=not args.no_touches, ring=args.ring,

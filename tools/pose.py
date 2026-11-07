@@ -14,14 +14,14 @@ import argparse
 import json
 from pathlib import Path
 
-from core import paths
+from core.common import paths
 
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("video")
     ap.add_argument("--output", default=str(paths.OUTPUT))
-    ap.add_argument("--model", default="yolov8m-pose.pt")
+    ap.add_argument("--model", default="models/yolov8m-pose.pt")
     ap.add_argument("--imgsz", type=int, default=1280)
     ap.add_argument("--frames", nargs=2, type=int, default=None, help="first and last frame (default: all)")
     a = ap.parse_args()

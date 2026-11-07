@@ -31,14 +31,14 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["core*", "tools*", "training*"]
+include = ["core*", "tools*", "evaluation*", "training*"]
 exclude = ["core.archive*", "tools.archive*", "training.legacy*", "training.datasets*", "training.runs*"]
 
 # --- lint ---------------------------------------------------------------------------------------
 [tool.ruff]
 line-length = 120
 target-version = "py310"
-extend-exclude = ["core/archive", "tools/archive", "training/legacy", "training/wasb/WASB-SBDT*"]
+extend-exclude = ["core/archive", "tools/archive", "training/legacy", "training/wasb/WASB-SBDT*", "*.ipynb"]
 
 [tool.ruff.lint]
 # E/W style, F real errors, I import order, B likely bugs, UP modern syntax
@@ -52,14 +52,14 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 # helper closures defined inside a loop and called in that same iteration (checked by hand)
-"core/camera.py" = ["B023"]
-"core/legacy_v1.py" = ["B023"]
+"core/geometry/camera.py" = ["B023"]
+"core/scene3d/legacy_v1.py" = ["B023"]
 "tools/calibrate_court.py" = ["B023"]
-"tools/eval_finder_first.py" = ["B023"]
+"evaluation/eval_finder_first.py" = ["B023"]
 "tools/export_training.py" = ["B023"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["core", "tools", "training"]
+known-first-party = ["core", "tools", "evaluation", "training"]
 
 # --- tests --------------------------------------------------------------------------------------
 [tool.pytest.ini_options]

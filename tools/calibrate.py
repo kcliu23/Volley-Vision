@@ -1,4 +1,4 @@
-"""Fit the per-source "is this the ball" probabilities (core.calibration) on labelled frames.
+"""Fit the per-source "is this the ball" probabilities (core.ball.confidence) on labelled frames.
 
     python -m tools.calibrate                 # fit on checked training clips (data/verified) -> models/score_calibration.json
     python -m tools.calibrate --report        # + leave-one-clip-out check on the test clips (data/gt)
@@ -20,8 +20,8 @@ import math
 
 import numpy as np
 
-from core import paths
-from core.calibration import SOURCES, features, fit
+from core.ball.confidence import SOURCES, features, fit
+from core.common import paths
 
 
 def labels_for(stem: str, kind: str) -> dict[int, object]:
@@ -50,12 +50,12 @@ def candidates(stem: str) -> tuple[dict, list[list[tuple]]]:
             out[int(k)].append(("zoom", c[0], c[1], max(c[2], c[3]), c[4], min(c[2], c[3]) / max(c[2], c[3], 1e-6)))
     tp = paths.tracknet(stem)
     if tp.exists():
-        from core.tracknet import correct
+        from core.ball.tracknet import correct
         tn = correct(json.load(open(tp))["frames"], ball_px(d))
         for f, fr in enumerate(tn[:n]):
             for c in fr:
                 out[f].append(("tracknet", c[0], c[1], c[2], c[4], 1.0))
-    from core import finders
+    from core.ball import finders
     for ck in EXTRA_FINDERS:
         fr = finders.load_cached(stem, ck)
         if fr is None:
@@ -77,7 +77,7 @@ def ball_px(d: dict) -> float:
 
 def collect(clips: list[tuple[str, str]]) -> dict:
     """clips: [(stem, "gt" | "verified")] -> {source: (X, y)}"""
-    from core import finders
+    from core.ball import finders
     rows = {s: ([], [], [], []) for s in tuple(SOURCES) + tuple(finders.calib_name(c) for c in EXTRA_FINDERS)}
     for stem, kind in clips:
         d, cands = candidates(stem)

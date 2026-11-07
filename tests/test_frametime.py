@@ -1,7 +1,7 @@
-"""core.frametime: repeated + skipped frames of a screen recording -> true time."""
+"""core.common.frametime: repeated + skipped frames of a screen recording -> true time."""
 import numpy as np
 
-from core.frametime import steps_from_changes
+from core.common.frametime import steps_from_changes
 
 
 def changes(n, repeats, skips, rng):

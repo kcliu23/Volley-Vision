@@ -48,8 +48,8 @@ from pathlib import Path
 
 import numpy as np
 
-from core import paths
-from core.safe_io import backup, file_key, load_json, save_json
+from core.common import paths
+from core.common.safe_io import backup, file_key, load_json, save_json
 
 OUT_DIR = Path("data/player_ids")
 WIN = "VolleyVision - who is who"
@@ -89,7 +89,7 @@ def frame_cache(video: str, stem: str, scale: float):
 def main():
     import cv2
 
-    from core.camera import Camera
+    from core.geometry.camera import Camera
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("video")
     ap.add_argument("--output", default=str(paths.OUTPUT))
@@ -130,11 +130,11 @@ def main():
         c = [s for s in cuts.get(tid, []) if s <= f]
         return f"{tid}@{max(c)}" if c else str(tid)
 
-    # re-ID guesses (core.reid): pieces the joiner put together
+    # re-ID guesses (core.people.reid): pieces the joiner put together
     group = {}
     on_court = {}
     if cam_p.exists():
-        from core.reid import build_ids
+        from core.people.reid import build_ids
         cam = Camera.load(cam_p)
         fps = cv2.VideoCapture(a.video).get(cv2.CAP_PROP_FPS) or 60.0
         print(f"[label] {stem}: re-ID guesses ...", flush=True)

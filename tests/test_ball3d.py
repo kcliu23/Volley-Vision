@@ -1,8 +1,8 @@
-"""core.ball3d.fit_rally: recovers known 3D flights from noisy 2D through a known camera."""
+"""core.scene3d.ball3d.fit_rally: recovers known 3D flights from noisy 2D through a known camera."""
 import numpy as np
 
-from core.ball3d import BALL_D, DRAG_K, Link, Segment, fit_rally, traj
-from tools.sim_rally import FPS, flight
+from core.scene3d.ball3d import BALL_D, DRAG_K, Link, Segment, fit_rally, traj
+from evaluation.sim_rally import FPS, flight
 
 
 def observe(cam, X, rng, noise=2.0):

@@ -32,7 +32,7 @@ pytest -m slow                      # + the 3D accuracy gate on synthetic rallie
 ```
 
 CI (`.github/workflows/ci.yml`) runs ruff and the fast tests on every push, and the slow gate
-weekly or by hand. Hand-made data (labels, calibrations) is saved through `core.safe_io`
+weekly or by hand. Hand-made data (labels, calibrations) is saved through `core.common.safe_io`
 (temp file + swap, rolling backups): use it for anything a person spent time on.
 
 The first run of a clip includes the sparse YOLO pass (every 20th frame), the WASB pass and
@@ -53,7 +53,7 @@ the YOLO crops; re-runs reuse the caches and take seconds.
 | `--model` | `models/best4.pt` | YOLO weights |
 | `--linker`, `--no-zoom`, `--redetect`, `--tracknet`, `--no-tracknet` | | classic pipeline only |
 
-Outputs, one folder per clip (`output/<clip>/`; all paths are defined in `core/paths.py`):
+Outputs, one folder per clip (`output/<clip>/`; all paths are defined in `core/common/paths.py`):
 
 - `tracked.mp4` — ball trail; orange ring at each touch, white ring at each bounce (H.264 + original audio if `ffmpeg` is installed)
 - `track.json` — per frame: `state` (`detected` / `weak` = YOLO-confirmed, `tracknet` = finder only, `filled` = on the arc, `none`) and `pos`
@@ -79,11 +79,11 @@ share of ball frames where the track is within one ball-width of your label:
 
 Measured 2026-10-28 after the simplification pass (one joint linker, no tracklet layer; WASB-only
 points penalised by 0.5 instead of 1.0, which found more of the ball for a few more false balls).
-Before it: 94.8% on-ball, 4.1% missed, 2.3% false. Guided search (measured with `tools.ablate`
+Before it: 94.8% on-ball, 4.1% missed, 2.3% false. Guided search (measured with `evaluation.ablate`
 on the same inputs, so shown as the change): holdout 95.3 → 95.6% on-ball, dev 91.5 → 92.6%,
 checked clips 97.1 → 97.8%, wrong and false balls equal or lower, the same regression cases.
-A physics-first tracker (`core/flight_model.py`: arcs found and chained directly) was also built
-and measured; it scored lower (holdout 92.8%) and is kept as an experimental `tools.ablate` variant.
+A physics-first tracker (`core/ball/flight_model.py`: arcs found and chained directly) was also built
+and measured; it scored lower (holdout 92.8%) and is kept as an experimental `evaluation.ablate` variant.
 
 Known gap: a second ball in play on a neighbouring court can win over the game ball for a moment
 when it's seen more confidently (regression case test34). A court-area cue (homography) is the
@@ -124,62 +124,67 @@ python -m tools.export_training --name v3 \
   (YOLO / zoom crops / the finder) to a comparable probability, fit on your checked clips
   (`models/score_calibration.json`, one model per finder). Run it for every new finder checkpoint.
 - **Keep a new model only if it wins on the holdout clips:**
-  `python -m tools.scoreboard --yolo models/best5.pt` or `--finder models/wasb/<new>.pth.tar`.
+  `python -m evaluation.scoreboard --yolo models/best5.pt` or `--finder models/wasb/<new>.pth.tar`.
 
 ## Development tools
 
 ```bash
-python -m tools.regression [--linker finder-first|joint|cost] [--tracknet]   # 12 known-tricky moments
-python -m tools.compare_finders --runs --finders tracknet wasb:models/wasb/wasb_ft2.pth.tar   # finders alone
-python -m tools.eval_finder_first --finder models/wasb/wasb_ft2.pth.tar     # classic vs YOLO+finder vs finder-first crop rules
-python -m tools.ablate [--variants joint classic]   # test a pipeline change on cached inputs (holdout/dev/checked + regression)
+python -m evaluation.regression [--linker finder-first|joint|cost] [--tracknet]   # 12 known-tricky moments
+python -m evaluation.compare_finders --runs --finders tracknet wasb:models/wasb/wasb_ft2.pth.tar   # finders alone
+python -m evaluation.eval_finder_first --finder models/wasb/wasb_ft2.pth.tar     # classic vs YOLO+finder vs finder-first crop rules
+python -m evaluation.ablate [--variants joint classic]   # test a pipeline change on cached inputs (holdout/dev/checked + regression)
 python -m tools.dump_detections videos/*.mov      # pre-compute the full YOLO pass for many clips
 ```
 
 ## Layout
 
 ```
-main.py                 CLI entry point
-core/
-  paths.py              where every file lives (output/<clip>/..., data/..., training/...)
-  video_pipeline.py     run(): finder-first (default) or classic -> flights + contacts -> render
-  finder_first.py       sparse YOLO pass, WASB, YOLO crops, joint linker
-  finders.py            one interface for the ball finders (WASB, TrackNet): candidates, caches, calibration name
-  wasb.py, wasb_hrnet.py   WASB (HRNet, from nttcom/WASB-SBDT, MIT) heatmaps -> candidates
-  tracknet.py           TrackNet heatmaps -> candidates (network from TrackNetV3, MIT)
-  calibration.py        detection score -> probability, per source
-  joint_linker.py       the ball's path over the whole clip: calibrated candidates + physics, one pass
-  linker.py             rule-based linker (classic) + shared gap filling
-  cost_linker.py        cost-based linker (classic option; shared helpers)
-  refine.py             zoom search (classic), YOLO crops, repeated-frame and picture-area detection
-  tracknet_fill.py      classic TrackNet stage: fill gaps / extend track ends inside the physics corridor
-  profile.py            clip profile: real frame timestamps, repeated frames, picture area, ball size, camera motion
-  flights.py            split the track into flights (parabola each); contacts between them
-  contacts.py           classify contacts touch / bounce / other using person boxes (YOLOv8n)
-  device.py             CUDA / MPS / CPU choice, batched YOLO (VV_DEVICE, VV_BATCH)
-  other_balls.py        other volleyballs in the picture (suggestions for the review tool)
-  render.py             trail / marker / touch rings, ffmpeg encode
-  archive/              retired: single-pass tracker + old touch detector, VballNet, TrackNet-zoom experiment,
-                        tracklet layer (tracklets, tracklet_linker: no gain over the joint linker alone)
-tools/                  autolabel, review, export_training, build_tracknet_data, calibrate, scoreboard,
-                        regression, ablate, compare_finders, eval_finder_first, dump_detections
-tools/archive/          retired tools (eval_gt, eval_joint, label_gt, compare_tracking, tracknet_offset, fit_linker,
-                        old Roboflow upload, organize_output) and dev/ (linker debugging, visualisation)
+main.py                 CLI entry point: track the ball in one clip
+core/                   the library (no command-line code)
+  pipeline.py           run(): finder-first (default) or classic -> flights + contacts -> render
+  ball/                 finding the ball in 2D
+    finder_first.py       sparse YOLO pass, WASB, YOLO crops, joint linker
+    finders.py            one interface for the ball finders (WASB, TrackNet)
+    wasb.py, wasb_hrnet.py  WASB (HRNet, nttcom/WASB-SBDT, MIT) heatmaps -> candidates
+    tracknet.py           TrackNet heatmaps -> candidates (classic)
+    confidence.py         detection score -> probability that it's the ball, per source
+    joint_linker.py       the ball's path over the whole clip: candidates + physics, one pass
+    linker.py, cost_linker.py, refine.py, tracknet_fill.py, physics_search.py   classic pipeline stages
+    profile.py            clip profile: frame timing, picture area, ball size, camera motion
+    flights.py, flight_model.py   the track as flights (gravity arcs) and the contacts between them
+    contacts.py           touch / bounce / other, from where the people are
+    other_balls.py        other volleyballs in the picture (suggestions for the review tool)
+  geometry/             camera.py (calibration: pixels <-> meters), court.py (court and net)
+  scene3d/              ball3d.py (physics fit), rally3d.py (global rally fit), params3d.py (every set number),
+                        legacy_v1.py (first 3D mechanism, for comparison)
+  people/               players.py (positions, jumps), reid.py (one id per player)
+  common/               paths.py (where every file lives), safe_io.py (safe saves + backups),
+                        frametime.py, device.py, render.py
+  archive/              retired code
+tools/                  the commands you run: autolabel, review, label_players, calibrate_court, pose, players,
+                        scene3d, ball3d_run/_video/_viewer, export_training, build_tracknet_data, calibrate,
+                        dump_detections, resnap_labels, todo
+evaluation/             how good is each part: scoreboard, regression, ablate, compare_finders, eval_finder_first,
+                        failures, reid_eval, sim_rally + sim_camera (synthetic rallies and cameras)
+tests/                  pytest: unit tests + labeling-tool replays + the slow 3D accuracy gate
+tools/archive/          retired tools and dev/ (linker debugging, visualisation)
 videos/                 your clip pool: everything labelled for training (not in git)
 holdout/                test clips: never trained on, only scored (not in git)
 data/gt/                old dev labels, every 5th frame (10 clips)
-data/proposals/         autolabel proposals            data/verified/   your checked labels (commit these)
+data/verified/          your checked ball labels       data/player_ids/   your player labels
+data/cameras/           court calibrations             data/proposals/    autolabel suggestions (not in git)
 models/best4.pt         YOLO ball weights (best5.pt: candidate); models/yolov8n.pt: COCO person detector
+models/yolov8m*.pt      person + pose models (downloaded automatically, not in git)
 models/wasb/            wasb_ft2.pth.tar (fine-tuned, default) + wasb_volleyball_best.pth.tar (authors' weights)
 models/tracknet/        FT_TrackNet_best.pt + .offset.json (classic pipeline)
 models/score_calibration.json   score calibration (tools.calibrate)
-models/archive/         retired weights and downloads (not in git)
 training/yolo/          YOLO fine-tuning notebook (Colab)
 training/wasb/          WASB fine-tuning notebook + train_wasb.py (Colab)
-training/tracknet/      dataset_labels.json + datasets/ (TrackNet-format exports WASB trains on; not in git)
-training/datasets/      volleyball_combined (old training set), yolo_<name> exports; sources/ (not in git)
+training/tracknet/      dataset_labels.json + datasets/ (not in git)
+training/datasets/      volleyball_combined, yolo_<name> exports (not in git)
 training/legacy/        old auto-label -> Roboflow -> merge scripts; TrackNet notebooks
-output/<clip>/          pipeline outputs; output/dev/ experiments; output/archive/ old files
+output/<clip>/          pipeline outputs (not in git)
 ```
 
 Earlier work on court calibration, 3D height estimation and a web dashboard lives on the `wip/court-calibration` branch.
+

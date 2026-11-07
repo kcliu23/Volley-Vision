@@ -23,6 +23,6 @@ def rng():
 
 @pytest.fixture
 def camera(rng):
-    """A random phone-like camera behind the near end line (tools.sim_camera)."""
-    from tools.sim_camera import random_camera
+    """A random phone-like camera behind the near end line (evaluation.sim_camera)."""
+    from evaluation.sim_camera import random_camera
     return random_camera(rng)

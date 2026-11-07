@@ -7,7 +7,7 @@ the detector.
     python -m tools.dump_detections videos/test42.MP4
     python -m tools.dump_detections videos/*.mov videos/*.MP4 --conf 0.05
 
-Writes output/<stem>/cache/dets.json (see core.paths):
+Writes output/<stem>/cache/dets.json (see core.common.paths):
     {"schema": "vv-dets/1", "fps", "width", "height", "imgsz", "conf",
      "frames": [[[cx, cy, w, h, conf], ...], ...],      # one list per frame
      "dup": [false, true, ...]}                          # frame repeats the previous image
@@ -28,8 +28,8 @@ def dump(video: str, model, out_path: Path, conf: float, imgsz: int) -> Path:
     total = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     cap.release()
 
-    from core.device import BATCH, predict, yolo_device
-    from core.refine import DUP_MAX_CHANGED, frame_changed_pixels, small_gray
+    from core.ball.refine import DUP_MAX_CHANGED, frame_changed_pixels, small_gray
+    from core.common.device import BATCH, predict, yolo_device
     frames, dup, prev = [], [], None
     t0 = time.time()
     print(f"  YOLO on {yolo_device()}, {BATCH} frames per batch", flush=True)
@@ -87,7 +87,7 @@ def main():
 
     from ultralytics import YOLO
     model = YOLO(args.model)
-    from core import paths
+    from core.common import paths
     for v in args.videos:
         out = paths.dets(Path(v).stem, args.output)
         if args.skip_existing and out.exists():

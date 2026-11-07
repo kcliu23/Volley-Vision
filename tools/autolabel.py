@@ -76,8 +76,9 @@ def _box_sizes(track_rows, dets, ball_px):
 def propose(video: str, out_dir: str = "data/proposals", tracknet: str | None = None,
             output_dir: str = "output", model_path: str = "models/best4.pt", classic: bool = False,
             finder: str = "models/wasb/wasb_ft2.pth.tar") -> Path:
-    from core import finders, paths
-    from core.video_pipeline import run
+    from core.ball import finders
+    from core.common import paths
+    from core.pipeline import run
     stem = Path(video).stem
     if classic:
         run(input_path=video, output_dir=output_dir, model_path=model_path, tracknet=tracknet, render=False,
@@ -85,11 +86,11 @@ def propose(video: str, out_dir: str = "data/proposals", tracknet: str | None = 
         dets = json.load(open(paths.dets(stem, output_dir)))
         prof = dets.get("profile") or {}
         tpath = paths.tracknet(stem, output_dir)
-        from core.tracknet import correct
+        from core.ball.tracknet import correct
         tn = correct(json.load(open(tpath))["frames"], float(prof.get("ball_px") or 30.0)) \
             if (tracknet and tpath.exists()) else None
     else:
-        from core.finder_first import TOP
+        from core.ball.finder_first import TOP
         dp = paths.dets(stem, output_dir)
         if not dp.exists():           # full-frame YOLO: other-ball suggestions + hard negatives need it
             from ultralytics import YOLO

@@ -1,9 +1,9 @@
-"""core.safe_io: saving hand-made data can't lose it."""
+"""core.common.safe_io: saving hand-made data can't lose it."""
 import json
 
 import pytest
 
-import core.safe_io as S
+import core.common.safe_io as S
 
 
 @pytest.fixture
