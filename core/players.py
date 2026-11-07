@@ -24,9 +24,8 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-ANKLE_H = 0.09         # m: the pose model's ankle point is this far above the floor
 
-from core.params3d import (JUMP_FIT_M, JUMP_H, JUMP_MAX_S, JUMP_MIN_S, LIFT_FRAC, REACH_HEIGHT_X,  # noqa: F401
+from core.params3d import (ANKLE_H, JUMP_FIT_M, JUMP_H, JUMP_MAX_S, JUMP_MIN_S, LIFT_FRAC, REACH_HEIGHT_X,  # noqa: F401
                            REACH_RADIUS_M)
 G = 9.81
 

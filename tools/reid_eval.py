@@ -23,6 +23,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core import paths  # noqa: E402
+from core.safe_io import file_key  # noqa: E402
 
 LABELS = Path("data/player_ids")
 
@@ -32,7 +33,11 @@ def score(stem: str, video: str, output: str):
     from core.reid import build_ids
     import cv2
     L = json.load(open(LABELS / f"{stem}.json"))
-    pose = json.load(open(paths.clip_dir(stem, output) / "pose.json"))["frames"]
+    pj = paths.clip_dir(stem, output) / "pose.json"
+    if L.get("pose_key") not in (None, file_key(pj)):
+        print(f"  {stem}: pose.json changed since labeling; open tools.label_players once to carry the labels over")
+        return None
+    pose = json.load(open(pj))["frames"]
     cam = Camera.load(Path("data/cameras") / f"{stem}.json")
     fps = cv2.VideoCapture(video).get(cv2.CAP_PROP_FPS) or 60.0
     ids = build_ids(pose, video, cam, fps)

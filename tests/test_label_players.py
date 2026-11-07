@@ -130,10 +130,29 @@ def scenario_damaged_file():
     return ok, msg
 
 
+def scenario_pose_rerun():
+    """A new pose run renumbers the tracker: the labels follow the people (by box), not the ids."""
+    base = json.load(open(f"data/player_ids/{CLIP}.json"))
+    base["pose_key"] = "an-older-pose-run"
+    shift = {f: [{**p, "id": p["id"] + 1000 if p["id"] >= 0 else -1} for p in ps] for f, ps in POSE.items()}
+    names, cuts, _, report = T.remap_by_boxes(base["frames"], shift)
+    agree = tot = 0
+    for f, row in base["frames"].items():
+        for r in row:
+            m = [p for p in shift[f] if p["box"] == r["box"]]
+            if not m:
+                continue
+            tid = m[0]["id"]
+            c = [s for s in cuts.get(tid, []) if s <= int(f)]
+            tot += 1
+            agree += names.get(f"{tid}@{max(c)}" if c else str(tid)) == r["player"]
+    return tot > 0 and agree / tot > 0.98, f"{agree}/{tot} saved boxes keep their number ({report})"
+
+
 if __name__ == "__main__":
     fails = 0
     for name, fn in [("swap", scenario_swap), ("plain fix", scenario_plain_fix), ("undo", scenario_undo),
-                     ("autosave", scenario_autosave), ("damaged file", scenario_damaged_file)]:
+                     ("autosave", scenario_autosave), ("damaged file", scenario_damaged_file), ("pose re-run", scenario_pose_rerun)]:
         ok, msg = fn()
         fails += not ok
         print(f"{'PASS' if ok else 'FAIL'}  {name:12s} {msg}")

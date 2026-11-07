@@ -44,6 +44,10 @@ JUMP_H = (0.15, 1.2)   # [real] m: peak FEET height (tucked feet rise ~0.3 m mor
 JUMP_FIT_M = 0.15      # [real] m: rms around the gravity parabola of the feet
 LIFT_FRAC = 0.08       # [real] feet this far (x body height) above the ground line = a candidate
 
+# --- poses (core.players, core.reid) ----------------------------------------------------------------
+ANKLE_H = 0.09         # [real] m: the pose model's ankle point is this far above the floor (side
+                       #        accuracy 77-83% -> 98.6-99.5% on test74/75 with it)
+
 # --- solid floor and net (core.ball3d.fit_rally) -----------------------------------------------------
 SOLID_SIGMA_M = 0.03   # [guess] how hard the floor and net push back
 

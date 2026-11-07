@@ -85,14 +85,18 @@ def steps_from_changes(d: np.ndarray, reach: int = 6) -> np.ndarray:
 def frame_times(video: str, cache_dir: str | None = None) -> np.ndarray:
     """Frame index -> true time in frame units (float array); cached next to the clip's outputs."""
     cache = Path(cache_dir) / "frame_times.json" if cache_dir else None
+    st = Path(video).stat()
+    vkey = f"{st.st_size}"                                  # a re-exported clip under the same name
     if cache and cache.exists():
-        return np.array(json.load(open(cache))["t"], float)
+        c = json.load(open(cache))
+        if c.get("video_key", vkey) == vkey:
+            return np.array(c["t"], float)
     d = frame_changes(video)
     steps = steps_from_changes(d)
     T = np.cumsum(steps).astype(float)
     if cache:
         cache.parent.mkdir(parents=True, exist_ok=True)
-        json.dump({"t": T.tolist(), "repeats": int((steps == 0).sum() - 1), "skips": int((steps == 2).sum())},
+        json.dump({"video_key": vkey, "t": T.tolist(), "repeats": int((steps == 0).sum() - 1), "skips": int((steps == 2).sum())},
                   open(cache, "w"))
     return T
 

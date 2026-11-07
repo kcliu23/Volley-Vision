@@ -51,6 +51,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core import paths  # noqa: E402
+from core.safe_io import backup, file_key, load_json, save_json  # noqa: E402
 
 OUT_DIR = Path("data/player_ids")
 WIN = "VolleyVision - who is who"
@@ -109,24 +110,22 @@ def main():
     names: dict = {}                                        # piece key -> 1..12 or "x"
     named_at: dict = {}                                     # piece key -> frame where it was last named
     cuts: dict = {}                                         # tracker id -> [frames where a new part starts]
+    pose_key = file_key(pj)
     if out.exists():
-        try:
-            old = json.load(open(out))
-        except (json.JSONDecodeError, OSError):
-            backups = sorted(out.parent.glob(f"{stem}.backup*.json"))
-            if not backups:
-                raise
-            print(f"[label] {stem}: {out} is damaged; loading the latest backup {backups[-1]}")
-            old = json.load(open(backups[-1]))
-        import shutil
-        stamp = time.strftime("%Y%m%d-%H%M%S")                # the labels as they were when opened,
-        shutil.copy(out, out.with_name(f"{stem}.backup-{stamp}.json"))   # one copy per session; 5 kept
-        for b in sorted(out.parent.glob(f"{stem}.backup-*.json"))[:-5]:
-            b.unlink()
-        names = {k: v for k, v in old.get("pieces", {}).items()}
-        cuts = {int(k): v for k, v in old.get("cuts", {}).items()}
-        named_at.update(old.get("named_at", {}))
-        print(f"[label] {stem}: loaded {len(names)} named pieces from {out}")
+        old = load_json(out, log=lambda m: print(f"[label] {stem}: {m}"))
+        backup(out, keep=5, content=old)                    # the labels as loaded, one copy per session
+        if old.get("pose_key") not in (None, pose_key):
+            # pose.json was re-run: tracker ids mean other people now. Carry the numbers over by
+            # box overlap from the saved boxes instead of by id.
+            names, cuts, named_at_, report = remap_by_boxes(old.get("frames", {}), pose)
+            named_at.update(named_at_)
+            print(f"[label] {stem}: pose.json changed since these labels were made; carried "
+                  f"{len(names)} pieces over by box overlap ({report}). Check them with g.")
+        else:
+            names = {k: v for k, v in old.get("pieces", {}).items()}
+            cuts = {int(k): v for k, v in old.get("cuts", {}).items()}
+            named_at.update(old.get("named_at", {}))
+            print(f"[label] {stem}: loaded {len(names)} named pieces from {out}")
 
     def piece(tid: int, f: int) -> str:
         c = [s for s in cuts.get(tid, []) if s <= f]
@@ -462,22 +461,22 @@ def main():
             say(f"took {took} guess{'es' if took != 1 else ''}   z undo" if took else "no guesses in this frame",
                 (200, 255, 200) if took else (120, 200, 255))
         elif key in (13, 10):
-            save(out, stem, pj, names, cuts, pose, piece, named_at=named_at)
+            save(out, stem, pj, names, cuts, pose, piece, named_at=named_at, pose_key=pose_key)
             say(f"Saved {len(names)} named pieces  ->  {out}", (120, 255, 120))
             changed = False
         elif key in (ord("q"), 27):
             if changed:
-                save(out, stem, pj, names, cuts, pose, piece, named_at=named_at)
+                save(out, stem, pj, names, cuts, pose, piece, named_at=named_at, pose_key=pose_key)
             break
         if changed:                                         # autosave after every change: nothing gets lost
-            save(out, stem, pj, names, cuts, pose, piece, quiet=True, named_at=named_at)
+            save(out, stem, pj, names, cuts, pose, piece, quiet=True, named_at=named_at, pose_key=pose_key)
             changed = False
     cv2.destroyAllWindows()
 
 
 def save(out: Path, stem: str, pose_path: Path, names: dict, cuts: dict, pose: dict, piece, quiet: bool = False,
-         named_at: dict | None = None):
-    """Pieces (tied to this pose.json) + boxes per frame with their number (survive a new pose run)."""
+         named_at: dict | None = None, pose_key: str | None = None):
+    """Pieces (tied to this pose.json, by pose_key) + boxes per frame with their number (survive a new pose run)."""
     frames = {}
     for f, people in pose.items():
         row = []
@@ -489,15 +488,57 @@ def save(out: Path, stem: str, pose_path: Path, names: dict, cuts: dict, pose: d
                 row.append({"box": p["box"], "player": v})
         if row:
             frames[f] = row
-    out.parent.mkdir(parents=True, exist_ok=True)
-    tmp = out.with_suffix(".tmp")                       # write, then swap in: never a half-written file
-    json.dump({"schema": "vv-player-ids/1", "clip": stem, "pose": str(pose_path),
-               "sides": "players 1-6 near side (camera side), 7-12 far side",
-               "pieces": names, "cuts": {str(k): v for k, v in cuts.items()}, "named_at": named_at or {}, "frames": frames},
-              open(tmp, "w"), separators=(",", ":"))
-    __import__("os").replace(tmp, out)
+    save_json(out, {"schema": "vv-player-ids/1", "clip": stem, "pose": str(pose_path), "pose_key": pose_key,
+                    "sides": "players 1-6 near side (camera side), 7-12 far side",
+                    "pieces": names, "cuts": {str(k): v for k, v in cuts.items()}, "named_at": named_at or {},
+                    "frames": frames}, separators=(",", ":"))   # temp file then swap: never half-written
     if not quiet:
         print(f"[label] {stem}: saved {len(names)} named pieces, {sum(len(r) for r in frames.values())} boxes  →  {out}")
+
+def _iou(a, b):
+    w = min(a[2], b[2]) - max(a[0], b[0])
+    h = min(a[3], b[3]) - max(a[1], b[1])
+    if w <= 0 or h <= 0:
+        return 0.0
+    i = w * h
+    return i / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - i)
+
+
+def remap_by_boxes(saved_frames: dict, pose: dict, min_iou: float = 0.6):
+    """Saved numbered boxes -> names for the pieces of a NEW pose run. Each new box takes the number
+    of the saved box it overlaps best (IoU >= min_iou); a tracker id whose matched number changes
+    over time is cut where it changes, so one id can carry several numbers, like a hand cut."""
+    seq = {}                                              # tid -> [(frame, number)]
+    for f, row in saved_frames.items():
+        for p in pose.get(str(f), pose.get(f, [])) if isinstance(pose, dict) else []:
+            if p["id"] < 0:
+                continue
+            best = max(row, key=lambda r: _iou(r["box"], p["box"]), default=None)
+            if best is not None and _iou(best["box"], p["box"]) >= min_iou:
+                seq.setdefault(p["id"], []).append((int(f), best["player"]))
+    names, cuts, named_at, n_cut = {}, {}, {}, 0
+    for tid, fs in seq.items():
+        fs.sort()
+        runs = []                                         # [number, first frame, frames]
+        for f, v in fs:
+            if runs and runs[-1][0] == v:
+                runs[-1][2] += 1
+            else:
+                runs.append([v, f, 1])
+        runs = [r for r in runs if r[2] >= 5] or [max(runs, key=lambda r: r[2])]   # drop flickers
+        merged = [runs[0]]
+        for r in runs[1:]:
+            if r[0] == merged[-1][0]:
+                merged[-1][2] += r[2]
+            else:
+                merged.append(r)
+        for i, (v, f, _) in enumerate(merged):
+            key = str(tid) if i == 0 else f"{tid}@{f}"
+            if i:
+                cuts.setdefault(tid, []).append(f)
+                n_cut += 1
+            names[key], named_at[key] = v, f
+    return names, cuts, named_at, f"{len(seq)} tracker ids, {n_cut} new cuts"
 
 
 if __name__ == "__main__":

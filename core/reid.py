@@ -20,7 +20,7 @@ from collections import defaultdict
 
 import numpy as np
 
-ANKLE_H = 0.09         # m: the pose model's ankle point is this far above the floor
+from core.params3d import ANKLE_H
 
 RUN_MPS = 6.0          # fastest a player covers ground between two pieces
 SLACK_M = 1.5          # plus this (feet jitter, a missed step)

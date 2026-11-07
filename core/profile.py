@@ -15,7 +15,6 @@ at 30, 60 or 120 fps and at 720p, 1080p or 4K.
 """
 from __future__ import annotations
 
-import json
 import shutil
 import subprocess
 

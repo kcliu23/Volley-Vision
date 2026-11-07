@@ -22,6 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core import paths  # noqa: E402
+from core.safe_io import save_json  # noqa: E402
 
 
 def resnap(V: dict, dets_frames: list, max_bw: float):
@@ -76,7 +77,7 @@ def main():
             if a.apply:
                 bk = paths.ensure(paths.VERIFIED / "backup" / f"{s}.{time.strftime('%Y%m%d-%H%M%S')}.json")
                 shutil.copy(vp, bk)
-                json.dump(V, open(vp, "w"), separators=(",", ":"))
+                save_json(vp, V, separators=(",", ":"))
     print(f"{tot_n}/{tot_clicks} hand-placed frames {'snapped' if a.apply else 'would snap'} to a YOLO box"
           + ("" if a.apply else "  (report only: --apply to write; backups are kept)"))
 

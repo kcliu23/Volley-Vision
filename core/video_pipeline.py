@@ -107,7 +107,7 @@ def run(
         stale = (dets is None or redetect or dets.get("imgsz") != imgsz or dets.get("conf", det_conf) > det_conf
                  or dets.get("model", model_path) != model_path)
         if stale:
-            print(f"[VolleyVision] detection pass (YOLO on every frame, cached afterwards)...")
+            print("[VolleyVision] detection pass (YOLO on every frame, cached afterwards)...")
             dump(input_path, model, det_path, det_conf, imgsz)
             dets = json.load(open(det_path))
             dets["model"] = model_path

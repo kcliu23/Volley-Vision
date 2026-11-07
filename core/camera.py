@@ -17,7 +17,6 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field
-from pathlib import Path
 
 import numpy as np
 
@@ -114,8 +113,9 @@ class Camera:
     def save(self, path, extra: dict | None = None):
         d = self.to_json()
         d.update(extra or {})
-        Path(path).parent.mkdir(parents=True, exist_ok=True)
-        json.dump(d, open(path, "w"), indent=1)
+        from core.safe_io import backup, save_json
+        backup(path, keep=5)                              # your clicks are hand work: keep the last few
+        save_json(path, d, indent=1)
 
 
 # --- solving ----------------------------------------------------------------------------------

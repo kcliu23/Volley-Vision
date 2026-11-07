@@ -16,7 +16,7 @@ from __future__ import annotations
 import cv2
 import numpy as np
 
-from core.linker import link, LinkParams, FILLED, LINKER_VERSION
+from core.linker import LinkParams, FILLED, LINKER_VERSION
 
 
 class FrameReader:

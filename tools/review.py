@@ -74,6 +74,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from core import paths  # noqa: E402
+from core.safe_io import backup, load_json, save_json  # noqa: E402
 
 SPEEDS = [0.25, 0.5, 1.0, 2.0, 4.0]
 MAX_W, MAX_H = 1500, 860
@@ -843,7 +844,9 @@ def review(video: str, test: bool = False):
         sys.exit(f"no proposals for {stem}: run  python -m tools.autolabel {video}")
     P = json.load(open(pp))
     vp = paths.verified(stem)
-    V = json.load(open(vp)) if vp.exists() else None
+    V = load_json(vp, log=lambda m: print(f"[review] {m}")) if vp.exists() else None
+    if vp.exists():
+        backup(vp, keep=5, content=V)                       # the labels as opened, one copy per session
     dp = paths.dets(stem)
     R = Review(P, V, json.load(open(dp))["frames"] if dp.exists() else None)
     if test or Path(video).resolve().parent.name == paths.HOLDOUT.name:   # holdout/ clips are always test clips
@@ -852,7 +855,7 @@ def review(video: str, test: bool = False):
     src = FrameSource(video, scale)
 
     def save():
-        json.dump(R.to_json(video), open(paths.ensure(vp), "w"), separators=(",", ":"))
+        save_json(vp, R.to_json(video), separators=(",", ":"))     # temp file then swap: never half-written
 
     seg_i = R.next_unreviewed_segment(-1)
     if seg_i is None:
