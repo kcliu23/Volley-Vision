@@ -64,6 +64,7 @@ class Obs:
     sigma: float = 3.0                   # 2D noise used for scoring (measured per rally in solve())
     T: np.ndarray | None = None          # frame -> true time in frame units (core.frametime); None = f
     net_h: float | None = None           # net height (m): flights can't pass through it
+    touchers: object = None              # touchers(frame, ball_uv) -> core.players.touch_evidence list
     near: object = None                  # near(t, xyz) -> metres outside every player's reach, or
                                          # None where there is no player data (core.players.reach)
 
@@ -368,6 +369,28 @@ def solve(o: Obs, cam, hints=(), log=print):
     return pieces, info
 
 
+def _anchors(o: Obs, bounds) -> list:
+    """Touches made by a seen player (poses): at each chosen touch, who has a wrist at the ball,
+    on which side of the net, standing where. Both flights at the touch get the anchor. Players
+    on both sides at the ball (a joust, a block) put it at the net; one player's spot is used
+    only when they are the only one there."""
+    out = []
+    for k in range(1, len(bounds) - 1):
+        b = bounds[k]
+        tc = 0.5 * (o.t[b - 1] + o.t[b])
+        i = b if abs(o.t[b] - tc) < abs(o.t[b - 1] - tc) else b - 1
+        ev = o.touchers(int(o.frames[i]), o.uv[i])
+        sides = {e["side"] for e in ev if e["side"]}
+        if not sides:
+            continue
+        side = 0 if sides == {-1, 1} else sides.pop()
+        spots = [e["spot"] for e in ev if e["spot"] is not None]
+        spot = spots[0] if len(ev) == 1 and spots else None
+        for kk in (k - 1, k):
+            out.append({"k": kk, "t": tc, "side": side, "spot": spot})
+    return out
+
+
 def _solve_once(o: Obs, cam, hints, log):
     cands = candidates(o, hints)
     bounds = choose(o, cam, cands)
@@ -379,7 +402,8 @@ def _solve_once(o: Obs, cam, hints, log):
             b = bounds[k]
             tc = 0.5 * (o.t[b - 1] + o.t[b])
             links.append(Link(k - 1, tc, "touch", max(0.5 / o.fps, 0.5 * (o.t[b] - o.t[b - 1]))))
-        fit = fit_rally(segs, links, cam, net_h=o.net_h)
+        anchors = _anchors(o, bounds) if o.touchers else []
+        fit = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors)
         drop = False                                     # wrong points: out of the final fit
         for k, sg_ in enumerate(segs):
             e = np.abs(cam.project(fit.at(k, sg_.t)) - sg_.uv).max(axis=1) / o.sigma
@@ -387,7 +411,7 @@ def _solve_once(o: Obs, cam, hints, log):
             if off.any() and (~off).sum() >= MIN_PTS:
                 sg_.w = np.where(off, 0.0, sg_.w); drop = True
         if drop:
-            fit = fit_rally(segs, links, cam, net_h=o.net_h)
+            fit = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors)
         bad = []
         for k, s in enumerate(segs):
             e = np.hypot(*(cam.project(fit.at(k, s.t)) - s.uv).T)
@@ -413,10 +437,11 @@ def _solve_once(o: Obs, cam, hints, log):
 
 
 def solve_clip(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_s: float = 1.5,
-               players=None, T=None, net_h=None):
+               players=None, T=None, net_h=None, poses=None, ball_px: float = 25.0):
     """A whole clip: split into rallies (stretches with no ball for > rally_gap_s), solve() each
     with the tracker's contacts as hints. T: true frame times (core.frametime); players: from
-    core.players.build. Returns [(rally, segment, (f0, f1), fit, i)]."""
+    core.players.build; poses: output/<clip>/pose.json frames (tools.pose), to anchor touches to
+    the player who made them. Returns [(rally, segment, (f0, f1), fit, i)]."""
     from core.ball3d import out_of_picture
     fr_all = np.where(np.isfinite(uv[:, 0]))[0]
     if not len(fr_all):
@@ -434,6 +459,9 @@ def solve_clip(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_
         out_f = out_of_picture(full, np.isfinite(uv[full, 0]), edge).astype(int)
         tf = (T[fr] if T is not None else fr) / fps
         o = Obs(tf, uv[fr], size[fr], w[fr], fr, edge[fr], out_f, box, fps, T=T, net_h=net_h, near=near)
+        if poses:
+            from core.players import touch_evidence
+            o.touchers = lambda f, uv_, P=poses: touch_evidence(P, f, uv_, cam, ball_px, fps=fps)
         hints = [c["frame"] for c in contacts if fr[0] <= c["frame"] <= fr[-1]]
         res, info = solve(o, cam, hints, log=log)
         nt = len(res) - 1

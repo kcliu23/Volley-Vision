@@ -123,8 +123,8 @@ def subset_finds(found: dict, cands, prob, ball: float, top: int, q: float | Non
 
 def crop_suffix(top: int, q: float | None) -> str:
     """Cache-name suffix of a crop rule (kept compatible with the older strict/loose names)."""
-    if top == TOP and q is None:
-        return ""                                  # loose
+    if q is None:                                  # no probability floor = the loose rule
+        return "" if top == TOP else f"_top{top}"
     if top == 1:
         return f"_strict{q:g}"
     return f"_top{top}_p{q:g}"

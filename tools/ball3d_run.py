@@ -96,7 +96,14 @@ def main():
             from core.players import build
             players = build(json.load(open(pj)), cam, fps)
             print(f"[ball3d] {stem}: {len(players)} players: a touch away from all of them costs more")
+        poses = None
+        pj2 = paths.clip_dir(stem, a.output) / "pose.json"
+        if pj2.exists():
+            poses = json.load(open(pj2))["frames"]
+            print(f"[ball3d] {stem}: poses found: touches are anchored to the player who made them")
+        bpx = float(np.nanmedian(size)) if np.isfinite(size).any() else 25.0
         pieces = solve_clip(uv, w, size, edge, box, fps, cam, C["contacts"], players=players, T=T, net_h=net_h,
+                            poses=poses, ball_px=bpx,
                             log=lambda m: print(f"[ball3d] {stem}: " + m))
 
     flights_out, frames_out = [], {}

@@ -47,6 +47,11 @@ LIFT_FRAC = 0.08       # [real] feet this far (x body height) above the ground l
 # --- solid floor and net (core.ball3d.fit_rally) -----------------------------------------------------
 SOLID_SIGMA_M = 0.03   # [guess] how hard the floor and net push back
 
+# --- touches made by a seen player (poses: core.players.touch_evidence, core.ball3d.fit_rally) ------
+ANCHOR_OVER_M = 0.3    # [guess] a player's touch can be this far past the net (hands over it)
+ANCHOR_REACH_M = 1.0   # [guess] ... and this far (horizontally) from where they stood
+ANCHOR_SIGMA_M = 0.1   # [guess] how hard those limits push back
+
 # --- frame timing (core.frametime) ------------------------------------------------------------------
 REPEAT = 0.15          # [real] picture change below this x its local level = a repeated frame
 SKIP = 1.3             # [real] change above this x local level, next to a repeat = a skipped moment

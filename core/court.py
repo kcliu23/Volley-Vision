@@ -53,3 +53,25 @@ def lines(net_height: float = NET_HEIGHT["men"]) -> list:
            ((0, -hy, h), (0, hy, h)), ((0, -hy, h - NET_BAND), (0, hy, h - NET_BAND)),   # net
            ((0, -hy, h - NET_BAND), (0, -hy, h + ANTENNA)), ((0, hy, h - NET_BAND), (0, hy, h + ANTENNA))]
     return out
+
+
+def named_lines(net_height: float = NET_HEIGHT["men"]) -> dict:
+    """{name: ((x,y,z), (x,y,z))}: the lines you can click ANYWHERE along (2+ points each) when the
+    corners where they meet are hard to see. "net tape" / "net band" run along the net's top tape
+    and bottom band (any part of them: the net is usually wider than the court)."""
+    hx, hy, h = LENGTH / 2, WIDTH / 2, net_height
+    return {
+        "left sideline": ((-hx, hy, 0.0), (hx, hy, 0.0)),
+        "right sideline": ((-hx, -hy, 0.0), (hx, -hy, 0.0)),
+        "far end line": ((hx, -hy, 0.0), (hx, hy, 0.0)),
+        "far attack line": ((ATTACK, -hy, 0.0), (ATTACK, hy, 0.0)),
+        "centre line": ((0.0, -hy, 0.0), (0.0, hy, 0.0)),
+        "near attack line": ((-ATTACK, -hy, 0.0), (-ATTACK, hy, 0.0)),
+        "near end line": ((-hx, -hy, 0.0), (-hx, hy, 0.0)),
+        "net tape": ((0.0, -hy, h), (0.0, hy, h)),
+        "net band": ((0.0, -hy, h - NET_BAND), (0.0, hy, h - NET_BAND)),
+    }
+
+
+LINE_ORDER = ["net tape", "net band", "left sideline", "right sideline", "centre line",
+              "near attack line", "far attack line", "far end line", "near end line"]

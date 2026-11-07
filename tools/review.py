@@ -42,10 +42,12 @@ it resumes where you left off.
                  for resting and slow balls). Takes a few seconds; progress in the terminal. Click the
                  ball's centre: the look is taken from there
                  o      jump to the next frame with a grey suggestion (quick pass over a checked clip)
-                 DEFAULT: shift+click marks the ball in THIS frame only (instant; on an orange one:
-                 removes it there). g = fill between your last two shift+clicks (straight line), e.g.
-                 a resting ball: shift+click it at the start and end of a stretch, press g.
-                 F = turn following on/off: then shift+click works as described above (slower)
+                 DEFAULT (all instant): a ball YOLO saw (grey square, or a weaker YOLO box near the
+                 click) is followed through YOLO's saved boxes; an orange one is removed along its
+                 track; a ball YOLO never saw is marked in THIS frame only. g = fill between your last
+                 two shift+clicks (straight line): a resting ball YOLO can't see = shift+click it at
+                 the start and end of a stretch, press g.
+                 F = turn crop / look following on/off for balls YOLO can't see (slow: seconds per click)
   contacts       m      mark a touch at this frame, then its type: 1 serve, 2 pass/receive,
                         3 set, 4 attack, 5 block, 6 dig, 0 other (m on a marked frame removes it)
                  M      jump to the next marked touch
@@ -235,18 +237,41 @@ class Review:
         (a box YOLO found on a crop around the click) if given, else at the click."""
         r = max(self.ball, 12.0)
         i = self._nearest(self.others(f), xy, r)
-        if not self.follow:                                # default: this frame only (instant)
+        if not self.follow:
+            # default, all instant: a ball YOLO saw (grey square / weaker box) is followed through
+            # the cached YOLO boxes; an orange one is removed along its track; a ball YOLO never
+            # saw is marked in this frame only (g fills between two such clicks)
             if i is not None:
-                self._push([f])
-                rest = [o for j, o in enumerate(self.others(f)) if j != i]
-                if rest:
-                    self.others_edit[f] = rest
-                else:
-                    self.others_edit.pop(f, None)
-                self.other_clicks = [c for c in self.other_clicks if c[0] != f]
-                return "removed the other ball (this frame)"
+                box = self.others(f)[i]
+                self._origin = box
+                frames = {f: box}
+                for d in (+1, -1):
+                    frames.update(self._follow(f, box[:2], self.others, d))
+                self._push(list(frames))
+                for g, b in frames.items():
+                    cur = [o for o in self.others(g) if ((o[0] - b[0]) ** 2 + (o[1] - b[1]) ** 2) ** 0.5 > self.ball]
+                    if cur:
+                        self.others_edit[g] = cur
+                    else:
+                        self.others_edit.pop(g, None)
+                self.other_clicks = [c for c in self.other_clicks if c[0] not in frames]
+                return f"removed the other ball from {len(frames)} frame{'s' if len(frames) != 1 else ''}"
             k = self._nearest(self.suggestions(f), xy, r)
             box = self.suggestions(f)[k] if k is not None else (self.other_click_target(f, xy) if self.snap else None)
+            if box is not None:
+                self._origin = box
+                frames = {f: box}
+                for d in (+1, -1):
+                    frames.update(self._follow(f, box[:2], self._boxes_near_play, d))
+                new = {g: b for g, b in frames.items()
+                       if not any(((o[0] - b[0]) ** 2 + (o[1] - b[1]) ** 2) ** 0.5 <= self.ball for o in self.others(g))}
+                self._push(list(new))
+                for g, b in new.items():
+                    self.others_edit[g] = self.others(g) + [b]
+                self.other_clicks = ([c for c in self.other_clicks if c[0] != f] + [(f, list(box))])[-2:]
+                if len(frames) > 1:
+                    return f"confirmed another ball in {len(frames)} frames ({min(frames)}-{max(frames)})"
+                return "added another ball (this frame)   g: fill between your last two shift+clicks"
             if box is None:
                 box = list(crop_box) if crop_box is not None else \
                     [round(float(xy[0]), 1), round(float(xy[1]), 1), self.ball, self.ball]

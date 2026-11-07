@@ -263,3 +263,63 @@ def reach(players: list[Player], fps: float):
         dz = np.maximum(0.0, x[2] - P[:, 2])
         return float(np.min(np.hypot(dxy, dz)))
     return near
+
+
+# --- who touched the ball (from poses: tools.pose -> output/<clip>/pose.json) --------------------
+# COCO body points: 0 nose, 1-2 eyes, 5-6 shoulders (left, right), 9-10 wrists, 15-16 ankles
+
+def _facing(k):
+    """+1 facing the camera, -1 facing away, 0 unsure. Two cues: the face is visible (nose and
+    eyes found), and the left shoulder is on the picture's right (mirror image when facing us)."""
+    face = (k[0][2] + 0.5 * (k[1][2] + k[2][2])) / 2 - 0.45          # > 0: face visible
+    sw = abs(k[5][0] - k[6][0]) + 1e-6
+    sh = (k[5][0] - k[6][0]) / max(sw, 15.0) if min(k[5][2], k[6][2]) > 0.3 else 0.0
+    s = 1.6 * face + 0.6 * float(np.clip(sh, -1, 1))
+    return 1 if s > 0.35 else -1 if s < -0.35 else 0
+
+
+def touch_evidence(pose_frames: dict, f: int, ball_uv, cam, ball_px: float, near_px: float = 2.5,
+                   before_s: float = 0.6, fps: float = 60.0):
+    """People whose wrist is at the ball around frame f (within near_px ball widths, +-2 frames).
+    For each: side of the net (-1 near the camera, +1 far, 0 unsure) from which way they face and,
+    when the feet are clearly seen, from where they stood before the touch (the lowest ankles in
+    the before_s seconds before: the takeoff spot, so a jump doesn't move them); and that spot
+    on the floor (None when the ankles aren't trustworthy). Returns [{id, side, spot}]."""
+    out = {}
+    u, v = float(ball_uv[0]), float(ball_uv[1])
+    for g in range(f - 2, f + 3):
+        for p in pose_frames.get(str(g), pose_frames.get(g, [])):
+            k = p["kp"]
+            d = min(np.hypot(k[w][0] - u, k[w][1] - v) for w in (9, 10) if k[w][2] > 0.3) \
+                if any(k[w][2] > 0.3 for w in (9, 10)) else np.inf
+            if d <= near_px * ball_px and (p["id"] not in out or d < out[p["id"]]["d"]):
+                out[p["id"]] = {"id": p["id"], "d": float(d), "kp": k}
+    res = []
+    win = int(round(before_s * fps))
+    for pid, c in out.items():
+        sides = []
+        for g in range(f - win, f + 1, 3):                  # facing over the approach, not one frame
+            for p in pose_frames.get(str(g), pose_frames.get(g, [])):
+                if p["id"] == pid:
+                    sides.append(_facing(p["kp"]))
+        face_side = int(np.sign(sum(sides))) if sides and abs(sum(sides)) >= 0.5 * len(sides) else 0
+        # takeoff spot: the lowest ankles (largest v) before the touch, when both are clearly seen
+        best = None
+        for g in range(f - win, f + 1):
+            for p in pose_frames.get(str(g), pose_frames.get(g, [])):
+                if p["id"] == pid:
+                    k = p["kp"]
+                    if min(k[15][2], k[16][2]) > 0.6:
+                        a = ((k[15][0] + k[16][0]) / 2, (k[15][1] + k[16][1]) / 2)
+                        if best is None or a[1] > best[1]:
+                            best = a
+        spot = None
+        side = face_side                                    # facing the camera = far side (+x)
+        if best is not None:
+            g_ = cam.floor_point([best])[0][:2]
+            feet_side = int(np.sign(g_[0])) if abs(g_[0]) > 0.4 else 0
+            if side == 0 or feet_side == 0 or feet_side == side:   # feet agree with the facing
+                spot = (float(g_[0]), float(g_[1]))
+                side = side or feet_side
+        res.append({"id": pid, "side": side, "spot": spot, "wrist_px": round(c["d"], 1)})
+    return res

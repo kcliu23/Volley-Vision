@@ -7,6 +7,9 @@ cross: where the 3D fit says the ball is over the court), and its height in mete
 depth is right, the red cross runs under the player at every touch and sits on the bounce spot
 when the ball lands. Only free flights are drawn (held / rolling / badly fitted ones are left
 out). A mini top view (court + ball + camera) sits in the corner.
+With output/<clip>/players.json (tools.players), players too: their spot on the floor (cyan ring,
+id), and while they jump an orange JUMP tag with their feet height, the ring on the line from
+takeoff to landing. Players are also dots on the mini top view.
 Writes output/<clip>/ball3d.mp4.
 """
 from __future__ import annotations
@@ -37,6 +40,14 @@ def main():
     cam = Camera.load(Path("data/cameras") / f"{stem}.json")
     B = json.load(open(Path(a.output) / stem / "ball3d.json"))
     frames = {int(k): v for k, v in B["frames"].items() if v.get("free")}
+    people = {}
+    pp = Path(a.output) / stem / "players.json"
+    if pp.exists():
+        from core.players import build
+        for P in build(json.load(open(pp)), cam, B["fps"]):
+            for i, f in enumerate(P.frames):
+                if np.isfinite(P.ground[i, 0]):
+                    people.setdefault(int(f), []).append((P.id, P.ground[i], bool(P.airborne[i]), float(P.feet_z[i]), P.height_m))
     cap = cv2.VideoCapture(a.video)
     fps = cap.get(cv2.CAP_PROP_FPS) or B["fps"]
     W, H = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -81,6 +92,17 @@ def main():
         pts = [p for p in trail if p is not None]
         for p, q in zip(pts[:-1], pts[1:]):
             cv2.line(mini, top(*p), top(*q), (0, 200, 255), 2, cv2.LINE_AA)
+        for pid, g, air, fz, hm in people.get(f, []):
+            col = (0, 140, 255) if air else (255, 220, 0)
+            ring = cam.project(np.c_[0.35 * np.cos(np.linspace(0, 2 * np.pi, 24)) + g[0],
+                                     0.35 * np.sin(np.linspace(0, 2 * np.pi, 24)) + g[1], np.zeros(24)])
+            cv2.polylines(img, [ring.astype(np.int32)], True, col, 3, cv2.LINE_AA)
+            gu = cam.project([[g[0], g[1], 0.0]])[0]
+            lab = f"#{pid} JUMP {fz:.2f} m" if air else f"#{pid}"
+            cv2.putText(img, lab, (int(gu[0]) - 30, int(gu[1]) + 45), cv2.FONT_HERSHEY_SIMPLEX, 1.1 if air else 0.9,
+                        col, 3, cv2.LINE_AA)
+            if -15 < g[0] < 13 and -7 < g[1] < 7:
+                cv2.circle(mini, top(g[0], g[1]), 4, col, -1)
         if fr is not None:
             cv2.circle(mini, top(X[0], X[1]), 6, (0, 255, 255), -1)
         img[H - mh - 10:H - 10, W - mw - 250:W - 250] = mini

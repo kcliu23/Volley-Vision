@@ -33,7 +33,8 @@ import numpy as np
 import math
 
 G = np.array([0.0, 0.0, -9.81])
-from core.params3d import FREE_MIN_PX, FREE_X, SOLID_SIGMA_M  # noqa: E402
+from core.params3d import (ANCHOR_OVER_M, ANCHOR_REACH_M, ANCHOR_SIGMA_M, FREE_MIN_PX, FREE_X,  # noqa: E402
+                           SOLID_SIGMA_M)
 NET_HALF_W = 4.5 + 0.1                # m: the net (and its antennas) spans the court's width
 NET_BAND_M = 1.0                      # m: the net is 1 m tall
 BALL_D = 0.21                      # m, volleyball diameter (65-67 cm circumference)
@@ -205,14 +206,18 @@ def _init_segment(seg: Segment, P: _Proj, default_depth: float) -> np.ndarray:
 def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0, size_rel: float = 0.15,
               link_sigma: float = 0.10, bounce_sigma: float = 0.05, default_depth: float = 12.0,
               loss: str = "soft_l1", time_sigma: float = 1 / 60, drag: float = DRAG_K,
-              fit_drag: bool = False, net_h: float | None = None, solid_sigma: float = SOLID_SIGMA_M) -> Fit3D:
+              fit_drag: bool = False, net_h: float | None = None, solid_sigma: float = SOLID_SIGMA_M,
+              anchors: list | None = None) -> Fit3D:
     """All flights of a rally together. sigma_px: 2D position noise; size_rel: relative noise of
     the ball's pixel size; link_sigma (m): how exactly consecutive flights meet at a touch;
     time_sigma (s): how far off a detected touch time may be. Each touch's exact time is solved
     too (at attack speed one frame is ~30 cm, so a touch a frame off would bend both flights).
     drag: air-drag constant k (0 = pure parabola); fit_drag: also fit k (one value for the rally).
     Solid things: a flight can't go through the floor or (net_h given) through the net; a ball
-    that meets them is a touch / bounce between flights, never inside one."""
+    that meets them is a touch / bounce between flights, never inside one.
+    anchors: [{"k": flight, "t": time (s), "side": -1 near / +1 far / 0 both, "spot": (x, y) or
+    None}] - a touch made by a player: the ball is on their side of the net (up to
+    ANCHOR_OVER_M past it), within ANCHOR_REACH_M (horizontally) of where they stood."""
     from scipy.optimize import least_squares
     P = _Proj(cam)
     K = len(segs)
@@ -263,6 +268,20 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
                     if abs(yc) <= NET_HALF_W and bot < zc < top:
                         worst = max(worst, min(top - zc, zc - bot))
                 out.append(np.array([worst / solid_sigma]))
+        for A in anchors or []:                            # touches made by a seen player
+            x = pos(A["k"], th, [A["t"]])[0]
+            side = A.get("side")
+            if side in (-1, 1):
+                over = side * (-x[0]) - ANCHOR_OVER_M           # how far past the net, toward the other side
+                r_side = max(0.0, over) / ANCHOR_SIGMA_M
+            elif side == 0:
+                r_side = max(0.0, abs(x[0]) - ANCHOR_OVER_M) / ANCHOR_SIGMA_M
+            else:
+                r_side = 0.0
+            sp = A.get("spot")
+            r_spot = max(0.0, float(np.hypot(x[0] - sp[0], x[1] - sp[1])) - ANCHOR_REACH_M) / ANCHOR_SIGMA_M \
+                if sp is not None else 0.0
+            out.append(np.array([r_side, r_spot]))
         for j, L in enumerate(links):
             if not 0 <= L.k < K - 1:
                 continue
