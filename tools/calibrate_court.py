@@ -37,14 +37,12 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.court import LINE_ORDER, NET_HEIGHT, ORDER, keypoints, lines  # noqa: E402
+from core.court import LINE_ORDER, NET_HEIGHT, ORDER, keypoints, lines
 
 ITEMS = LINE_ORDER + ORDER          # lines first, then points
 LINE_CLICKS = 3                     # clicks per line before moving on by itself

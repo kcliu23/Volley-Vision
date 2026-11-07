@@ -15,9 +15,8 @@ from pathlib import Path
 
 import cv2
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-import tools.label_players as T  # noqa: E402
+import tools.label_players as T
 
 CLIP = "test74"
 VIDEO = f"videos/{CLIP}.mov"

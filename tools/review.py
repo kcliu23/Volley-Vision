@@ -71,10 +71,9 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import paths  # noqa: E402
-from core.safe_io import backup, load_json, save_json  # noqa: E402
+from core import paths
+from core.safe_io import backup, load_json, save_json
 
 SPEEDS = [0.25, 0.5, 1.0, 2.0, 4.0]
 MAX_W, MAX_H = 1500, 860

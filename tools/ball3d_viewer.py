@@ -12,13 +12,11 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import paths  # noqa: E402
-from core.camera import Camera  # noqa: E402
+from core import paths
+from core.camera import Camera
 
 TEMPLATE = Path(__file__).with_name("ball3d_viewer.html")
 UNSURE_M, UNSURE_N = 1.0, 8        # flights with more uncertainty / fewer 2D points than this are drawn as unsure

@@ -13,10 +13,7 @@ in seconds. Each case came from a real bug; a linker change that re-breaks one f
 import argparse
 import json
 import math
-import sys
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def _load(stem, zkey="zoom"):

@@ -5,8 +5,7 @@ import tempfile
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from core.safe_io import backup, backups, load_json, save_json  # noqa: E402
+from core.safe_io import backup, backups, load_json, save_json
 
 
 def main():

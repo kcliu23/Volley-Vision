@@ -29,10 +29,9 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import paths  # noqa: E402
-from core.finder_first import crop_finds, subset_finds, CROP_TOP, CROP_P  # noqa: E402  (shared with the pipeline)
+from core import paths
+from core.finder_first import crop_finds, subset_finds, CROP_TOP, CROP_P  # (shared with the pipeline)
 
 TN = "models/tracknet/FT_TrackNet_best.pt"
 CROP_PX = 640 * 640           # YOLO input of one crop ...

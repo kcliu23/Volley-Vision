@@ -26,16 +26,13 @@ Scores: per-frame 3D error (median / 95%), coverage (frames with a 3D position),
 from __future__ import annotations
 
 import argparse
-import sys
 import time
-from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.ball3d import BALL_D, DRAG_K, G, Link, fit_rally, out_of_picture, traj  # noqa: E402
-from core.camera import Camera  # noqa: E402
+from core.ball3d import BALL_D, DRAG_K, G, Link, fit_rally, out_of_picture, traj
+from core.camera import Camera
 
 FPS = 60.0
 

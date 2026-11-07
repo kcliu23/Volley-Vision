@@ -23,13 +23,10 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import sys
 import time
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import paths  # noqa: E402
+from core import paths
 
 FINDER = "models/wasb/wasb_ft2.pth.tar"
 

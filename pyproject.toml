@@ -1,0 +1,63 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "volleyvision"
+version = "0.1.0"
+description = "Volleyball ball tracking, court calibration, 3D ball flight, players and touches from phone video"
+requires-python = ">=3.10"
+# The core: geometry, 3D fit, linking, re-ID. Light enough for CI.
+dependencies = [
+    "numpy>=1.26,<3",
+    "scipy>=1.11,<2",
+    "opencv-python>=4.9,<6",
+]
+
+[project.optional-dependencies]
+# Models: YOLO, pose, WASB / TrackNet, training.
+ml = [
+    "torch>=2.1",
+    "ultralytics>=8.0,<9",
+    "scikit-learn>=1.3",
+    "Pillow>=10",
+    "PyYAML>=6",
+    "matplotlib>=3.8",
+]
+dev = [
+    "pytest>=8",
+    "ruff>=0.6",
+    "pre-commit>=3.5",
+]
+
+[tool.setuptools.packages.find]
+include = ["core*", "tools*", "training*"]
+exclude = ["core.archive*", "tools.archive*", "training.legacy*", "training.datasets*", "training.runs*"]
+
+# --- lint ---------------------------------------------------------------------------------------
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+extend-exclude = ["core/archive", "tools/archive", "training/legacy", "training/wasb/WASB-SBDT*"]
+
+[tool.ruff.lint]
+# E/W style, F real errors, I import order, B likely bugs, UP modern syntax
+select = ["E", "W", "F", "I", "B", "UP"]
+ignore = [
+    "E501",   # long lines: the formatter's call, not an error
+    "E702",   # a; b on one line: tidied file by file, not in one sweep
+    "E731",   # small named lambdas are fine
+    "B905",   # zip() strict=: added where lengths can differ, not everywhere
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["core", "tools", "training"]
+
+# --- tests --------------------------------------------------------------------------------------
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+markers = [
+    "data: needs local clips / outputs (videos/, output/, data/) - skipped when they are missing",
+    "slow: takes more than a few seconds",
+]

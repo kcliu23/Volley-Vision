@@ -23,13 +23,11 @@ import glob
 import json
 import math
 import shutil
-import sys
 from pathlib import Path
 from types import SimpleNamespace
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import paths  # noqa: E402
+from core import paths
 
 CUR_YOLO = "models/best4.pt"
 CUR_TN = "models/tracknet/FT_TrackNet_best.pt"

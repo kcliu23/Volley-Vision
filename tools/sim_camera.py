@@ -9,15 +9,12 @@ from __future__ import annotations
 
 import argparse
 import math
-import sys
-from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core.camera import Camera, solve  # noqa: E402
-from core.court import keypoints  # noqa: E402
+from core.camera import Camera, solve
+from core.court import keypoints
 
 W, H = 2622, 1206
 

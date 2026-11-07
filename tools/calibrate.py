@@ -17,15 +17,12 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import sys
-from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import paths  # noqa: E402
-from core.calibration import SOURCES, features, fit  # noqa: E402
+from core import paths
+from core.calibration import SOURCES, features, fit
 
 
 def labels_for(stem: str, kind: str) -> dict[int, object]:

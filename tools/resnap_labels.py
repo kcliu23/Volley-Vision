@@ -15,14 +15,11 @@ import argparse
 import json
 import math
 import shutil
-import sys
 import time
-from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import paths  # noqa: E402
-from core.safe_io import save_json  # noqa: E402
+from core import paths
+from core.safe_io import save_json
 
 
 def resnap(V: dict, dets_frames: list, max_bw: float):

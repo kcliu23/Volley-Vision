@@ -16,12 +16,10 @@ from __future__ import annotations
 import argparse
 import json
 import re
-import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import paths  # noqa: E402
+from core import paths
 
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".avi", ".mkv")
 OLD_RE = re.compile(r"^((?:test|holdout)\d*)_\d+_")

@@ -14,16 +14,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import paths  # noqa: E402
-from core.safe_io import file_key  # noqa: E402
+from core import paths
+from core.safe_io import file_key
 
 LABELS = Path("data/player_ids")
 

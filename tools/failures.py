@@ -27,16 +27,14 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import sys
 from collections import Counter
 from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import paths  # noqa: E402
-from tools.scoreboard import CUR_FINDER, CUR_YOLO, find_video, run_one  # noqa: E402
+from core import paths
+from tools.scoreboard import CUR_FINDER, CUR_YOLO, find_video, run_one
 
 FAST_PX, SMALL_PX, EDGE_PX, STATIC_N, STATIC_R = 35.0, 18.0, 40.0, 25, 12.0
 

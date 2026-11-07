@@ -48,10 +48,9 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import paths  # noqa: E402
-from core.safe_io import backup, file_key, load_json, save_json  # noqa: E402
+from core import paths
+from core.safe_io import backup, file_key, load_json, save_json
 
 OUT_DIR = Path("data/player_ids")
 WIN = "VolleyVision - who is who"

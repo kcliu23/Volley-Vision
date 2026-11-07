@@ -20,7 +20,6 @@ from pathlib import Path
 
 import cv2
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def dump(video: str, model, out_path: Path, conf: float, imgsz: int) -> Path:

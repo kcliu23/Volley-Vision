@@ -18,16 +18,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import paths  # noqa: E402
-from core.ball3d import BALL_D, calibrate_size, edge_mask, free_px, sizes_for  # noqa: E402
-from core.camera import Camera  # noqa: E402
+from core import paths
+from core.ball3d import BALL_D, calibrate_size, edge_mask, free_px, sizes_for
+from core.camera import Camera
 
 
 def positions(stem: str, track: dict, labels: bool):

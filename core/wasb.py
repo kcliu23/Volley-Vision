@@ -23,14 +23,12 @@ Preprocessing follows the WASB repo exactly: RGB, the frame scaled to fit 512x28
 from __future__ import annotations
 
 import json
-import sys
 import time
 from pathlib import Path
 
 import cv2
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 DEFAULT_CKPT = "models/wasb/wasb_volleyball_best.pth.tar"
 TAG = "wasb"

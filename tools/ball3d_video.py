@@ -18,16 +18,14 @@ import argparse
 import json
 import shutil
 import subprocess
-import sys
 from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from core import paths  # noqa: E402
-from core.camera import Camera  # noqa: E402
-from core.court import LENGTH, WIDTH, ATTACK  # noqa: E402
+from core import paths
+from core.camera import Camera
+from core.court import LENGTH, WIDTH, ATTACK
 
 
 def main():
