@@ -1,12 +1,12 @@
 # pip install -e ".[dev]" && pre-commit install   -> ruff checks every commit
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    rev: v0.17.4
     hooks:
       - id: ruff
         args: [--fix]                   # the hook already passes --force-exclude (respects pyproject excludes)
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    rev: v6.0.0
     hooks:
       - id: check-json
         exclude: ^(output|training/datasets)/
