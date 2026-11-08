@@ -53,3 +53,19 @@ def test_no_backup_and_damaged_raises(tmp_path):
     p.write_text("{ broken")
     with pytest.raises(json.JSONDecodeError):
         S.load_json(p, log=lambda m: None)
+
+
+def test_backups_stay_out_of_the_label_folder(tmp_path, clock):
+    """Tools list <dir>/*.json as clips: a backup must never show up there."""
+    p = tmp_path / "clip.json"
+    S.save_json(p, {"v": 1})
+    S.backup(p)
+    assert [q.name for q in tmp_path.glob("*.json")] == ["clip.json"]
+    assert len(S.backups(p)) == 1
+
+
+def test_old_backups_next_to_the_file_still_load(tmp_path):
+    p = tmp_path / "clip.json"
+    S.save_json(tmp_path / "clip.backup-20000101-000000.json", {"v": 0})
+    p.write_text("{ broken")
+    assert S.load_json(p, log=lambda m: None) == {"v": 0}

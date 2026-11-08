@@ -3,8 +3,10 @@
     save_json(path, obj)            write a temp file, then swap it in: a crash or Ctrl-C mid-write
                                     leaves the old file, never a half-written one
     load_json(path)                 read; if the file is damaged, the newest readable backup instead
-    backup(path, keep=5)            a timestamped copy next to it (<stem>.backup-<time>.json), newest
-                                    `keep` kept; call once per session, before the first change
+    backup(path, keep=5)            a timestamped copy in a hidden folder next to it
+                                    (<dir>/.backups/<stem>.backup-<time>.json), newest `keep` kept;
+                                    call once per session, before the first change. Hidden, so tools
+                                    that list <dir>/*.json never mistake a backup for a clip.
     file_key(path)                  a short fingerprint of a file's content (to notice it changed)
 """
 from __future__ import annotations
@@ -28,9 +30,14 @@ def save_json(path, obj, **dump_kw) -> Path:
     return path
 
 
+BACKUP_DIR = ".backups"
+
+
 def backups(path) -> list[Path]:
+    """Backups of `path`, oldest first (also old ones saved next to the file, before .backups/)."""
     path = Path(path)
-    return sorted(path.parent.glob(f"{path.stem}.backup-*.json"))
+    pat = f"{path.stem}.backup-*.json"
+    return sorted([*path.parent.glob(pat), *(path.parent / BACKUP_DIR).glob(pat)], key=lambda b: b.name)
 
 
 def load_json(path, log=print):
@@ -60,7 +67,7 @@ def backup(path, keep: int = 5, content=None) -> Path | None:
             content = json.load(open(path))
         except (json.JSONDecodeError, OSError, UnicodeDecodeError):
             return None                                     # damaged: don't let it push out a good backup
-    out = path.with_name(f"{path.stem}.backup-{time.strftime('%Y%m%d-%H%M%S')}.json")
+    out = path.parent / BACKUP_DIR / f"{path.stem}.backup-{time.strftime('%Y%m%d-%H%M%S')}.json"
     save_json(out, content, separators=(",", ":"))
     for b in backups(path)[:-keep]:
         b.unlink()

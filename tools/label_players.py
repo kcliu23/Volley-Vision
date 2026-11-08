@@ -23,7 +23,7 @@ take all the guesses in this frame, then fix the wrong ones.
                    (red "7!" boxes: one of the two is wrong - see below)
   -> / ]   <- / [  0.5 s forward / back          . ,  one frame forward / back
   Enter / q        everything is saved as you go (data/player_ids/<clip>.json, after every change);
-                   the labels as they were each time you opened the clip: <clip>.backup-<time>.json (last 5)
+                   the labels as they were each time you opened the clip: .backups/<clip>.backup-<time>.json (last 5)
 
 Same number on two boxes (red "7!"): one of them is wrong. Click the wrong one and:
   - a different person: press their number (renames that whole piece)
@@ -227,7 +227,7 @@ def main():
         clash = clashes(cur)
         for p in people:
             key = piece(p["id"], cur)
-            x1, y1, x2, y2 = [int(v * scale) for v in p["box"]]
+            x1, y1, x2, y2 = (int(v * scale) for v in p["box"])
             y1, y2 = y1 + TOP_H, y2 + TOP_H
             v = names.get(key)
             if v == "x":
@@ -295,7 +295,7 @@ def main():
             # spot again goes to the next one (people standing behind each other)
             under = []
             for p in people:
-                x1, y1, x2, y2 = [v * scale for v in p["box"]]
+                x1, y1, x2, y2 = (v * scale for v in p["box"])
                 if x1 <= cx <= x2 and y1 + TOP_H <= cy <= y2 + TOP_H:
                     d = np.hypot((cx - (x1 + x2) / 2) / max(x2 - x1, 1), (cy - TOP_H - (y1 + y2) / 2) / max(y2 - y1, 1))
                     under.append((d, p))
@@ -311,7 +311,7 @@ def main():
                     say(f"{len(under)} boxes here: click again on the same spot for the next one", (200, 230, 255))
             else:                                           # small far players: the nearest box within 15 px
                 for p in people:
-                    x1, y1, x2, y2 = [v * scale for v in p["box"]]
+                    x1, y1, x2, y2 = (v * scale for v in p["box"])
                     d = np.hypot(max(x1 - cx, 0, cx - x2), max(y1 + TOP_H - cy, 0, cy - y2 - TOP_H))
                     if d <= 15 and (best is None or d < best[0]):
                         best = (d, p)
