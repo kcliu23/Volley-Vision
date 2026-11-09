@@ -27,27 +27,20 @@ it resumes where you left off.
                  y      accept the whole clip (after watching it all)
   move           f      next flagged frame     j / k  previous / next segment
                  click the timeline to jump there
-  other balls    the training labels mark EVERY volleyball in the picture (spare balls, a ball
-                 resting on the sideline), not just the game ball. Only balls you confirm count:
-                 grey squares   = suggestions (confident YOLO boxes away from the game ball;
-                                  often a wall clock or a light: then just ignore them)
-                 orange squares = other balls you confirmed
-                 shift+click (or e, then click) a grey square: yes, a ball. One click is enough: it
-                 follows that ball through the whole clip, both directions (bridging gaps where YOLO
-                 lost it: up to 1 s, or 5 s for a ball that stays put). On an orange one: fills in the
-                 frames where it's still missing; if none are missing, removes it (whole track).
-                 Elsewhere: snaps to a weaker YOLO box near the click and follows it the same way. Where
-                 YOLO missed the ball (small, far or resting balls), it follows with YOLO on crops around
-                 it, and where YOLO is blind even there, by what the ball looks like at your click (works
-                 for resting and slow balls). Takes a few seconds; progress in the terminal. Click the
-                 ball's centre: the look is taken from there
-                 o      jump to the next frame with a grey suggestion (quick pass over a checked clip)
-                 DEFAULT (all instant): a ball YOLO saw (grey square, or a weaker YOLO box near the
-                 click) is followed through YOLO's saved boxes; an orange one is removed along its
-                 track; a ball YOLO never saw is marked in THIS frame only. g = fill between your last
-                 two shift+clicks (straight line): a resting ball YOLO can't see = shift+click it at
-                 the start and end of a stretch, press g.
-                 F = turn crop / look following on/off for balls YOLO can't see (slow: seconds per click)
+  other balls    mark EVERY volleyball that isn't the game ball (spare balls, one on the sideline,
+                 one held by someone): WASB is then never taught that a real ball is "nothing".
+                 orange = other balls you marked; grey = YOLO suggestions (often a clock: ignore)
+                 shift+click a ball     marks it. If it sits still, it's marked in every frame it
+                                        stays there (checked by its look, a few seconds)
+                 moving ball            shift+click it every time it changes direction, then g:
+                                        straight lines between all those clicks
+                 shift+click orange     wrong box: removed from this frame to the end of its stretch
+                                        (option+shift+click: back to its start)
+                 r / R                  remove the orange box under the mouse / every orange box,
+                                        in THIS frame only          u  undo
+                 o                      next frame with a grey suggestion
+                 (F: old crop following with YOLO, slow; off by default)
+                 Every action goes to data/verified/.logs/<clip>.log.
   contacts       m      mark a touch at this frame, then its type: 1 serve, 2 pass/receive,
                         3 set, 4 hit (anything sent over that isn't a serve or block), 5 block,
                         6 dig, 0 other (m on a marked frame removes it)
@@ -208,6 +201,17 @@ class Review:
         return out
 
     crop_find = None         # set by review(): (frame, spot) -> YOLO boxes on a full-res crop there
+    still_find = None        # set by review(): (frame, box) -> (a, b) frames a resting ball stays put
+
+    def _add_still(self, f: int, box, frames: dict) -> dict:
+        """frames + every frame the clicked ball rests at the same spot (checked by its look)."""
+        if self.still_find is None:
+            return frames
+        a, b = self.still_find(f, box)
+        for g in range(a, b + 1):
+            frames.setdefault(g, [round(float(box[0]), 1), round(float(box[1]), 1),
+                                  round(float(box[2]), 1), round(float(box[3]), 1)])
+        return frames
     start_follow = None      # set by review(): (frame, box) -> remember what this ball looks like
 
     def _boxes_or_crop(self, g: int, spot) -> list:
@@ -230,7 +234,50 @@ class Review:
         j = self._nearest(boxes, xy, self.SNAP_BW * self.ball)
         return boxes[j] if j is not None else None
 
-    def toggle_other(self, f: int, xy, until: int | None = None, crop_box=None) -> str:
+    def remove_other_here(self, f: int, xy) -> str:
+        """Remove the orange box nearest xy in THIS frame only (a wrong box in a crowd)."""
+        i = self._nearest(self.others(f), xy, 2.0 * max(self.ball, 12.0))
+        if i is None:
+            return "no orange box near the mouse in this frame"
+        self._push([f])
+        cur = self.others(f)[:i] + self.others(f)[i + 1:]
+        if cur:
+            self.others_edit[f] = cur
+        else:
+            self.others_edit.pop(f, None)
+        return f"removed 1 orange box in frame {f} ({len(cur)} left here)"
+
+    def clear_others_here(self, f: int) -> str:
+        """Remove every orange box in THIS frame."""
+        n = len(self.others(f))
+        if not n:
+            return "no orange boxes in this frame"
+        self._push([f])
+        self.others_edit.pop(f, None)
+        return f"removed all {n} orange boxes in frame {f}"
+
+    def _remove_other(self, f: int, i: int, backward: bool = False) -> str:
+        """Remove the clicked orange ball from this frame to the end of its track (forward), or
+        to its start (backward): a follow that went wrong at frame f is cut there, and what came
+        before stays. From its first frame forward = the whole track."""
+        box = self.others(f)[i]
+        self._origin = box
+        frames = {f: box}
+        frames.update(self._follow(f, box[:2], self.others, -1 if backward else +1))
+        self._push(list(frames))
+        for g, b in frames.items():
+            cur = [o for o in self.others(g) if ((o[0] - b[0]) ** 2 + (o[1] - b[1]) ** 2) ** 0.5 > self.ball]
+            if cur:
+                self.others_edit[g] = cur
+            else:
+                self.others_edit.pop(g, None)
+        self.other_clicks = [c for c in self.other_clicks if c[0] not in frames]
+        lo, hi = min(frames), max(frames)
+        other = "shift+click" if backward else "option+shift+click"
+        return (f"removed the other ball from {len(frames)} frame{'s' if len(frames) != 1 else ''} ({lo}-{hi}, "
+                f"{'back to its start' if backward else 'to its end'}; {other} cuts the other way; u undoes)")
+
+    def toggle_other(self, f: int, xy, until: int | None = None, crop_box=None, backward: bool = False) -> str:
         """On a confirmed ball: remove it, here and everywhere it continues (both directions).
         On a suggestion, or (snapping on) a weaker YOLO box near the click: confirm it, here and
         everywhere YOLO keeps seeing it at that spot (both directions, whole clip, weaker boxes
@@ -239,79 +286,32 @@ class Review:
         r = max(self.ball, 12.0)
         i = self._nearest(self.others(f), xy, r)
         if not self.follow:
-            # default, all instant: a ball YOLO saw (grey square / weaker box) is followed through
-            # the cached YOLO boxes; an orange one is removed along its track; a ball YOLO never
-            # saw is marked in this frame only (g fills between two such clicks)
+            # default: mark the ball here; a still ball everywhere it stays (by its look); a moving
+            # ball by keyframes (g draws straight lines between them). No following through YOLO's
+            # boxes: YOLO rarely sees spare balls, and in a crowd it drifts onto heads and knees.
             if i is not None:
-                box = self.others(f)[i]
-                self._origin = box
-                frames = {f: box}
-                for d in (+1, -1):
-                    frames.update(self._follow(f, box[:2], self.others, d))
-                self._push(list(frames))
-                for g, b in frames.items():
-                    cur = [o for o in self.others(g) if ((o[0] - b[0]) ** 2 + (o[1] - b[1]) ** 2) ** 0.5 > self.ball]
-                    if cur:
-                        self.others_edit[g] = cur
-                    else:
-                        self.others_edit.pop(g, None)
-                self.other_clicks = [c for c in self.other_clicks if c[0] not in frames]
-                return f"removed the other ball from {len(frames)} frame{'s' if len(frames) != 1 else ''}"
+                return self._remove_other(f, i, backward)
             k = self._nearest(self.suggestions(f), xy, r)
-            box = self.suggestions(f)[k] if k is not None else (self.other_click_target(f, xy) if self.snap else None)
-            if box is not None:
-                self._origin = box
-                frames = {f: box}
-                for d in (+1, -1):
-                    frames.update(self._follow(f, box[:2], self._boxes_near_play, d))
-                new = {g: b for g, b in frames.items()
-                       if not any(((o[0] - b[0]) ** 2 + (o[1] - b[1]) ** 2) ** 0.5 <= self.ball for o in self.others(g))}
-                self._push(list(new))
-                for g, b in new.items():
-                    self.others_edit[g] = self.others(g) + [b]
-                self.other_clicks = ([c for c in self.other_clicks if c[0] != f] + [(f, list(box))])[-2:]
-                if len(frames) > 1:
-                    return f"confirmed another ball in {len(frames)} frames ({min(frames)}-{max(frames)})"
-                return "added another ball (this frame)   g: fill between your last two shift+clicks"
+            box = (self.suggestions(f)[k] if k is not None
+                   else self.other_click_target(f, xy) if self.snap else None)        # snap the position only
             if box is None:
                 box = list(crop_box) if crop_box is not None else \
                     [round(float(xy[0]), 1), round(float(xy[1]), 1), self.ball, self.ball]
-            self._push([f])
-            self.others_edit[f] = self.others(f) + [list(box)]
-            self.other_clicks = ([c for c in self.other_clicks if c[0] != f] + [(f, list(box))])[-2:]
-            return "added another ball (this frame)   g: fill between your last two shift+clicks"
-        if i is not None:                                  # a confirmed ball: first fill in where it's missing
-            box = self.others(f)[i]
-            self._origin = box
-            print("[review] following the other ball ...", flush=True)
-            if self.start_follow is not None:
-                self.start_follow(f, box)
-            frames = {f: box}
-            for d in (+1, -1):
-                if self.start_follow is not None:
-                    self.start_follow(f, box)
-                frames.update(self._follow(f, box[:2], self._boxes_or_crop, d, with_spot=True))
+            box = [round(float(v), 1) for v in box[:4]]
+            frames = self._add_still(f, box, {f: box})
             new = {g: b for g, b in frames.items()
                    if not any(((o[0] - b[0]) ** 2 + (o[1] - b[1]) ** 2) ** 0.5 <= self.ball for o in self.others(g))}
-            if new:
-                self._push(list(new))
-                for g, b in new.items():
-                    self.others_edit[g] = self.others(g) + [b]
-                return (f"other ball: added {len(new)} missing frames ({min(frames)}-{max(frames)}); "
-                        f"shift+click it again to remove it")
-            # nothing to add: it's already complete, so this click removes it
-            self._origin = box
-            frames = {f: box}
-            for d in (+1, -1):
-                frames.update(self._follow(f, box[:2], self.others, d))
-            self._push(list(frames))
-            for g, b in frames.items():
-                cur = [o for o in self.others(g) if ((o[0] - b[0]) ** 2 + (o[1] - b[1]) ** 2) ** 0.5 > self.ball]
-                if cur:
-                    self.others_edit[g] = cur
-                else:
-                    self.others_edit.pop(g, None)
-            return f"removed the other ball from {len(frames)} frame{'s' if len(frames) != 1 else ''}"
+            self._push(list(new) or [f])
+            for g, b in new.items():
+                self.others_edit[g] = self.others(g) + [b]
+            if len(frames) > 1:
+                return f"still ball: marked in {len(frames)} frames ({min(frames)}-{max(frames)})"
+            self.other_clicks = [c for c in self.other_clicks if c[0] != f] + [(f, box)]
+            n = len(self.other_clicks)
+            return (f"marked (keyframe {n})" + ("   g: straight lines between the keyframes" if n > 1
+                                                 else "   moving? click it again a few frames on, then g"))
+        if i is not None:                                  # an orange ball: cut it from here (as with F off)
+            return self._remove_other(f, i, backward)
         i = self._nearest(self.suggestions(f), xy, r)
         weak = self.other_click_target(f, xy) if (i is None and self.snap) else None
         if i is None and weak is None and self.crop_find is not None:
@@ -345,23 +345,24 @@ class Review:
         return "added another ball (this frame, at your click)"
 
     def fill_others(self) -> int:
-        """Straight line between the last two shift+clicked other balls; frames in between get
-        it (unless they already have a ball there). Returns the number of frames filled."""
-        if len(self.other_clicks) < 2:
-            return 0
-        (a, pa), (b, pb) = sorted(self.other_clicks)
-        if b - a < 2:
+        """Straight lines between all shift+click keyframes since the last g (one moving ball),
+        in frame order; frames in between get it unless they already have a ball there. The
+        keyframes are then cleared, ready for the next ball. Returns the number of frames filled."""
+        keys = sorted(self.other_clicks)
+        if len(keys) < 2:
             return 0
         todo = {}
-        for g in range(a + 1, b):
-            w = (g - a) / (b - a)
-            box = [round(pa[k] + w * (pb[k] - pa[k]), 1) for k in range(4)]
-            if not any(((o[0] - box[0]) ** 2 + (o[1] - box[1]) ** 2) ** 0.5 <= self.ball for o in self.others(g)):
-                todo[g] = box
+        for (a, pa), (b, pb) in zip(keys, keys[1:]):
+            for g in range(a + 1, b):
+                w = (g - a) / (b - a)
+                box = [round(pa[k] + w * (pb[k] - pa[k]), 1) for k in range(4)]
+                if not any(((o[0] - box[0]) ** 2 + (o[1] - box[1]) ** 2) ** 0.5 <= self.ball for o in self.others(g)):
+                    todo[g] = box
         if todo:
             self._push(list(todo))
             for g, box in todo.items():
                 self.others_edit[g] = self.others(g) + [box]
+        self.other_clicks = []
         return len(todo)
 
     def next_suggestion(self, f: int) -> int | None:
@@ -391,7 +392,7 @@ class Review:
     def _push(self, frames):
         self.undo_stack.append(([(f, self.labels.get(f), self.boxes.get(f), self.src.get(f), self.others_edit.get(f),
                                   self.contacts.get(f)) for f in frames],
-                                [list(r) for r in self.reviewed], list(self.clicks)))
+                                [list(r) for r in self.reviewed], list(self.clicks), list(self.other_clicks)))
         if len(self.undo_stack) > 200:
             self.undo_stack.pop(0)
 
@@ -483,7 +484,7 @@ class Review:
 
     snap = True               # the review loop's z key turns snapping off for clicks and fills
     follow = False            # F: shift+click follows the ball through the clip (slow where YOLO can't see it)
-    other_clicks: list = []   # (frame, box) of the last shift+clicks, for g (fill between them)
+    other_clicks: list = []   # (frame, box) shift+click keyframes since the last g (one moving ball)
 
     def _set_interp(self, f: int, xy):
         """A filled frame: on the straight line, or on a YOLO box near it (snapping on)."""
@@ -523,7 +524,7 @@ class Review:
     def undo(self) -> bool:
         if not self.undo_stack:
             return False
-        saved, reviewed, clicks = self.undo_stack.pop()
+        saved, reviewed, clicks, other_clicks = self.undo_stack.pop()
         for f, lab, box, src, oth, con in saved:
             for d, v in ((self.labels, lab), (self.boxes, box), (self.src, src), (self.others_edit, oth),
                          (self.contacts, con)):
@@ -531,7 +532,7 @@ class Review:
                     d.pop(f, None)
                 else:
                     d[f] = v
-        self.reviewed, self.clicks = reviewed, clicks
+        self.reviewed, self.clicks, self.other_clicks = reviewed, clicks, other_clicks
         return True
 
     # navigation helpers
@@ -629,6 +630,55 @@ class FrameSource:
         if b is None:
             return None
         return self.cv2.imdecode(np.frombuffer(b, np.uint8), self.cv2.IMREAD_COLOR)
+
+
+def still_span(video: str, f: int, box, ball: float, fps: float, n: int, step_s: float = 0.25,
+               min_corr: float = 0.7, max_hidden_s: float = 4.0, log=print):
+    """Frames (a, b) around f where a resting ball stays at box's spot. One pass over the video,
+    looking at that spot every step_s seconds: its picture there vs at frame f (normalized
+    correlation, no YOLO). Out of sight for up to max_hidden_s (a player walking in front) and
+    back at the spot = still there. Returns (f, f) when it isn't resting (it moved away)."""
+    import cv2
+    step = max(1, int(round(step_s * fps)))
+    r = int(max(8, 0.6 * max(box[2], box[3], ball)))           # patch half-size
+    pad = int(0.3 * ball) + 1                                   # allowed wobble (jitter, compression)
+    x, y = int(round(box[0])), int(round(box[1]))
+    cap = cv2.VideoCapture(str(video))
+    W, H = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    x0, y0, x1, y1 = x - r - pad, y - r - pad, x + r + pad + 1, y + r + pad + 1
+    if x0 < 0 or y0 < 0 or x1 > W or y1 > H:
+        cap.release()
+        return f, f                                             # too close to the edge to compare
+    win, g = {}, 0
+    while g < n:
+        if not cap.grab():
+            break
+        if (g - f) % step == 0:
+            ok, img = cap.retrieve()
+            if ok:
+                win[g] = cv2.cvtColor(img[y0:y1, x0:x1], cv2.COLOR_BGR2GRAY)
+        g += 1
+    cap.release()
+    if f not in win:
+        return f, f
+    ref = win[f][pad:-pad, pad:-pad]
+    if float(ref.std()) < 2.0:                                  # a flat patch: nothing to recognise
+        return f, f
+
+    def there(g):
+        return float(cv2.matchTemplate(win[g], ref, cv2.TM_CCOEFF_NORMED).max()) >= min_corr
+
+    hidden = int(round(max_hidden_s * fps))
+    ends = []
+    for d in (+1, -1):
+        last, g = f, f + d * step
+        while g in win and abs(g - last) <= hidden + step:
+            if there(g):
+                last = g
+            g += d * step
+        ends.append(last)
+    log(f"[review] resting ball at ({x}, {y}): frames {ends[1]}-{ends[0]}")
+    return ends[1], ends[0]
 
 
 class FullFrames:
@@ -889,6 +939,36 @@ def review(video: str, test: bool = False):
                 best = (d, [round(b[0] / scale, 1), round(b[1] / scale, 1), round(b[2] / scale, 1), round(b[3] / scale, 1)])
         return None if best is None else best[1]
     Follower(video, R, yolo).attach()
+
+    def find_still(g, box):
+        """A quick look first (frames already in memory, ~1/3 s on each side): if the ball isn't
+        at the same spot there, it's moving: no full scan (that takes a few seconds)."""
+        a = src.get(g)
+        h = int(max(5, 0.6 * max(box[2], box[3], R.ball) * scale))
+        x, y = int(round(box[0] * scale)), int(round(box[1] * scale))
+        pad = max(2, int(0.3 * R.ball * scale))
+        if a is not None and h + pad < x < a.shape[1] - h - pad and h + pad < y < a.shape[0] - h - pad:
+            ref = cv2.cvtColor(a[y - h:y + h, x - h:x + h], cv2.COLOR_BGR2GRAY)
+            looks = []
+            for k in (-20, -10, -5, 5, 10, 20):               # any match = maybe still: do the full scan
+                b = src.get(g + k) if 0 <= g + k < R.n else None
+                if b is not None and ref.std() >= 2.0:
+                    win = cv2.cvtColor(b[y - h - pad:y + h + pad, x - h - pad:x + h + pad], cv2.COLOR_BGR2GRAY)
+                    looks.append(float(cv2.matchTemplate(win, ref, cv2.TM_CCOEFF_NORMED).max()) >= 0.7)
+            if looks and not any(looks):
+                return g, g
+        print("[review] checking where this ball rests (a few seconds) ...", flush=True)
+        return still_span(video, g, box, R.ball, P["fps"], R.n)
+    R.still_find = find_still
+
+    log_path = vp.parent / ".logs" / f"{stem}.log"            # what happened, for tracing problems
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logged = {"msg": None}
+
+    def log(text):
+        with open(log_path, "a") as fh:
+            fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}  frame {f:5d}  {text}\n")
+    log(f"opened ({sum(1 for v in R.others_edit.values() if v)} frames with other balls)")
     msg, msg_t = "", 0.0
 
     WIN = "VolleyVision review"
@@ -897,7 +977,7 @@ def review(video: str, test: bool = False):
     def on_mouse(ev, x, y, flags, param):
         state["mouse"] = (x, y)
         if ev == cv2.EVENT_LBUTTONDOWN:
-            state["click"] = (x, y, bool(flags & cv2.EVENT_FLAG_SHIFTKEY))
+            state["click"] = (x, y, bool(flags & cv2.EVENT_FLAG_SHIFTKEY), bool(flags & cv2.EVENT_FLAG_ALTKEY))
     cv2.setMouseCallback(WIN, on_mouse)
 
     last_step = time.time()
@@ -909,12 +989,15 @@ def review(video: str, test: bool = False):
             img = np.zeros((int(P["height"] * scale), int(P["width"] * scale), 3), np.uint8)
         canvas = np.zeros((TOP_H + img.shape[0] + TIMELINE_H, img.shape[1], 3), np.uint8)
         canvas[TOP_H:TOP_H + img.shape[0]] = img
+        if msg and msg != logged["msg"]:
+            log(msg)
+            logged["msg"] = msg
         show_msg = msg if time.time() - msg_t < 2.5 else ""
         cv2.imshow(WIN, draw(cv2, canvas, R, f, scale, seg_i, SPEEDS[speed_i], playing, state["mouse"], show_msg))
         key = cv2.waitKey(5) & 0xFF
 
         if state["click"] is not None:
-            x, y, shift = state["click"]
+            x, y, shift, alt = state["click"]
             state["click"] = None
             if TOP_H <= y < TOP_H + img.shape[0]:
                 if shift or state["extra"]:
@@ -924,7 +1007,7 @@ def review(video: str, test: bool = False):
                     if (state["snap"] and R._nearest(R.others(f), xy, rr) is None
                             and R._nearest(R.suggestions(f), xy, rr) is None and R.other_click_target(f, xy) is None):
                         cb = snap_by_crop(img, xy, R.ball, scale)    # nothing cached near the click: try a crop
-                    m = R.toggle_other(f, xy, seg["f1"], crop_box=cb); save()
+                    m = R.toggle_other(f, xy, seg["f1"], crop_box=cb, backward=alt); save()
                     msg, msg_t, state["extra"] = m, time.time(), False
                 else:
                     xy = (x / scale, (y - TOP_H) / scale)
@@ -1016,13 +1099,24 @@ def review(video: str, test: bool = False):
         elif k == "e":
             state["extra"] = not state["extra"]; playing = False
             msg, msg_t = ("next click: another ball (on a square: remove it)" if state["extra"] else "back to normal clicks"), time.time()
+        elif k == "r":                                         # the orange box under the mouse, this frame only
+            if state["mouse"] is not None and TOP_H <= state["mouse"][1] < TOP_H + img.shape[0]:
+                mx, my = state["mouse"]
+                m = R.remove_other_here(f, (mx / scale, (my - TOP_H) / scale)); save()
+            else:
+                m = "point the mouse at an orange box, then press r"
+            msg, msg_t, playing = m, time.time(), False
+        elif k == "R":                                         # every orange box, this frame only
+            m = R.clear_others_here(f); save()
+            msg, msg_t, playing = m, time.time(), False
         elif k == "g":
             m = R.fill_others(); save()
-            msg, msg_t = (f"other ball: filled {m} frames" if m else "shift+click the other ball in two frames first"), time.time()
+            msg, msg_t = (f"other ball: filled {m} frames between the keyframes" if m
+                          else "shift+click the moving ball in two or more frames first"), time.time()
         elif k == "F":
             R.follow = not R.follow
-            msg, msg_t = ("shift+click follows the ball through the clip (can take a while)" if R.follow
-                          else "shift+click marks this frame only (g fills between two)"), time.time()
+            msg, msg_t = ("F on: shift+click also follows with YOLO on crops where YOLO lost the ball (slow)"
+                          if R.follow else "F off: shift+click follows YOLO's saved boxes + resting balls (fast)"), time.time()
         elif k == "i":
             m = R.interpolate(); save()
             msg, msg_t = (f"filled {m} frames" if m else "click the ball in two frames first"), time.time()
@@ -1061,7 +1155,9 @@ def review(video: str, test: bool = False):
             print(__doc__)
             msg, msg_t = "help printed in the terminal", time.time()
         elif k == "q" or key == 27:
-            save(); break
+            save()
+            log(f"saved and quit ({sum(1 for v in R.others_edit.values() if v)} frames with other balls)")
+            break
         seg_i = R.segment_of(f) if not (P["segments"][seg_i]["f0"] <= f <= P["segments"][seg_i]["f1"]) else seg_i
     cv2.destroyAllWindows()
     done, tot = R.progress()

@@ -38,6 +38,8 @@ from pathlib import Path
 
 import numpy as np
 
+from core.ball.finders import FINDER_DEFAULT
+
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".avi", ".mkv")
 
 
@@ -75,7 +77,7 @@ def _box_sizes(track_rows, dets, ball_px):
 
 def propose(video: str, out_dir: str = "data/proposals", tracknet: str | None = None,
             output_dir: str = "output", model_path: str = "models/best4.pt", classic: bool = False,
-            finder: str = "models/wasb/wasb_ft2.pth.tar") -> Path:
+            finder: str = FINDER_DEFAULT) -> Path:
     from core.ball import finders
     from core.common import paths
     from core.pipeline import run
@@ -219,7 +221,7 @@ def main():
     ap.add_argument("--tracknet", nargs="?", const="models/tracknet/FT_TrackNet_best.pt", default=None,
                     help="(--classic) also use TrackNet")
     ap.add_argument("--classic", action="store_true", help="the old pipeline (YOLO every frame + rule linker + zoom)")
-    ap.add_argument("--finder", default="models/wasb/wasb_ft2.pth.tar", help="ball finder (finder-first)")
+    ap.add_argument("--finder", default=FINDER_DEFAULT, help="ball finder (finder-first)")
     ap.add_argument("--no-tracknet", action="store_true", help="(default; kept for old commands)")
     ap.add_argument("--include-gt", action="store_true", help="also process clips that have ground truth (test set)")
     ap.add_argument("--redo", action="store_true", help="re-propose clips that already have a proposals file")

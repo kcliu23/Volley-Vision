@@ -28,9 +28,10 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from core.ball import finders
 from core.common import paths
 
-DEFAULT_FINDER = "models/wasb/wasb_ft2.pth.tar"
+DEFAULT_FINDER = finders.FINDER_DEFAULT
 CROP_TOP, CROP_P = 1, 0.6      # default crop rule (strict): the top candidate, if calibrated P(ball) >= 0.6.
                                # (2, 0.1) scores +0.7 on-ball on holdout but breaks regression case test21
 FINDER_ONLY_BIAS = 0.5         # penalty on points only the finder saw (no YOLO box). Measured 2026-10-28
@@ -134,19 +135,27 @@ def crop_finds(stem: str, video: str, cands, ball: float, ftag: str, model, prob
                q: float | None = CROP_P, root=paths.OUTPUT) -> dict:
     """YOLO on crops around the finder's candidates chosen by crop_targets (cached). If the loose
     crop cache exists, a stricter rule is taken from it instead of running YOLO again."""
+    import hashlib
+
     from core.ball.refine import zoom_detect_many
+    want = {f: crop_targets(row, prob, top, q) for f, row in enumerate(cands)}
+    want = {f: v for f, v in want.items() if v}
+    # which crops to make depends on the candidates AND the score calibration (prob): the cache
+    # is only reused for exactly these crops (a new calibration or finder redoes them)
+    key = hashlib.md5(json.dumps(sorted((f, [[round(c[0], 1), round(c[1], 1)] for c in v])
+                                        for f, v in want.items())).encode()).hexdigest()[:12]
     cp = paths.cache_dir(stem, root) / f"crops_{ftag}{crop_suffix(top, q)}.json"
     if cp.exists():
-        return json.load(open(cp))
+        c = json.load(open(cp))
+        if c.get("key") == key:
+            return c
     loose = paths.cache_dir(stem, root) / f"crops_{ftag}.json"
-    if loose.exists() and top <= TOP:
+    if loose.exists() and top <= TOP and q is not None:   # the loose rule doesn't depend on prob
         found, n = subset_finds(json.load(open(loose))["found"], cands, prob, ball, top, q)
-        out = {"found": found, "crops": n, "frames": len(cands), "secs": 0.0, "from": loose.name}
+        out = {"found": found, "crops": n, "frames": len(cands), "secs": 0.0, "from": loose.name, "key": key}
         json.dump(out, open(paths.ensure(cp), "w"))
         return out
     half = int(max(64, 5.0 * ball))
-    want = {f: crop_targets(row, prob, top, q) for f, row in enumerate(cands)}
-    want = {f: v for f, v in want.items() if v}
     # crops from consecutive frames are queued and sent to YOLO together (VV_BATCH per call) on a
     # GPU, where one call per small crop is dominated by per-call overhead. On a CPU batching only
     # costs memory (measured: 92 s vs 61 s for test62's 413 crops), so there it stays 1.
@@ -179,7 +188,7 @@ def crop_finds(stem: str, video: str, cands, ball: float, ftag: str, model, prob
         flush()
     cap.release()
     found = {str(g): {"c": want[g][0][:2], "cands": boxes} for g, boxes in sorted(per_frame.items()) if boxes}
-    out = {"found": found, "crops": ncrops, "frames": len(cands), "secs": round(time.time() - t0, 1)}
+    out = {"found": found, "crops": ncrops, "frames": len(cands), "secs": round(time.time() - t0, 1), "key": key}
     json.dump(out, open(paths.ensure(cp), "w"))
     return out
 

@@ -15,6 +15,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from core.ball.finders import FINDER_DEFAULT
+
 # ── two-pass pipeline ─────────────────────────────────────────────────────────
 
 def render_timing(times, fps: float):
@@ -54,7 +56,7 @@ def run(
     tracknet: str | None = "models/tracknet/FT_TrackNet_best.pt",
     render: bool = True,
     pipeline: str = "finder-first",
-    finder: str = "models/wasb/wasb_ft2.pth.tar",
+    finder: str = FINDER_DEFAULT,
     crop_top: int = 1,
     crop_p: float | None = 0.6,
     guided: bool = True,

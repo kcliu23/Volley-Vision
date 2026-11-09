@@ -2,6 +2,8 @@ import argparse
 import sys
 from pathlib import Path
 
+from core.ball.finders import FINDER_DEFAULT
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -15,7 +17,7 @@ def main():
     parser.add_argument("--model",      default="models/best4.pt", help="Path to YOLO weights")
     parser.add_argument("--pipeline",   choices=["finder-first", "classic"], default="finder-first",
                         help="finder-first (default, best on the holdout clips) or classic (the old pipeline)")
-    parser.add_argument("--finder",     default="models/wasb/wasb_ft2.pth.tar",
+    parser.add_argument("--finder",     default=FINDER_DEFAULT,
                         help="(finder-first) ball finder checkpoint, WASB")
     parser.add_argument("--crop-top",   type=int, default=1,
                         help="(finder-first) YOLO-check up to this many finder candidates per frame")

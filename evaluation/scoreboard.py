@@ -26,11 +26,12 @@ import shutil
 from pathlib import Path
 from types import SimpleNamespace
 
+from core.ball.finders import FINDER_DEFAULT
 from core.common import paths
 
 CUR_YOLO = "models/best4.pt"
 CUR_TN = "models/tracknet/FT_TrackNet_best.pt"
-CUR_FINDER = "models/wasb/wasb_ft2.pth.tar"
+CUR_FINDER = FINDER_DEFAULT
 VIDEO_EXT = (".mp4", ".mov", ".m4v", ".avi", ".mkv")
 
 
@@ -117,6 +118,16 @@ def main():
              "candidate": paths.dev() / "scoreboard" / tag}
     models = {"current": (CUR_YOLO, cur_f), "candidate": (cand_yolo, cand_f)}
 
+    if not classic and cand_f != cur_f:
+        from core.ball import finders
+        from core.ball.confidence import Calibration
+        m = Calibration.load().models.get(finders.calib_name(cand_f), {})
+        if not m.get("n"):
+            print(f"[scoreboard] no usable score calibration for {cand_f}: fitting it first "
+                  f"(python -m tools.calibrate --finder {cur_f} --finder {cand_f})", flush=True)
+            import subprocess
+            import sys
+            subprocess.run([sys.executable, "-m", "tools.calibrate", "--finder", cur_f, "--finder", cand_f], check=True)
     gt = paths.gt_stems()
     hold = [s for s in paths.holdout_stems() if paths.verified(s).exists() and s not in gt]
     checked = [p.stem for p in sorted(paths.VERIFIED.glob("*.json")) if p.stem not in gt and p.stem not in hold]

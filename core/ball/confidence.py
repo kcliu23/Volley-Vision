@@ -58,6 +58,9 @@ class Calibration:
             return self
         if name not in self.models:
             raise KeyError(f"no score calibration for finder '{name}': run  python -m tools.calibrate --finder <ckpt>")
+        if not self.models[name].get("n"):
+            raise ValueError(f"the score calibration for finder '{name}' was fitted on 0 examples (its candidates "
+                             f"weren't cached on the training clips): run  python -m tools.calibrate --finder <ckpt>")
         return Calibration({**self.models, "tracknet": self.models[name]})
 
 

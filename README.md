@@ -41,7 +41,7 @@ the YOLO crops; re-runs reuse the caches and take seconds.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--pipeline` | `finder-first` | `finder-first` or `classic` |
-| `--finder` | `models/wasb/wasb_ft2.pth.tar` | (finder-first) ball finder, WASB |
+| `--finder` | `models/wasb/wasb_ft3.pth.tar` | (finder-first) ball finder, WASB |
 | `--crop-top`, `--crop-p` | `1`, `0.6` | (finder-first) YOLO-check up to this many WASB candidates per frame, those with calibrated P(ball) ≥ this |
 | `--loose` | off | (finder-first) top 2 candidates, no threshold: fewer misses, more false balls, ~2.5× the YOLO work |
 | `--ring` | off | Hollow ring marker, so the real ball stays visible underneath |
@@ -59,7 +59,7 @@ Outputs, one folder per clip (`output/<clip>/`; all paths are defined in `core/c
 - `track.json` — per frame: `state` (`detected` / `weak` = YOLO-confirmed, `tracknet` = finder only, `filled` = on the arc, `none`) and `pos`
 - `contacts.json` — flights (one parabola each) and the contacts between them: frame (can fall inside a gap), position, velocity in/out, `kind` = `touch` / `bounce` / `other` (net, wall, unclear)
 - `cache/sample_dets.json` — finder-first: sparse YOLO pass, clip profile (timestamps, repeated frames, picture area, ball size, camera motion), person boxes
-- `cache/tracknet_wasb_ft2.json` — WASB candidates; `cache/crops_wasb_ft2_strict0.6.json` — YOLO crop finds
+- `cache/tracknet_wasb_ft3.json` — WASB candidates; `cache/crops_wasb_ft3_strict0.6.json` — YOLO crop finds
 - `cache/dets.json`, `cache/tracknet.json` — classic pipeline (and autolabel): YOLO on every frame, TrackNet candidates
 - caches are rebuilt automatically if deleted
 
@@ -175,7 +175,7 @@ data/verified/          your checked ball labels       data/player_ids/   your p
 data/cameras/           court calibrations             data/proposals/    autolabel suggestions (not in git)
 models/best4.pt         YOLO ball weights (best5.pt: candidate); models/yolov8n.pt: COCO person detector
 models/yolov8m*.pt      person + pose models (downloaded automatically, not in git)
-models/wasb/            wasb_ft2.pth.tar (fine-tuned, default) + wasb_volleyball_best.pth.tar (authors' weights)
+models/wasb/            wasb_ft3.pth.tar (fine-tuned, default since 2026-11-09), wasb_ft2.pth.tar (previous) + wasb_volleyball_best.pth.tar (authors' weights)
 models/tracknet/        FT_TrackNet_best.pt + .offset.json (classic pipeline)
 models/score_calibration.json   score calibration (tools.calibrate)
 training/yolo/          YOLO fine-tuning notebook (Colab)

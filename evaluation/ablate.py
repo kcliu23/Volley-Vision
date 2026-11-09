@@ -27,7 +27,7 @@ import time
 
 from core.common import paths
 
-FINDER = "models/wasb/wasb_ft2.pth.tar"
+FINDER = "models/wasb/wasb_ft3.pth.tar"
 
 
 def inputs(stem: str, cal, rule):
@@ -85,7 +85,7 @@ def run_variant(name, d2, cands, cal, ball, a, stem=None):
         for r in range(1 if name == "guided" else 2):
             fl, _ = from_track(t)
             tg = ps.targets(t, fl, ball, dd.get("zoom"), a["fps"])
-            res = ps.search(stem if r == 0 else f"{stem}", video, tg, ball, _YOLO["m"], f"wasb_ft2_r{r}")
+            res = ps.search(stem if r == 0 else f"{stem}", video, tg, ball, _YOLO["m"], f"wasb_ft3_r{r}")
             dd["zoom"] = ps.merge_zoom(dd.get("zoom"), res["found"])
             stats.append({"crops": res["crops"], "found_frames": len(res["found"]), "by_trigger": res.get("by_trigger")})
             t = run_variant("joint", dd, cands, cal, ball, a)
@@ -208,8 +208,8 @@ def main():
     from core.ball.finder_first import crop_suffix
     for g, ss in groups:
         for s in ss:
-            if not ((paths.cache_dir(s) / "crops_wasb_ft2.json").exists()
-                    or (paths.cache_dir(s) / f"crops_wasb_ft2{crop_suffix(CROP_TOP, CROP_P)}.json").exists()):
+            if not ((paths.cache_dir(s) / "crops_wasb_ft3.json").exists()
+                    or (paths.cache_dir(s) / f"crops_wasb_ft3{crop_suffix(CROP_TOP, CROP_P)}.json").exists()):
                 print(f"  {s}: no crop cache (run main.py on it), skipped")
                 continue
             t0 = time.time()

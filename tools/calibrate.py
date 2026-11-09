@@ -97,6 +97,34 @@ def collect(clips: list[tuple[str, str]]) -> dict:
     return out
 
 
+def ensure_cached(ckpt: str, stems: list[str], video_dirs=("videos", "holdout")):
+    """Make sure every training clip has this finder's candidates cached where collect() reads
+    them: reuse a copy the scoreboard already made, else run the finder (~1 s per 20 frames)."""
+    import glob
+    import shutil
+    from pathlib import Path
+
+    from core.ball import finders
+    todo = [s for s in stems if finders.load_cached(s, ckpt) is None]
+    if todo:
+        print(f"[calibrate] {finders.calib_name(ckpt)}: candidates missing on {len(todo)} clip(s), making them")
+    for i, s in enumerate(todo):
+        dst = finders.cache_path(s, ckpt)
+        found = glob.glob(str(paths.dev() / "scoreboard" / "*" / s / "cache" / dst.name))
+        if found:
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy(found[0], dst)
+            continue
+        V = json.load(open(paths.verified(s)))
+        video = V.get("video") if V.get("video") and Path(V["video"]).exists() else next(
+            (p for d in video_dirs for p in glob.glob(f"{d}/{s}.*") if p.lower().endswith(paths.VIDEO_EXT)), None)
+        if video is None:
+            print(f"  {s}: video not found, skipped")
+            continue
+        print(f"  [{i + 1}/{len(todo)}] {s}", flush=True)
+        finders.candidates(video, json.load(open(paths.dets(s))), ckpt)
+
+
 def train_clips() -> list[tuple[str, str]]:
     out = []
     for p in sorted(paths.VERIFIED.glob("*.json")):
@@ -135,11 +163,18 @@ def main():
     a = ap.parse_args()
     EXTRA_FINDERS[:] = a.finder
     tr = train_clips()
+    for ck in a.finder:
+        ensure_cached(ck, [s for s, _ in tr])
     gt = [(s, "gt") for s in paths.gt_stems() if paths.dets(s).exists()]
     if not tr:
         print("no checked training clips yet (data/verified); fitting on the test clips instead is not allowed")
         return
     samples = collect(tr)
+    from core.ball import finders
+    empty = [ck for ck in a.finder if len(samples[finders.calib_name(ck)][1]) == 0]
+    if empty:
+        raise SystemExit(f"no candidates from {empty} on any training clip: nothing to fit, "
+                         f"{a.out} left unchanged")
     cal = fit(samples)
     cal.save(a.out, {"trained_on": [s for s, _ in tr]})
     print(f"fitted on {len(tr)} checked clip(s) {[s for s, _ in tr]}: "
