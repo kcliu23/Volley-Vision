@@ -17,7 +17,7 @@
   --line: rgba(103, 232, 249, .55);    /* court lines: cyan hairlines */
   --accent: #22d3ee;      /* cyan-400: selected / live */
   --ball: #facc15;        /* yellow-400: the ball, as in the videos */
-  --arc: #475569;         /* slate-600: past flights */
+  --arc: #94a3b8;         /* slate-400: the other flights */
   --good: #34d399; --warn: #fbbf24;
   --body: "Fira Sans", "Segoe UI", system-ui, sans-serif;
   --num: "Fira Code", ui-monospace, "SF Mono", monospace;
@@ -152,7 +152,8 @@ const D = /*__DATA__*/null;
   // floor + court
   const floorMat = new THREE.MeshBasicMaterial({ color: 0xcccccc });
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(90, 70), floorMat); floor.position.set(-2, 0, -0.01); scene.add(floor);
-  const lineMat = new THREE.LineBasicMaterial({ color: 0x67e8f9, transparent: true, opacity: 0.7 });
+  const lineMat = new THREE.LineBasicMaterial({ color: 0x67e8f9, transparent: true, opacity: 0.95 });
+  const netLineMat = new THREE.LineBasicMaterial({ color: 0xecfeff });      // the net: the brightest lines in the scene
   // a faint 1 m grid on the floor: depth cue + the HUD look
   const grid = new THREE.GridHelper(40, 40, 0x1c2a40, 0x111b2c); grid.rotateX(Math.PI / 2); grid.position.set(0, 0, -0.005); scene.add(grid);
   const seg = (a, b) => [new THREE.Vector3(...a), new THREE.Vector3(...b)];
@@ -161,12 +162,12 @@ const D = /*__DATA__*/null;
                              seg([0,-hy,0],[0,hy,0]), seg([-3,-hy,0],[-3,hy,0]), seg([3,-hy,0],[3,hy,0]));
   scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(courtPts), lineMat));
   // net: band from h-1 to h, tape on top, antennas on the sidelines, posts ~1 m outside
-  const netMat = new THREE.MeshBasicMaterial({ color: 0x67e8f9, transparent: true, opacity: 0.08, side: THREE.DoubleSide });
+  const netMat = new THREE.MeshBasicMaterial({ color: 0x67e8f9, transparent: true, opacity: 0.2, side: THREE.DoubleSide });
   const netGeo = new THREE.PlaneGeometry(9, 1); netGeo.rotateX(Math.PI / 2); netGeo.rotateZ(Math.PI / 2);   // spans y (9 m) and z (1 m)
   const net = new THREE.Mesh(netGeo, netMat); net.position.set(0, 0, h - 0.5); scene.add(net);
   const netLines = [].concat(seg([0,-hy,h],[0,hy,h]), seg([0,-hy,h-1],[0,hy,h-1]), seg([0,-hy,h-1],[0,-hy,h+0.8]), seg([0,hy,h-1],[0,hy,h+0.8]),
                              seg([0,-hy-1,0],[0,-hy-1,h+0.1]), seg([0,hy+1,0],[0,hy+1,h+0.1]), seg([0,-hy-1,h],[0,-hy,h]), seg([0,hy+1,h],[0,hy,h]));
-  scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(netLines), lineMat));
+  scene.add(new THREE.LineSegments(new THREE.BufferGeometry().setFromPoints(netLines), netLineMat));
 
   // the phone: a small frustum where it stood, pointing where it looked
   const C = new THREE.Vector3(...D.camera.pos), F = new THREE.Vector3(...D.camera.fwd), DN = new THREE.Vector3(...D.camera.down);
@@ -182,16 +183,19 @@ const D = /*__DATA__*/null;
   const byF = new Map(); D.frames.forEach(r => byF.set(r[0], r));
   // arcs: all in one quiet colour, the flight in play in the ball's amber (colour means side or ball only)
   const flightCol = new Map(); D.flights.forEach(f => flightCol.set(f.id, css("--arc")));
-  const arcs = new Map();
+  const arcs = new Map(), tubeMat = new THREE.MeshBasicMaterial({ color: 0x22d3ee });
   D.flights.forEach(f => {
     const pts = D.frames.filter(r => r[4] === f.id).map(r => new THREE.Vector3(r[1], r[2], r[3]));
     if (pts.length < 2) return;
     const col = new THREE.Color(flightCol.get(f.id));
-    const m = f.unsure ? new THREE.LineDashedMaterial({ color: col, dashSize: 0.25, gapSize: 0.2, transparent: true, opacity: 0.35 })
-                       : new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.35 });
+    const m = f.unsure ? new THREE.LineDashedMaterial({ color: col, dashSize: 0.25, gapSize: 0.2, transparent: true, opacity: 0.55 })
+                       : new THREE.LineBasicMaterial({ color: col, transparent: true, opacity: 0.55 });
     const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), m);
     if (f.unsure) l.computeLineDistances();
-    scene.add(l); arcs.set(f.id, l);
+    // the flight in play: a solid cyan tube (WebGL lines are always 1 px thin)
+    const tube = new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts), Math.max(8, pts.length * 2), 0.04, 8, false), tubeMat);
+    tube.visible = false; l.userData.tube = tube;
+    scene.add(l); scene.add(tube); arcs.set(f.id, l);
   });
   const ballMat = new THREE.MeshBasicMaterial({ color: 0xfacc15 });
   const ball = new THREE.Mesh(new THREE.SphereGeometry(0.14, 24, 16), ballMat); scene.add(ball);
@@ -293,8 +297,7 @@ const D = /*__DATA__*/null;
       ball.visible = trail.visible = false; tag.hidden = true; hh.textContent = "–";
     }
     const on = r ? r[4] : null;
-    arcs.forEach((l, id) => { l.visible = allBox.checked || id === on; l.material.opacity = id === on ? 1 : 0.3;
-      l.material.color.set(id === on ? css("--accent") : css("--arc")); });
+    arcs.forEach((l, id) => { l.visible = (allBox.checked && id !== on); l.userData.tube.visible = id === on; });
     if (on !== lastOn) { rows.querySelectorAll("tr").forEach(tr => tr.classList.toggle("on", +tr.dataset.id === on)); lastOn = on; }
     if (controls.enabled) controls.update();
     renderer.render(scene, cam);

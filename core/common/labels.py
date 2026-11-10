@@ -1,12 +1,13 @@
 """Text labels drawn over video, one look for every overlay: a clean, cool-toned HUD.
 
-Design (ui-ux-pro-max, "HUD / FUI" kept restrained): sharp dark glass plates, 1 px coloured
-edges, a short accent bar, monospaced figures (Fira Code), cool colours only. Contrast checked
+Design (ui-ux-pro-max, "HUD / FUI" kept restrained): sharp dark glass plates, coloured
+edges, a short accent bar, monospaced figures (Fira Code); the two sides in two strongly
+different hues (cyan / fuchsia) so they separate at a glance. Contrast checked
 against the gym's own backgrounds (test20, 2026-11-10): the text sits on the plate's dark fill
-(84% opaque), so it stays readable over white walls, the maple floor and the dark net alike:
+(88% opaque), so it stays readable over white walls, the maple floor and the dark net alike:
 
-    near side   cyan-300  #67E8F9   8.6:1 or more
-    far side    violet-300 #C4B5FD  6.8:1 or more
+    near side   cyan-300  #67E8F9     9.9:1 or more
+    far side    fuchsia-400 #E879F9  5.8:1 or more
     unnamed     slate-400 #94A3B8   4.9:1 or more
     values      slate-50  #F8FAFC   (the ball's height)
 
@@ -35,7 +36,7 @@ SS = 3                                       # supersampling for smooth text and
 class Labels:
     # colour tokens, RGB (Tailwind palette)
     NEAR = (103, 232, 249)                   # cyan-300: the camera's side of the net
-    FAR = (196, 181, 253)                    # violet-300: the far side
+    FAR = (232, 121, 249)                    # fuchsia-400: the far side
     UNNAMED = (148, 163, 184)                # slate-400: nobody numbered them
     VALUE = (248, 250, 252)                  # slate-50: measured values (ball height)
     PLATE = (8, 13, 24)                      # the dark glass
@@ -44,8 +45,8 @@ class Labels:
         self.s = frame_height / 1080
 
     def _plate(self, text, color, size, bar=True):
-        return _sprite(text, round(size * self.s), tuple(color), round(1.5 * self.s * SS) / SS,
-                       round(4 * self.s) if bar else 0)
+        return _sprite(text, round(size * self.s), tuple(color), round(2 * self.s * SS) / SS,
+                       round(5 * self.s) if bar else 0)
 
     def chip(self, img, text: str, bottom_centre, color=NEAR, size: float = 28):
         self.chips(img, [(text, bottom_centre, color, size)])
@@ -109,7 +110,7 @@ def _sprite(text, px, color, edge, bar):
     d = ImageDraw.Draw(im)
     r = max(1, int(0.12 * H))                            # nearly square corners: sharp, not pills
     e = max(1, int(edge * SS))
-    d.rounded_rectangle((0, 0, W - 1, H - 1), radius=r, fill=Labels.PLATE + (214,), outline=color + (150,), width=e)
+    d.rounded_rectangle((0, 0, W - 1, H - 1), radius=r, fill=Labels.PLATE + (224,), outline=color + (230,), width=e)
     if bar:
         d.rectangle((e, e + int(0.18 * H), e + bar * SS - 1, H - 1 - e - int(0.18 * H)), fill=color + (255,))
     d.text((lead + padx - x0, pady + th), text, font=f, anchor="ls", fill=color + (255,))

@@ -8,7 +8,7 @@ Per frame:
             with its height in meters beside it. Frames the 3D left out (held / rolling / bad
             fits) show the 2D track's ball with no height, so the ball never just vanishes.
   players   your number on a small plate just above each player's head (from the pose's face points),
-            cyan on the camera's side of the net, violet on the far side (legend bottom left);
+            cyan on the camera's side of the net, fuchsia on the far side (legend bottom left);
             "?" in grey for a player nobody named (only on or
             next to the court, so the bench and crowd stay quiet). In the air: "#4 ↑ 0.28 m",
             the feet height.
