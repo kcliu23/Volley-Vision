@@ -288,12 +288,15 @@ def _facing(k):
 
 
 def touch_evidence(pose_frames: dict, f: int, ball_uv, cam, ball_px: float, near_px: float = 2.5,
-                   before_s: float = 0.6, fps: float = 60.0):
+                   before_s: float = 0.6, fps: float = 60.0, labels=None):
     """People whose wrist is at the ball around frame f (within near_px ball widths, +-2 frames).
     For each: side of the net (-1 near the camera, +1 far, 0 unsure) from which way they face and,
     when the feet are clearly seen, from where they stood before the touch (the lowest ankles in
     the before_s seconds before: the takeoff spot, so a jump doesn't move them); and that spot
-    on the floor (None when the ankles aren't trustworthy). Returns [{id, side, spot}]."""
+    on the floor (None when the ankles aren't trustworthy). Returns [{id, side, spot}].
+    labels (core.people.player_labels.PlayerLabels, optional): your player numbers. A named player's
+    side is their number's side (1-6 near, 7-12 far), not a guess; people you marked "x" (not a
+    player: bench, referee) are never touchers. The result then also carries "player"."""
     out = {}
     u, v = float(ball_uv[0]), float(ball_uv[1])
     for g in range(f - 2, f + 3):
@@ -330,5 +333,12 @@ def touch_evidence(pose_frames: dict, f: int, ball_uv, cam, ball_px: float, near
             if side == 0 or feet_side == 0 or feet_side == side:   # feet agree with the facing
                 spot = (float(g_[0]), float(g_[1]))
                 side = side or feet_side
-        res.append({"id": pid, "side": side, "spot": spot, "wrist_px": round(c["d"], 1)})
+        num = labels.number(pid, f) if labels is not None else None
+        if num == "x":
+            continue                                        # you said: not a player
+        if isinstance(num, int):
+            side = -1 if num <= 6 else 1                    # your label, not a guess
+            if spot is not None and int(np.sign(spot[0])) not in (0, side) and abs(spot[0]) > 0.4:
+                spot = None                                  # feet on the other side: ankles misread
+        res.append({"id": pid, "side": side, "spot": spot, "wrist_px": round(c["d"], 1), "player": num})
     return res

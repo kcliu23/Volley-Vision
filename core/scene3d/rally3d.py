@@ -452,7 +452,7 @@ def _solve_once(o: Obs, cam, hints, log):
 
 
 def solve_clip(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_s: float = 1.5,
-               players=None, T=None, net_h=None, poses=None, ball_px: float = 25.0):
+               players=None, T=None, net_h=None, poses=None, ball_px: float = 25.0, player_labels=None):
     """A whole clip: split into rallies (stretches with no ball for > rally_gap_s), solve() each
     with the tracker's contacts as hints. T: true frame times (core.common.frametime); players: from
     core.people.players.build; poses: output/<clip>/pose.json frames (tools.pose), to anchor touches to
@@ -476,7 +476,8 @@ def solve_clip(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_
         o = Obs(tf, uv[fr], size[fr], w[fr], fr, edge[fr], out_f, box, fps, T=T, net_h=net_h, near=near)
         if poses:
             from core.people.players import touch_evidence
-            o.touchers = lambda f, uv_, P=poses: touch_evidence(P, f, uv_, cam, ball_px, fps=fps)
+            o.touchers = lambda f, uv_, P=poses: touch_evidence(P, f, uv_, cam, ball_px, fps=fps,
+                                                                labels=player_labels)
         hints = [c["frame"] for c in contacts if fr[0] <= c["frame"] <= fr[-1]]
         res, info = solve(o, cam, hints, log=log)
         nt = len(res) - 1

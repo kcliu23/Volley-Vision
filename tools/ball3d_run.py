@@ -93,14 +93,18 @@ def main():
             from core.people.players import build
             players = build(json.load(open(pj)), cam, fps)
             print(f"[ball3d] {stem}: {len(players)} players: a touch away from all of them costs more")
-        poses = None
+        poses, plabels = None, None
         pj2 = paths.clip_dir(stem, a.output) / "pose.json"
         if pj2.exists():
             poses = json.load(open(pj2))["frames"]
             print(f"[ball3d] {stem}: poses found: touches are anchored to the player who made them")
+            from core.people.player_labels import PlayerLabels
+            plabels = PlayerLabels.load(stem, pj2, log=lambda m: print(f"[ball3d] {stem}: " + m))
+            if plabels is not None:
+                print(f"[ball3d] {stem}: your player numbers: each toucher's side of the net is known")
         bpx = float(np.nanmedian(size)) if np.isfinite(size).any() else 25.0
         pieces = solve_clip(uv, w, size, edge, box, fps, cam, C["contacts"], players=players, T=T, net_h=net_h,
-                            poses=poses, ball_px=bpx,
+                            poses=poses, ball_px=bpx, player_labels=plabels,
                             log=lambda m: print(f"[ball3d] {stem}: " + m))
 
     flights_out, frames_out = [], {}
