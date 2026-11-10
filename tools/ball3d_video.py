@@ -8,7 +8,7 @@ Per frame:
             with its height in meters beside it. Frames the 3D left out (held / rolling / bad
             fits) show the 2D track's ball with no height, so the ball never just vanishes.
   players   your number in a small chip just above each player's head (from the pose's face points),
-            outlined blue on the camera's side of the net and rose on the far side; "?" in grey for a player nobody named (only on or
+            blue on the camera's side of the net, rose on the far side; "?" in grey for a player nobody named (only on or
             next to the court, so the bench and crowd stay quiet). In the air: "#4 ↑ 0.28 m",
             the feet height.
 Labels: core.common.labels (one look for all overlay text).
@@ -99,16 +99,18 @@ def main():
 
         # players first, so the ball draws over their chips; each chip sits just above the head,
         # eased over a few frames so it doesn't shake with the pose points
+        chips = []
         for pid, hp, near, air, fz, _g in people.get(f, []):
             last = eased.get(pid)
             hp = hp if last is None or last[0] < f - 3 else (0.4 * hp[0] + 0.6 * last[1][0], 0.4 * hp[1] + 0.6 * last[1][1])
             eased[pid] = (f, hp)
             head = (hp[0], hp[1] - 6 * scale)
             if pid >= UNNAMED:
-                L.chip(img, "?", head, outline=Labels.MUTED, size=22, text_rgb=Labels.MUTED)
-                continue
-            side = Labels.NEAR if near else Labels.FAR
-            L.chip(img, f"#{pid}  \u2191 {fz:.2f} m" if air else f"#{pid}", head, outline=side)
+                chips.append(("?", head, Labels.UNNAMED, Labels.SOFT, 24))
+            else:
+                text = f"#{pid}  \u2191 {fz:.2f} m" if air else f"#{pid}"
+                chips.append((text, head, Labels.NEAR if near else Labels.FAR, Labels.WHITE, 30))
+        L.chips(img, chips)
 
         if a.debug and X is not None:
             s = cam.project([[X[0], X[1], 0.0]])[0]
@@ -119,7 +121,7 @@ def main():
         if p is not None:
             draw_ball(img, p)
             if X is not None:
-                L.tag(img, f"{X[2]:.1f} m", (p[0] + 26 * scale, p[1] - 26 * scale))
+                L.tag(img, f"{X[2]:.1f} m", (p[0] + 28 * scale, p[1] - 28 * scale))
 
         if mini is not None:
             mini.draw(img, f, X, people.get(f, []), W, H)
