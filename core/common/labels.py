@@ -1,26 +1,25 @@
-"""Text labels drawn over video: solid pills with a real font, shared by the overlay videos.
+"""Text labels drawn over video, one look for every overlay: a clean, cool-toned HUD.
 
-Design (ui-ux-pro-max: Fira Sans for data, semantic colour tokens, WCAG contrast) and checked
-on test20's frames behind real labels (2026-11-10):
+Design (ui-ux-pro-max, "HUD / FUI" kept restrained): sharp dark glass plates, 1 px coloured
+edges, a short accent bar, monospaced figures (Fira Code), cool colours only. Contrast checked
+against the gym's own backgrounds (test20, 2026-11-10): the text sits on the plate's dark fill
+(84% opaque), so it stays readable over white walls, the maple floor and the dark net alike:
 
-    chip    a player's number: a solid pill in the side's colour, white text, a thin white ring
-            so it separates from dark backgrounds (the net, dark walls); the saturated fill
-            separates it from light ones. A thin coloured outline on a dark fill (the first
-            version) dropped to 1.1:1 against dark backgrounds: the side was unreadable there.
-    tag     the ball's height: an amber pill, dark text, a dark ring (amber alone fell to 2.4:1
-            against the light gym walls).
+    near side   cyan-300  #67E8F9   8.6:1 or more
+    far side    violet-300 #C4B5FD  6.8:1 or more
+    unnamed     slate-400 #94A3B8   4.9:1 or more
+    values      slate-50  #F8FAFC   (the ball's height)
 
-Text contrast: white on blue-600 5.2:1, on rose-600 4.7:1, slate-200 on slate-600 6.2:1, dark on
-amber 10.7:1 (all >= 4.5). Sizes follow the frame height (designed at 1080 px): a 30 px label on
-a 1206 px video viewed 1300 px wide is ~15 px on screen.
+Colour never carries meaning alone: the number is always text, and the side colours are named
+in a small legend (Labels.legend).
 
-OpenCV's built-in fonts are blocky and its shapes jagged, so labels are drawn with Pillow (Fira
-Sans SemiBold, assets/fonts, SIL Open Font License) at 3x, scaled down, cached as small RGBA
-sprites and alpha-blended into the frame.
+Labels are drawn with Pillow at 3x, scaled down, cached as small RGBA sprites and alpha-blended
+into the frame. Sizes follow the frame height (designed at 1080 px).
 
     L = Labels(frame_height)
-    L.chip(img, "#4", (x, y), fill=Labels.NEAR)             # (x, y) = the chip's bottom centre
-    L.tag(img, "2.9 m", (x, y))                             # (x, y) = the tag's left middle
+    L.chips(img, [("#4", (x, y), Labels.NEAR), ...])        # (x, y) = each plate's bottom centre
+    L.tag(img, "2.9 m", (x, y))                             # (x, y) = the plate's left middle
+    L.legend(img)                                           # bottom left: what the colours mean
 """
 from __future__ import annotations
 
@@ -30,37 +29,36 @@ from pathlib import Path
 import numpy as np
 
 FONTS = Path(__file__).resolve().parents[2] / "assets" / "fonts"
-SS = 3                                       # supersampling for smooth text and corners
+SS = 3                                       # supersampling for smooth text and edges
 
 
 class Labels:
     # colour tokens, RGB (Tailwind palette)
-    NEAR = (37, 99, 235)                     # blue-600: the camera's side of the net
-    FAR = (225, 29, 72)                      # rose-600: the far side
-    UNNAMED = (71, 85, 105)                  # slate-600: a player nobody numbered
-    BALL = (251, 191, 36)                    # amber-400: the ball's height
-    INK = (15, 23, 42)                       # slate-900
-    WHITE = (255, 255, 255)
-    SOFT = (226, 232, 240)                   # slate-200
+    NEAR = (103, 232, 249)                   # cyan-300: the camera's side of the net
+    FAR = (196, 181, 253)                    # violet-300: the far side
+    UNNAMED = (148, 163, 184)                # slate-400: nobody numbered them
+    VALUE = (248, 250, 252)                  # slate-50: measured values (ball height)
+    PLATE = (8, 13, 24)                      # the dark glass
 
     def __init__(self, frame_height: int):
         self.s = frame_height / 1080
 
-    def chip(self, img, text: str, bottom_centre, fill=NEAR, text_rgb=WHITE, size: float = 30):
-        self.chips(img, [(text, bottom_centre, fill, text_rgb, size)])
+    def _plate(self, text, color, size, bar=True):
+        return _sprite(text, round(size * self.s), tuple(color), round(1.5 * self.s * SS) / SS,
+                       round(4 * self.s) if bar else 0)
 
-    def _chip_sprite(self, text, fill, text_rgb, size):
-        return _sprite(text, round(size * self.s), tuple(fill) + (245,), tuple(text_rgb),
-                       Labels.WHITE + (220,), max(1, round(2 * self.s)))
+    def chip(self, img, text: str, bottom_centre, color=NEAR, size: float = 28):
+        self.chips(img, [(text, bottom_centre, color, size)])
 
     def chips(self, img, items):
-        """Several chips at once, nudged apart so none covers another: items are (text,
-        bottom_centre, fill, text_rgb, size); a chip that would overlap one already placed moves
-        up just clear of it (players close together in the picture get a short stack)."""
-        gap = max(2, round(3 * self.s))
+        """Several plates at once, nudged apart so none covers another: items are (text,
+        bottom_centre, color[, size]); a plate that would overlap one already placed moves up
+        just clear of it (players close together in the picture get a short stack)."""
+        gap = max(2, round(4 * self.s))
         placed = []                                     # (x0, y0, x1, y1)
-        for text, (cx, by), fill, text_rgb, size in sorted(items, key=lambda it: -it[1][1]):
-            spr = self._chip_sprite(text, fill, text_rgb, size)
+        for it in sorted(items, key=lambda it: -it[1][1]):
+            text, (cx, by), color = it[:3]
+            spr = self._plate(text, color, it[3] if len(it) > 3 else 28)
             h, w = spr.shape[:2]
             x0, y1 = int(cx - w / 2), int(by)
             moved = True
@@ -73,39 +71,48 @@ class Labels:
             placed.append((x0, y1 - h, x0 + w, y1))
             _blend(img, spr, x0, y1 - h)
 
-    def tag(self, img, text: str, left_middle, fill=BALL, size: float = 32):
-        spr = _sprite(text, round(size * self.s), tuple(fill) + (250,), Labels.INK,
-                      Labels.INK + (200,), max(1, round(2 * self.s)))
-        h, _w = spr.shape[:2]
-        _blend(img, spr, int(left_middle[0]), int(left_middle[1] - h / 2))
+    def tag(self, img, text: str, left_middle, color=VALUE, size: float = 30):
+        spr = self._plate(text, color, size, bar=False)
+        _blend(img, spr, int(left_middle[0]), int(left_middle[1] - spr.shape[0] / 2))
+
+    def legend(self, img, items=(("NEAR SIDE", NEAR), ("FAR SIDE", FAR))):
+        """What the colours mean, small, bottom left."""
+        x, y = round(24 * self.s), img.shape[0] - round(24 * self.s)
+        for text, color in items:
+            spr = self._plate(text, color, 20)
+            _blend(img, spr, x, y - spr.shape[0])
+            x += spr.shape[1] + round(8 * self.s)
 
 
 def _font(px: int):
     from PIL import ImageFont
-    try:
-        return ImageFont.truetype(str(FONTS / "FiraSans-SemiBold.ttf"), px)
-    except OSError:
+    for path in (FONTS / "FiraCode-SemiBold.ttf", FONTS / "FiraSans-SemiBold.ttf", "DejaVuSansMono-Bold.ttf"):
         try:
-            return ImageFont.truetype("DejaVuSans-Bold.ttf", px)
+            return ImageFont.truetype(str(path), px)
         except OSError:
-            return ImageFont.load_default()
+            continue
+    return ImageFont.load_default()
 
 
 @lru_cache(maxsize=512)
-def _sprite(text, px, fill_rgba, text_rgb, ring_rgba, ring):
-    """A pill holding `text`: uint8 array (h, w, 4), BGR + alpha."""
+def _sprite(text, px, color, edge, bar):
+    """A sharp dark plate holding `text` in `color`, a 1-2 px edge in `color`, and (bar > 0) a
+    short accent bar on the left: uint8 array (h, w, 4), BGR + alpha."""
     from PIL import Image, ImageDraw
     f = _font(px * SS)
     x0, _, x1, _ = f.getbbox(text, anchor="ls")
-    padx, pady = int(0.5 * px * SS), int(0.34 * px * SS)
+    padx, pady = int(0.45 * px * SS), int(0.36 * px * SS)
+    lead = bar * SS * 2 if bar else 0
     tw, th = x1 - x0, int(0.70 * px * SS)               # cap height: digits and capitals sit centred
-    W, H = tw + 2 * padx, th + 2 * pady
+    W, H = lead + tw + 2 * padx, th + 2 * pady
     im = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
-    d.rounded_rectangle((0, 0, W - 1, H - 1), radius=H // 2, fill=ring_rgba)
-    r = ring * SS
-    d.rounded_rectangle((r, r, W - 1 - r, H - 1 - r), radius=H // 2 - r, fill=fill_rgba)
-    d.text((padx - x0, pady + th), text, font=f, anchor="ls", fill=tuple(text_rgb) + (255,))
+    r = max(1, int(0.12 * H))                            # nearly square corners: sharp, not pills
+    e = max(1, int(edge * SS))
+    d.rounded_rectangle((0, 0, W - 1, H - 1), radius=r, fill=Labels.PLATE + (214,), outline=color + (150,), width=e)
+    if bar:
+        d.rectangle((e, e + int(0.18 * H), e + bar * SS - 1, H - 1 - e - int(0.18 * H)), fill=color + (255,))
+    d.text((lead + padx - x0, pady + th), text, font=f, anchor="ls", fill=color + (255,))
     im = im.resize((max(1, W // SS), max(1, H // SS)), Image.LANCZOS)
     return np.ascontiguousarray(np.asarray(im)[..., [2, 1, 0, 3]])
 
