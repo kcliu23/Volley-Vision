@@ -28,6 +28,7 @@ from types import SimpleNamespace
 
 from core.ball.finders import FINDER_DEFAULT
 from core.common import paths
+from evaluation.inplay import in_play
 
 CUR_YOLO = "models/best4.pt"
 CUR_TN = "models/tracknet/FT_TrackNet_best.pt"
@@ -150,11 +151,16 @@ def main():
                               ("dev clips (data/gt; test7/12/17 were in best4's training)", gt, "gt"),
                               ("your checked training clips", checked, "verified")):
         tot = {n: {"hit": 0, "wrong": 0, "miss": 0, "ok": 0, "false": 0} for n in tracks}
+        live = {n: {"hit": 0, "wrong": 0, "miss": 0, "ok": 0, "false": 0} for n in tracks}
+        unmarked = 0
         per = []
         for stem in group:
             if stem not in tracks["current"]:
                 continue
-            labels = json.load(open(paths.gt(stem) if src == "gt" else paths.verified(stem)))["labels"]
+            V = json.load(open(paths.gt(stem) if src == "gt" else paths.verified(stem)))
+            labels = V["labels"]
+            play = in_play(V)
+            unmarked += play is None
             dp = paths.dets(stem, roots["current"]) if classic else \
                 paths.cache_dir(stem, roots["current"]) / "sample_dets.json"
             ball = ball_px(json.load(open(dp)))
@@ -164,12 +170,20 @@ def main():
                 row[n] = r
                 for k in r:
                     tot[n][k] += r[k]
+                if play is not None:
+                    rl = score(tracks[n][stem], {k: v for k, v in labels.items() if int(k) in play}, ball)
+                    for k in rl:
+                        live[n][k] += rl[k]
             per.append((stem, row))
         if not per:
             continue
         print(title)
         for n in ("current", "candidate"):
             print(f"  {n:10s} {fmt(tot[n])}")
+        if len(per) > unmarked:
+            print(f"  IN PLAY only (serve -> rally over; {len(per) - unmarked} of {len(per)} clips have their serves marked)")
+            for n in ("current", "candidate"):
+                print(f"  {n:10s} {fmt(live[n])}")
         for stem, row in per:
             h = {n: row[n]["hit"] / max(1, row[n]["hit"] + row[n]["wrong"] + row[n]["miss"]) for n in row}
             print(f"     {stem:8s} current {h['current']:6.1%}   candidate {h['candidate']:6.1%}"

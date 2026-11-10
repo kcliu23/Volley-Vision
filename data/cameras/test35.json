@@ -1,0 +1,187 @@
+{
+ "schema": "vv-camera/1",
+ "width": 2622,
+ "height": 1206,
+ "f": 2160.426843675736,
+ "cx": 1311.0,
+ "cy": 603.0,
+ "k1": 0.0,
+ "rvec": [
+  1.2409453051473394,
+  -1.1588322142415637,
+  1.1960958533257562
+ ],
+ "tvec": [
+  0.5043565833428375,
+  1.5322243652929552,
+  14.136613014651857
+ ],
+ "position_m": [
+  -14.158,
+  -0.105,
+  1.412
+ ],
+ "fov_deg": 62.5,
+ "info": {
+  "rms_px": 4.19,
+  "n_points": 4,
+  "n_line_clicks": 24,
+  "fit_k1": false,
+  "residual_px": {
+   "centre line left": 3.5,
+   "centre line right": 3.8,
+   "near attack line left": 2.0,
+   "near attack line right": 1.2
+  },
+  "line_px": {
+   "net tape": 2.4,
+   "net band": 10.1,
+   "left sideline": 1.2,
+   "right sideline": 4.5,
+   "centre line": 3.9,
+   "near attack line": 0.5,
+   "far attack line": 2.7,
+   "far end line": 0.4
+  },
+  "f_std": 45.7,
+  "position_std_m": [
+   0.256,
+   0.102,
+   0.028
+  ]
+ },
+ "video": "videos/test35.mov",
+ "net_height": 2.43,
+ "points": {
+  "centre line left": [
+   713.2,
+   819.8
+  ],
+  "centre line right": [
+   2085.4,
+   860.0
+  ],
+  "near attack line left": [
+   526.1,
+   872.3
+  ],
+  "near attack line right": [
+   2270.7,
+   921.2
+  ]
+ },
+ "line_clicks": {
+  "net tape": [
+   [
+    765.6,
+    452.7
+   ],
+   [
+    1482.3,
+    470.2
+   ],
+   [
+    2041.7,
+    475.5
+   ]
+  ],
+  "net band": [
+   [
+    728.9,
+    599.6
+   ],
+   [
+    1480.6,
+    613.5
+   ],
+   [
+    2076.6,
+    618.8
+   ]
+  ],
+  "left sideline": [
+   [
+    713.2,
+    818.1
+   ],
+   [
+    526.1,
+    872.3
+   ],
+   [
+    255.2,
+    945.7
+   ]
+  ],
+  "right sideline": [
+   [
+    2085.4,
+    858.3
+   ],
+   [
+    2270.7,
+    921.2
+   ],
+   [
+    1907.1,
+    802.3
+   ]
+  ],
+  "centre line": [
+   [
+    730.7,
+    823.3
+   ],
+   [
+    2045.2,
+    860.0
+   ],
+   [
+    1812.7,
+    851.3
+   ]
+  ],
+  "near attack line": [
+   [
+    555.9,
+    872.3
+   ],
+   [
+    2230.4,
+    919.4
+   ],
+   [
+    1316.2,
+    893.2
+   ]
+  ],
+  "far attack line": [
+   [
+    1935.0,
+    816.3
+   ],
+   [
+    865.3,
+    781.4
+   ],
+   [
+    1366.9,
+    798.8
+   ]
+  ],
+  "far end line": [
+   [
+    1005.1,
+    742.9
+   ],
+   [
+    1611.7,
+    758.6
+   ],
+   [
+    1809.2,
+    763.9
+   ]
+  ]
+ }
+}

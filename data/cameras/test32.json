@@ -1,0 +1,192 @@
+{
+ "schema": "vv-camera/1",
+ "width": 2622,
+ "height": 1206,
+ "f": 2210.380720083365,
+ "cx": 1311.0,
+ "cy": 603.0,
+ "k1": 0.0,
+ "rvec": [
+  1.2418649842131535,
+  -1.1557653190127615,
+  1.1884731303382745
+ ],
+ "tvec": [
+  0.49153505483741244,
+  1.5245125163537459,
+  14.39894648252347
+ ],
+ "position_m": [
+  -14.417,
+  -0.232,
+  1.41
+ ],
+ "fov_deg": 61.35,
+ "info": {
+  "rms_px": 6.04,
+  "n_points": 8,
+  "n_line_clicks": 21,
+  "fit_k1": false,
+  "residual_px": {
+   "centre line left": 1.4,
+   "centre line right": 6.6,
+   "near attack line left": 1.6,
+   "near attack line right": 4.9,
+   "net bottom left": 7.5,
+   "net bottom right": 16.1,
+   "net top left": 3.5,
+   "net top right": 1.8
+  },
+  "line_px": {
+   "net tape": 1.7,
+   "net band": 10.5,
+   "left sideline": 1.1,
+   "right sideline": 4.4,
+   "centre line": 7.0,
+   "near attack line": 2.1,
+   "far attack line": 5.7
+  },
+  "f_std": 49.4,
+  "position_std_m": [
+   0.293,
+   0.123,
+   0.044
+  ]
+ },
+ "video": "videos/test32.mov",
+ "net_height": 2.43,
+ "points": {
+  "centre line left": [
+   706.2,
+   821.6
+  ],
+  "centre line right": [
+   2083.6,
+   858.3
+  ],
+  "near attack line left": [
+   522.7,
+   872.3
+  ],
+  "near attack line right": [
+   2268.9,
+   921.2
+  ],
+  "net bottom left": [
+   714.9,
+   597.8
+  ],
+  "net bottom right": [
+   2090.6,
+   615.3
+  ],
+  "net top left": [
+   716.7,
+   456.2
+  ],
+  "net top right": [
+   2095.9,
+   473.7
+  ]
+ },
+ "line_clicks": {
+  "net tape": [
+   [
+    737.7,
+    452.7
+   ],
+   [
+    1496.3,
+    468.5
+   ],
+   [
+    2046.9,
+    473.7
+   ]
+  ],
+  "net band": [
+   [
+    714.9,
+    596.1
+   ],
+   [
+    1199.1,
+    608.3
+   ],
+   [
+    1966.5,
+    613.5
+   ]
+  ],
+  "left sideline": [
+   [
+    529.6,
+    870.5
+   ],
+   [
+    699.2,
+    821.6
+   ],
+   [
+    276.2,
+    940.4
+   ]
+  ],
+  "right sideline": [
+   [
+    2081.9,
+    858.3
+   ],
+   [
+    2221.7,
+    900.2
+   ],
+   [
+    2359.8,
+    954.4
+   ]
+  ],
+  "centre line": [
+   [
+    1940.3,
+    854.8
+   ],
+   [
+    1662.3,
+    854.8
+   ],
+   [
+    1417.6,
+    840.8
+   ]
+  ],
+  "near attack line": [
+   [
+    526.1,
+    872.3
+   ],
+   [
+    1253.3,
+    888.0
+   ],
+   [
+    2195.5,
+    912.5
+   ]
+  ],
+  "far attack line": [
+   [
+    966.6,
+    798.8
+   ],
+   [
+    1213.1,
+    798.8
+   ],
+   [
+    1774.2,
+    811.1
+   ]
+  ]
+ }
+}

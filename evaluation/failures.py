@@ -33,6 +33,7 @@ from pathlib import Path
 import numpy as np
 
 from core.common import paths
+from evaluation.inplay import in_play
 from evaluation.scoreboard import CUR_FINDER, CUR_YOLO, find_video, run_one
 
 FAST_PX, SMALL_PX, EDGE_PX, STATIC_N, STATIC_R = 35.0, 18.0, 40.0, 25, 12.0
@@ -180,8 +181,14 @@ def main():
                         reuse_finder=(a.finder == CUR_FINDER), pipeline="finder-first")
         V = json.load(open(paths.verified(stem)))
         ball = ball_px(json.load(open(paths.cache_dir(stem, root) / "sample_dets.json")))
-        rows += analyse(stem, track, V["labels"], V.get("boxes", {}), wasb_guesses(stem, a.finder, root),
-                        V["width"], V["height"], ball)
+        clip_rows = analyse(stem, track, V["labels"], V.get("boxes", {}), wasb_guesses(stem, a.finder, root),
+                            V["width"], V["height"], ball)
+        play = in_play(V)
+        for r in clip_rows:
+            r["play"] = None if play is None else (r["f"] in play)
+            if r["play"] is False:
+                r["tags"].add("not-in-play")
+        rows += clip_rows
 
     vis = [r for r in rows if r["gt"] is not None]
     hid = [r for r in rows if r["gt"] is None]
@@ -189,6 +196,12 @@ def main():
     print(f"\nmodels: YOLO {a.yolo}   WASB {a.finder}   ({len(clips)} holdout clips, {len(vis)} frames with the ball)")
     print(f"pipeline   on-ball {k['hit'] / len(vis):6.1%}   wrong {k['wrong'] / len(vis):5.1%}   missed {k['miss'] / len(vis):5.1%}"
           f"   false-when-hidden {sum(r['kind'] == 'false' for r in hid) / max(len(hid), 1):5.1%}")
+    live = [r for r in vis if r["play"]]
+    if live:
+        kl = Counter(r["kind"] for r in live)
+        marked = len({r["clip"] for r in rows if r["play"] is not None})
+        print(f"IN PLAY    on-ball {kl['hit'] / len(live):6.1%}   wrong {kl['wrong'] / len(live):5.1%}   missed "
+              f"{kl['miss'] / len(live):5.1%}   ({len(live)} frames; {marked} of {len(clips)} clips have serves marked)")
     kw = Counter(r["wasb"] for r in vis)
     print(f"WASB alone on-ball {kw['hit'] / len(vis):6.1%}   ball in its top 3: {sum(r['in3'] for r in vis) / len(vis):5.1%}")
 

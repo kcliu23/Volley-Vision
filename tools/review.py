@@ -44,6 +44,8 @@ it resumes where you left off.
   contacts       m      mark a touch at this frame, then its type: 1 serve, 2 pass/receive,
                         3 set, 4 hit (anything sent over that isn't a serve or block), 5 block,
                         6 dig, 0 other (m on a marked frame removes it)
+                        9 rally over: the ball is dead (not a touch). Serve -> rally over marks
+                        which frames are IN PLAY: the scores report those on their own
                  M      jump to the next marked touch
   other          u      undo                   t      toggle train / test clip
                  ?      help                   q/Esc  save and quit
@@ -375,7 +377,8 @@ class Review:
                 return h
         return None
 
-    CONTACT_TYPES = {"1": "serve", "2": "pass", "3": "set", "4": "hit", "5": "block", "6": "dig", "0": "other"}
+    CONTACT_TYPES = {"1": "serve", "2": "pass", "3": "set", "4": "hit", "5": "block", "6": "dig", "0": "other",
+                     "9": "dead"}                      # 9: not a touch: the rally is over (ball dead)
 
     def set_contact(self, f: int, kind: str | None):
         """Mark a touch at frame f (kind from CONTACT_TYPES values), or remove it (None)."""
@@ -1044,7 +1047,7 @@ def review(video: str, test: bool = False):
                 R.set_contact(f, Review.CONTACT_TYPES[k]); save()
                 msg, msg_t = f"touch at frame {f}: {Review.CONTACT_TYPES[k]}", time.time()
             else:
-                msg, msg_t = "no touch marked (type keys: 1 serve 2 pass 3 set 4 hit 5 block 6 dig 0 other)", time.time()
+                msg, msg_t = "no touch marked (type keys: 1 serve 2 pass 3 set 4 hit 5 block 6 dig 0 other 9 rally over)", time.time()
             continue
         if k == "m":
             playing = False
@@ -1053,7 +1056,7 @@ def review(video: str, test: bool = False):
                 msg, msg_t = f"touch at frame {f} removed", time.time()
             else:
                 state["contact"] = True
-                msg, msg_t = "touch type? 1 serve 2 pass 3 set 4 hit 5 block 6 dig 0 other", time.time()
+                msg, msg_t = "touch type? 1 serve 2 pass 3 set 4 hit 5 block 6 dig 0 other 9 rally over", time.time()
             continue
         if k == "M":
             g = R.next_contact(f); playing = False
