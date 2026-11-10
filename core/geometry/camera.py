@@ -62,6 +62,8 @@ class Camera:
         """(N, 3) court points -> (N, 2) pixels."""
         import cv2
         X = np.asarray(X, float).reshape(-1, 3)
+        if len(X) == 0:                                   # nothing to project (e.g. a line fully behind the camera)
+            return np.zeros((0, 2))
         uv, _ = cv2.projectPoints(X, np.asarray(self.rvec, float), np.asarray(self.tvec, float), self.K, self.dist)
         return uv.reshape(-1, 2)
 

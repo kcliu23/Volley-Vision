@@ -68,3 +68,8 @@ def test_solve_from_line_clicks_and_two_points(rng):
     est = solve(pts, W, H, line_clicks=clicks)
     assert abs(est.f - cam.f) / cam.f < 0.05
     assert np.linalg.norm(est.position - cam.position) < 0.6
+
+
+def test_project_nothing_returns_nothing(camera):
+    """A court line entirely behind the camera leaves no points to draw (calibrate_court crashed on test37)."""
+    assert camera.project(np.zeros((0, 3))).shape == (0, 2)
