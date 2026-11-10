@@ -5,32 +5,39 @@
 
 Numbers 1-6 = the team on the NEAR side (the camera's side of the net), 7-12 = the FAR side, so a
 number also says the side. You don't label boxes frame by frame: the tracker has already followed
-each person for a while (a "piece"), and one key press names the whole piece. A grey box with
-"?7" means "probably 7" (the re-ID guess, or the same piece-group as one you named): press a to
-take all the guesses in this frame, then fix the wrong ones.
+each person for a while (a "track"), and one key press names the whole track. A grey box with
+"?7" means "probably 7" (the re-ID guess, or the same group as one you named): press a to take
+all the guesses in this frame, then fix the wrong ones.
+
+When the tracker drifts from one person to another (a player and someone off court walking past
+each other), a fix at one frame must not undo another. So every key press is a MARK on that track
+at this frame, and a mark holds until the next mark on the same track (the first mark also
+covers the frames before it):
+    frame 790: the box is the bench guy -> x        frame 820: the same track is player 1 -> 1
+    => up to 819 x, from 820 on 1. Fixing 820 never touches 790.
+    To find where it really switches: step with , and . and press the right key on the first
+    frame that is wrong (it holds from there to the next mark).
+The track's marks show at the top while it's selected.
 
   click a box, then a key:
-    1-9, 0, -, =   player 1..9, 10, 11, 12 (1-6 near side, 7-12 far side) - for the whole piece
+    1-9, 0, -, =   player 1..9, 10, 11, 12 (1-6 near side, 7-12 far side)
     x              not a player (bench, referee, spectator, someone walking by)
-    u              un-name this piece
+    u              un-named (from this mark to the next)
+    r              the whole track = the name shown on this box (removes its other marks)
   z                undo the last change (up to 50)
-  g                after renaming someone: also rename their other pieces that still carry the old
-                   number (the tracker often splits one person into several pieces)
-    k              the tracker swapped people here: cut the piece at this frame (then name each part)
+  g                after renaming someone: also rename their other tracks that still carry the old
+                   number (the tracker often splits one person into several tracks)
   a                take every "?n" guess shown in this frame
   h                boxes: thin full boxes (default) -> corners only -> numbers only
   n / Tab          jump to the next frame with an un-named person on court, or a number used twice
-                   (red "7!" boxes: one of the two is wrong - see below)
+                   (red "7!" boxes: one of the two is wrong - click it and press the right key)
   -> / ]   <- / [  0.5 s forward / back          . ,  one frame forward / back
   Enter / q        everything is saved as you go (data/player_ids/<clip>.json, after every change);
                    the labels as they were each time you opened the clip: .backups/<clip>.backup-<time>.json (last 5)
 
-Same number on two boxes (red "7!"): one of them is wrong. Click the wrong one and:
-  - a different person: press their number (renames that whole piece)
-  - the tracker swapped two people at this moment (the piece was right before, wrong after):
-    k to cut it here, then press the right number for the part from here on
-  (Two boxes on ONE person - the detector found them twice - are fine: give both the same
-  number. Boxes that mostly overlap aren't flagged red.)
+Same number on two boxes (red "7!"): one of them is wrong. Click the wrong one and press the
+right number on the first frame where it's wrong. (Two boxes on ONE person - the detector found
+them twice - are fine: give both the same number. Boxes that mostly overlap aren't flagged red.)
 
 Aim: everyone on court named in every frame (the top bar shows how much is done). A clip of
 10-20 s takes about 3-5 minutes.
@@ -58,6 +65,88 @@ KEYS = {ord(str(i)): i for i in range(1, 10)} | {ord("0"): 10, ord("-"): 11, ord
 LEFT_KEYS = {63234, 65361, 2424832}
 RIGHT_KEYS = {63235, 65363, 2555904}
 NEAR, FAR = (0, 200, 255), (255, 140, 0)          # BGR: near side orange-yellow, far side blue
+
+
+def piece_of(cuts: dict, tid: int, f: int) -> str:
+    """The piece key of tracker id `tid` at frame f: "tid" before its first cut, "tid@c" from cut c on."""
+    c = [s for s in cuts.get(tid, []) if s <= f]
+    return f"{tid}@{max(c)}" if c else str(tid)
+
+
+def _start(key: str):
+    return int(key.split("@")[1]) if "@" in key else None
+
+
+def mark(names: dict, cuts: dict, named_at: dict, tid: int, cur: int, v, frames=()) -> dict:
+    """Name tracker id `tid` as `v` (1..12, "x", or None = un-named) by a mark at frame `cur`.
+
+    Each mark holds from its frame up to the next mark on the same track; the first mark also
+    covers the frames before it. So a fix at one frame never changes frames held by another mark:
+      - the part of the track here has no name yet: it gets v (the whole part, both ways)
+      - it has another name, marked at f0 (named_at):
+          cur after f0:  v from cur on (up to the next mark); before cur it keeps its name
+          cur before f0: v up to f0 (and before cur, if this is the track's first part); from f0
+                         on it keeps its name
+          cur == f0, or no frames of this track on f0's side of cur: just renamed
+    Neighbouring parts that end up with the same name are joined (their cut removed).
+    Changes names / cuts / named_at in place; frames: the frames where `tid` appears (to tell an
+    empty side). Returns {"key": the part now holding cur, "from": first frame of v's part
+    (None = the start), "to": its last cut boundary (None = the end), "before": the old name}."""
+    k0 = piece_of(cuts, tid, cur)
+    old = names.get(k0)
+    f0 = named_at.get(k0)
+    frames = sorted(frames)
+    if old == v:
+        pass                                            # already that: the mark stays where it was
+    elif old is None or f0 is None or f0 == cur:
+        _set(names, named_at, k0, v, cur)
+    else:
+        lo, hi = sorted((f0, cur))
+        between = [g for g in frames if lo <= g < hi] if cur > f0 else [g for g in frames if lo < g <= hi]
+        s0 = _start(k0)
+        nxt = min((c for c in cuts.get(tid, []) if c > cur), default=None)
+        own_side = [g for g in frames if g >= cur and (nxt is None or g < nxt)] if cur > f0 else \
+                   [g for g in frames if (s0 is None or g >= s0) and g <= cur]
+        if not between or not own_side:
+            _set(names, named_at, k0, v, cur)
+        elif cur > f0:                                  # v from cur on
+            cuts[tid] = sorted(set(cuts.get(tid, [])) | {cur})
+            _set(names, named_at, f"{tid}@{cur}", v, cur)
+        else:                                           # v up to f0, the old name from f0 on
+            cuts[tid] = sorted(set(cuts.get(tid, [])) | {f0})
+            _set(names, named_at, f"{tid}@{f0}", old, f0)
+            _set(names, named_at, k0, v, cur)
+    _join(names, cuts, named_at, tid)
+    k = piece_of(cuts, tid, cur)
+    cs = cuts.get(tid, [])
+    return {"key": k, "from": _start(k), "to": min([c for c in cs if c > cur], default=None), "before": old}
+
+
+def _set(names, named_at, key, v, f):
+    if v is None:
+        names.pop(key, None)
+    else:
+        names[key] = v
+    named_at[key] = f
+
+
+def _join(names, cuts, named_at, tid):
+    """Remove cuts between two parts of a track with the same name (or both un-named)."""
+    cs = sorted(cuts.get(tid, []))
+    keep = []
+    prev = str(tid)
+    for c in cs:
+        k = f"{tid}@{c}"
+        if names.get(k) == names.get(prev):
+            names.pop(k, None)
+            named_at.pop(k, None)
+        else:
+            keep.append(c)
+            prev = k
+    if keep:
+        cuts[tid] = keep
+    else:
+        cuts.pop(tid, None)
 
 
 def frame_cache(video: str, stem: str, scale: float):
@@ -127,8 +216,12 @@ def main():
             print(f"[label] {stem}: loaded {len(names)} named pieces from {out}")
 
     def piece(tid: int, f: int) -> str:
-        c = [s for s in cuts.get(tid, []) if s <= f]
-        return f"{tid}@{max(c)}" if c else str(tid)
+        return piece_of(cuts, tid, f)
+
+    track_frames: dict = {}                                 # tracker id -> frames it appears in
+    for f_, ps_ in pose.items():
+        for p_ in ps_:
+            track_frames.setdefault(p_["id"], []).append(int(f_))
 
     # re-ID guesses (core.people.reid): pieces the joiner put together
     group = {}
@@ -199,6 +292,18 @@ def main():
         del history[:-50]
         state["recount"] = True
 
+    def track_story(tid):
+        """This track's names in order: "x 0-819 | 1 820-943"."""
+        fs = sorted(track_frames.get(tid, []))
+        if not fs:
+            return ""
+        parts, starts = [], [fs[0]] + [c for c in cuts.get(tid, []) if fs[0] < c <= fs[-1]]
+        for i, s0 in enumerate(starts):
+            e0 = (starts[i + 1] - 1) if i + 1 < len(starts) else fs[-1]
+            v_ = names.get(piece(tid, s0))
+            parts.append(f"{'?' if v_ is None else v_} {s0}-{e0}")
+        return " | ".join(parts[:6]) + (" ..." if len(parts) > 6 else "")
+
     def piece_len(key0):
         tid = int(key0.split("@")[0])
         return sum(1 for f, ps in pose.items() if any(p["id"] == tid for p in ps) and piece(tid, int(f)) == key0)
@@ -266,14 +371,14 @@ def main():
         left = len(todo(cur))
         top = (f"frame {cur}/{n - 1}   named: {prog:.0%} of on-court person-frames   "
                f"{left} to name here" + (f"   RED = number used twice: {sorted(clash)}" if clash else "") +
-               "   1-6 near, 7-12 far   x not a player   k cut   a guesses   n next   h boxes   Enter save")
+               "   1-6 near, 7-12 far   x not a player   r whole track   a guesses   n next   h boxes")
         cv2.putText(canvas, top, (10, 24), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1, cv2.LINE_AA)
         sel = state["sel"]
         msg = state["msg"]
         if msg and time.time() < msg[2]:                    # feedback for the last action
             cv2.putText(canvas, msg[0], (10, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.55, msg[1], 1, cv2.LINE_AA)
         else:
-            cv2.putText(canvas, (f"selected: {sel[0]} - press its number (1-6 near, 7-12 far), x, u, k   z undo"
+            cv2.putText(canvas, (f"track {sel[1]}: {track_story(sel[1])}   - press a number here: it holds from this frame to the next mark   z undo"
                                  if sel else "click a player's box to select it   z undo"),
                         (10, 52), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (180, 180, 180), 1, cv2.LINE_AA)
         cv2.imshow(WIN, canvas)
@@ -341,75 +446,47 @@ def main():
                 t_, c_ = len(todo(cur)), sorted(clashes(cur))
                 why = ", ".join(([f"{t_} un-named (grey ?)"] if t_ else []) + ([f"number {c_} used twice (red !)"] if c_ else []))
                 say(("back at the start: " if wrapped else "") + f"frame {cur} needs: {why}", (200, 230, 255), 5)
-        elif (key in KEYS or key in (ord("x"), ord("u"), ord("k"))) and not state["sel"]:
+        elif (key in KEYS or key in (ord("x"), ord("u"), ord("k"), ord("r"))) and not state["sel"]:
             say("click a player's box first, then the key", (120, 200, 255))
-        elif key in KEYS:
+        elif key in KEYS or key in (ord("x"), ord("u")):
             remember()
             k0, tid = state["sel"]
-            before = names.get(k0)
-            v = KEYS[key]
-            f0 = named_at.get(k0)
-            handled = False
-            fixing_clash = before in clashes(cur)          # this piece wears a red "used twice" tag here
-            if (before not in (None, "x") and before != v and f0 is not None and f0 != cur and fixing_clash
-                    and piece(tid, f0) == k0):
-                # this piece was named `before` at frame f0, and here (where that number now clashes)
-                # it is someone else: the tracker swapped people in between. (A plain correction, with
-                # no clash here, just renames the piece.) Cut where its box jumps the most, keep the old
-                # number on f0's side and the new one on this side.
-                lo, hi = sorted((f0, cur))
-                track = {}
-                for g in range(lo, hi + 1):
-                    for p in pose.get(str(g), []):
-                        if p["id"] == tid:
-                            track[g] = p["box"]
-                fs = sorted(track)
-                best_s, best_j = None, -1.0
-                for a_, b_ in zip(fs, fs[1:]):
-                    A, B = track[a_], track[b_]
-                    h = max(A[3] - A[1], B[3] - B[1], 1.0)
-                    j = np.hypot((A[0] + A[2] - B[0] - B[2]) / 2, (A[1] + A[3] - B[1] - B[3]) / 2) / h \
-                        + abs((A[3] - A[1]) - (B[3] - B[1])) / h
-                    if j > best_j:
-                        best_s, best_j = b_, j
-                if best_s is not None and best_s not in cuts.get(tid, []):
-                    cuts[tid] = sorted(cuts.get(tid, []) + [best_s])
-                    names[piece(tid, f0)] = before
-                    named_at[piece(tid, f0)] = f0
-                    k0 = piece(tid, cur)
-                    state["sel"] = (k0, tid)
-                    names[k0] = v
-                    named_at[k0] = cur
-                    changed = True
-                    state["also"] = None
-                    say(f"the tracker swapped people around frame {best_s}: cut there - before it {before if f0 < cur else v}, "
-                        f"from it on {v if f0 < cur else before}   (check with , and .   z undo)", (120, 255, 255), 8)
-                    handled = True
-            if not handled:
-                names[k0] = v
-                named_at[k0] = cur
-                changed = True
+            v = KEYS.get(key, "x" if key == ord("x") else None)
+            r = mark(names, cuts, named_at, tid, cur, v, track_frames.get(tid, ()))
+            state["sel"] = (r["key"], tid)
+            changed = True
+            before = r["before"]
+            name = "not a player" if v == "x" else "un-named" if v is None else f"{v} ({'near' if v <= 6 else 'far'} side)"
+            if r["from"] is None and r["to"] is None:
+                where = "the whole track"
+            else:
+                where = (f"from frame {r['from']}" if r["from"] is not None else "from the start") + \
+                        (f" to {r['to'] - 1}" if r["to"] is not None else " on")
             # the same person is often several pieces (the tracker loses them now and then): other
-            # pieces in the same re-ID group still carrying the OLD number are probably the same
-            # mistake - offer to fix them all with g
-            same = [] if handled or cuts.get(tid) else [
-                k for k, nv in names.items() if before is not None and nv == before and k != k0 and "@" not in k
-                and not cuts.get(int(k)) and group.get(int(k)) is not None and group.get(int(k)) == group.get(tid)]
-            state["also"] = (same, v) if same else None
-            if not handled:
-                say(f"named {v} ({'near' if v <= 6 else 'far'} side) for {piece_len(k0)} frames" +
-                    (f"   {len(same)} more piece(s) of this person still say {before}: g to change them too" if same else "") +
-                    "   z undo", (120, 255, 255) if same else (200, 255, 200), 6 if same else 3)
-        elif key == ord("x"):
+            # tracks in the same re-ID group still carrying the OLD number: offer to fix them with g
+            same = [] if cuts.get(tid) else [
+                k for k, nv in names.items() if before is not None and nv == before and k.split("@")[0] != str(tid)
+                and "@" not in k and not cuts.get(int(k)) and group.get(int(k)) is not None
+                and group.get(int(k)) == group.get(tid)]
+            state["also"] = (same, v) if same and v not in (None, "x") else None
+            split = r["from"] is not None or r["to"] is not None
+            say(f"{name}: {where}" + (f"   (other frames keep their marks - r: whole track {v})" if split else "")
+                + (f"   {len(same)} more piece(s) still say {before}: g to change them too" if state["also"] else "")
+                + "   z undo", (120, 255, 255) if split or state["also"] else (200, 255, 200), 6 if split else 3)
+        elif key == ord("r"):
+            k0, tid = state["sel"]
+            v = names.get(k0)
             remember()
-            names[state["sel"][0]] = "x"
-            say(f"not a player, for {piece_len(state['sel'][0])} frames   z undo")
+            for k in [k for k in names if k.split("@")[0] == str(tid)]:
+                names.pop(k)
+                named_at.pop(k, None)
+            cuts.pop(tid, None)
+            if v is not None:
+                names[str(tid)] = v
+            named_at[str(tid)] = cur
+            state["sel"] = (str(tid), tid)
             changed = True
-        elif key == ord("u"):
-            remember()
-            names.pop(state["sel"][0], None)
-            say("un-named   z undo")
-            changed = True
+            say(f"the whole track is now {v if v is not None else 'un-named'}   z undo")
         elif key == ord("z"):
             if history:
                 old_n, old_c, old_a = history.pop()
