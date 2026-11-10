@@ -46,14 +46,15 @@ BALL_D = 0.21                      # m, volleyball diameter (65-67 cm circumfere
 BALL_M = 0.27                      # kg (260-280 g)
 AIR_RHO, BALL_CD = 1.2, 0.45
 DRAG_K = AIR_RHO * BALL_CD * math.pi * (BALL_D / 2) ** 2 / (2 * BALL_M)     # ~0.035 1/m
-STEP = 1 / 240                     # integration step (s)
+STEP = 1 / 60                      # integration step (s); Hermite interpolation in between (error < 0.001 mm)
 
 
 def traj(p0, v0, tr: float, ts, k: float = DRAG_K) -> np.ndarray:
     """Ball positions (N, 3) at times ts for a flight that is at p0 with velocity v0 at time tr,
     under gravity and quadratic air drag k (k = 0: the exact parabola). RK4 in plain floats
-    (small loops: much faster than numpy here), both directions from tr, linear interpolation
-    between the 1/240 s steps (error ~1e-5 m)."""
+    (small loops: much faster than numpy here), both directions from tr, cubic Hermite
+    interpolation between the steps from positions AND velocities (2026-11-09: 1/240 s steps with
+    linear interpolation were 0.06 mm off and 3.5x slower; this is 0.0004 mm off)."""
     ts = np.atleast_1d(np.asarray(ts, float))
     p0 = np.asarray(p0, float); v0 = np.asarray(v0, float)
     if k == 0:
@@ -66,36 +67,42 @@ def traj(p0, v0, tr: float, ts, k: float = DRAG_K) -> np.ndarray:
         if not m.any():
             continue
         T = float(np.max(np.abs(ts[m] - tr)))
+        if T == 0.0:                                        # only the reference time itself
+            out[m] = p0
+            continue
         n = max(1, int(math.ceil(T / STEP)))
         h = sgn * T / n
         x, y, z = p0
         u, v, w = v0
-        X = [(x, y, z)]
+        X, V = [(x, y, z)], [(u, v, w)]
         for _ in range(n):
             if u * u + v * v + w * w > 1e4:                # > 100 m/s: a diverging guess; freeze it
-                X.append((x, y, z))
+                X.append((x, y, z)); V.append((u, v, w))
                 continue
-            def acc(u, v, w):
-                s = k * math.sqrt(u * u + v * v + w * w)
-                return -s * u, -s * v, g - s * w
-            a1 = acc(u, v, w)
+            s = k * math.sqrt(u * u + v * v + w * w)
+            a1 = (-s * u, -s * v, g - s * w)
             u2, v2, w2 = u + 0.5 * h * a1[0], v + 0.5 * h * a1[1], w + 0.5 * h * a1[2]
-            a2 = acc(u2, v2, w2)
+            s = k * math.sqrt(u2 * u2 + v2 * v2 + w2 * w2)
+            a2 = (-s * u2, -s * v2, g - s * w2)
             u3, v3, w3 = u + 0.5 * h * a2[0], v + 0.5 * h * a2[1], w + 0.5 * h * a2[2]
-            a3 = acc(u3, v3, w3)
+            s = k * math.sqrt(u3 * u3 + v3 * v3 + w3 * w3)
+            a3 = (-s * u3, -s * v3, g - s * w3)
             u4, v4, w4 = u + h * a3[0], v + h * a3[1], w + h * a3[2]
-            a4 = acc(u4, v4, w4)
+            s = k * math.sqrt(u4 * u4 + v4 * v4 + w4 * w4)
+            a4 = (-s * u4, -s * v4, g - s * w4)
             x += h / 6 * (u + 2 * u2 + 2 * u3 + u4)
             y += h / 6 * (v + 2 * v2 + 2 * v3 + v4)
             z += h / 6 * (w + 2 * w2 + 2 * w3 + w4)
             u += h / 6 * (a1[0] + 2 * a2[0] + 2 * a3[0] + a4[0])
             v += h / 6 * (a1[1] + 2 * a2[1] + 2 * a3[1] + a4[1])
             w += h / 6 * (a1[2] + 2 * a2[2] + 2 * a3[2] + a4[2])
-            X.append((x, y, z))
-        X = np.array(X)
-        grid = np.abs(np.arange(n + 1) * h)
-        q = np.abs(ts[m] - tr)
-        out[m] = np.c_[np.interp(q, grid, X[:, 0]), np.interp(q, grid, X[:, 1]), np.interp(q, grid, X[:, 2])]
+            X.append((x, y, z)); V.append((u, v, w))
+        X, V = np.array(X), np.array(V) * sgn               # velocity along q = |t - tr|
+        q, hh = np.abs(ts[m] - tr), abs(h)
+        i = np.minimum((q / hh).astype(int), n - 1)
+        s_ = ((q - i * hh) / hh)[:, None]
+        out[m] = ((2 * s_ ** 3 - 3 * s_ ** 2 + 1) * X[i] + (s_ ** 3 - 2 * s_ ** 2 + s_) * hh * V[i]
+                  + (-2 * s_ ** 3 + 3 * s_ ** 2) * X[i + 1] + (s_ ** 3 - s_ ** 2) * hh * V[i + 1])
     return out
 
 
@@ -241,26 +248,37 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
     def pos(k, th, t):
         return traj(th[6 * k:6 * k + 3], th[6 * k + 3:6 * k + 6], segs[k].tr, t, kd(th))
 
-    def resid(th):
+    D = [len(theta0) - 1] if fit_drag else []             # every block depends on the drag parameter
+    cols = []                                             # per residual block: the parameters it uses
+
+    def flight(*ks):
+        return [6 * k + i for k in ks for i in range(6)] + D
+
+    def resid(th, record=False):
         out = []
+
+        def add(r, c):
+            out.append(r)
+            if record:
+                cols.append((len(r), c))
         for k, s in enumerate(segs):
             X = pos(k, th, s.t)
             uv, z = P(X)
             sw = np.sqrt(s.w)
-            out.append(((uv - s.uv) / sigma_px * sw[:, None]).ravel())
+            add(((uv - s.uv) / sigma_px * sw[:, None]).ravel(), flight(k))
             ok = np.isfinite(s.size) & (s.size > 2)
             if ok.any():
                 pred = P.f * BALL_D / np.maximum(z[ok], 0.1)
-                out.append((pred - s.size[ok]) / (size_rel * s.size[ok]) * sw[ok])
+                add((pred - s.size[ok]) / (size_rel * s.size[ok]) * sw[ok], flight(k))
             if len(s.out_t) and s.box is not None:         # out of the picture: no closer than its edge
                 uo, _ = P(pos(k, th, s.out_t))
                 x0, y0, x1, y1 = s.box
                 inside = np.minimum.reduce([uo[:, 0] - x0, x1 - uo[:, 0], uo[:, 1] - y0, y1 - uo[:, 1]])
-                out.append(np.maximum(inside, 0.0) / sigma_px)
+                add(np.maximum(inside, 0.0) / sigma_px, flight(k))
         for k, s in enumerate(segs):                     # floor and net are solid
             tg = np.linspace(s.t[0], s.t[-1], max(4, int((s.t[-1] - s.t[0]) * 120) + 2))
             X = pos(k, th, tg)
-            out.append(np.maximum(BALL_D / 2 - X[:, 2], 0.0) / solid_sigma)
+            add(np.maximum(BALL_D / 2 - X[:, 2], 0.0) / solid_sigma, flight(k))
             if net_h is not None:                       # one value per flight (fixed length)
                 x = X[:, 0]
                 worst = 0.0
@@ -272,7 +290,7 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
                     bot = net_h - NET_BAND_M - BALL_D / 2
                     if abs(yc) <= NET_HALF_W and bot < zc < top:
                         worst = max(worst, min(top - zc, zc - bot))
-                out.append(np.array([worst / solid_sigma]))
+                add(np.array([worst / solid_sigma]), flight(k))
         for A in anchors or []:                            # touches made by a seen player
             x = pos(A["k"], th, [A["t"]])[0]
             side = A.get("side")
@@ -286,21 +304,39 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
             sp = A.get("spot")
             r_spot = max(0.0, float(np.hypot(x[0] - sp[0], x[1] - sp[1])) - ANCHOR_REACH_M) / ANCHOR_SIGMA_M \
                 if sp is not None else 0.0
-            out.append(np.array([r_side, r_spot]))
+            add(np.array([r_side, r_spot]), flight(A["k"]))
         for j, L in enumerate(links):
             if not 0 <= L.k < K - 1:
                 continue
             tc = L.t + th[6 * K + j]
             a, b = pos(L.k, th, tc)[0], pos(L.k + 1, th, tc)[0]
-            out.append((a - b) / link_sigma)
-            out.append(np.array([th[6 * K + j] / (L.t_sigma or time_sigma)]))
+            add((a - b) / link_sigma, flight(L.k, L.k + 1) + [6 * K + j])
+            add(np.array([th[6 * K + j] / (L.t_sigma or time_sigma)]), [6 * K + j])
             if L.kind == "bounce":
-                out.append(np.array([a[2] - BALL_D / 2, b[2] - BALL_D / 2]) / bounce_sigma)
+                add(np.array([a[2] - BALL_D / 2, b[2] - BALL_D / 2]) / bounce_sigma, flight(L.k, L.k + 1) + [6 * K + j])
         if fit_drag:                                       # weak prior: the ball's physics value, x/÷ 2
-            out.append(np.array([(th[-1] - math.log(DRAG_K)) / math.log(2)]))
+            add(np.array([(th[-1] - math.log(DRAG_K)) / math.log(2)]), D)
         return np.concatenate(out)
 
-    r = least_squares(resid, theta0, loss=loss, f_scale=2.0, x_scale="jac", max_nfev=200 * len(theta0))
+    # Each flight's residuals depend only on its own 6 numbers (+ touch times, drag): the slopes
+    # are estimated with all flights nudged at once, not one number at a time (~10-20x fewer
+    # evaluations on a long rally; the same finite-difference slopes, the same solver).
+    from scipy.optimize._numdiff import approx_derivative, group_columns
+    from scipy.sparse import lil_matrix
+    resid(theta0, record=True)
+    S = lil_matrix((sum(n for n, _ in cols), len(theta0)), dtype=int)
+    row = 0
+    for n, c in cols:
+        if n:
+            S[row:row + n, c] = 1
+        row += n
+    S = S.tocsr()
+    groups = group_columns(S)
+
+    def jac(th):
+        return approx_derivative(resid, th, method="2-point", sparsity=(S, groups)).toarray()
+
+    r = least_squares(resid, theta0, jac=jac, loss=loss, f_scale=2.0, x_scale="jac", max_nfev=200 * len(theta0))
     th = r.x
     # per-segment reprojection rms and covariance
     seg_rms, all_e = [], []
