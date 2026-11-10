@@ -86,13 +86,11 @@ def main():
         pieces = solve_v1(uv, w, size, edge, box, fps, cam, C["flights"], C["contacts"],
                           log=lambda m: print(f"[ball3d] {stem}: " + m))
     else:
+        from core.people.players import load_people
         from core.scene3d.rally3d import solve_clip
-        players = None
-        pj = paths.clip_dir(stem, a.output) / "players.json"
-        if pj.exists():
-            from core.people.players import build
-            players = build(json.load(open(pj)), cam, fps)
-            print(f"[ball3d] {stem}: {len(players)} players: a touch away from all of them costs more")
+        players = load_people(stem, a.output, cam, fps, log=lambda m: print(f"[ball3d] {stem}: " + m))
+        if players:
+            print(f"[ball3d] {stem}: {len(players)} player tracks: a touch away from all of them costs more")
         poses, plabels = None, None
         pj2 = paths.clip_dir(stem, a.output) / "pose.json"
         if pj2.exists():

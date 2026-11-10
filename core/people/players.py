@@ -143,6 +143,51 @@ def stitch(tracks: dict, fps: float, max_gap_s: float = 0.5) -> dict:
         merged[a] = merged[a] + merged.pop(b)
 
 
+UNNAMED = 1000          # people_from_pose: ids >= this are tracker pieces nobody named (shown as "?")
+
+
+def people_from_pose(pose_frames: dict, n: int, labels=None) -> dict:
+    """The pose tracking (tools.pose -> pose.json) in the players.json format build() reads, so
+    ONE person tracker feeds everything (the separate tools.players pass is no longer needed).
+    labels (core.people.player_labels.PlayerLabels): your numbers become the ids (1-12: every
+    piece you named 4 is player 4), people you marked "x" are left out, unnamed pieces get
+    UNNAMED + their tracker id."""
+    frames = []
+    for f in range(n):
+        row = []
+        for p in pose_frames.get(str(f), pose_frames.get(f, [])):
+            tid = p["id"]
+            if tid < 0:
+                continue
+            num = labels.number(tid, f) if labels is not None else None
+            if num == "x":
+                continue
+            pid = num if isinstance(num, int) else UNNAMED + tid
+            row.append([pid, *p["box"], 1.0])
+        frames.append(row)
+    return {"schema": "vv-players/1", "source": "pose", "frames": frames}
+
+
+def load_people(stem: str, output, cam, fps: float, log=print) -> list[Player] | None:
+    """Players for a clip: from pose.json (with your numbers where you labeled the clip), else from
+    an older players.json, else None."""
+    import json
+    from pathlib import Path
+
+    from core.people.player_labels import PlayerLabels
+    d = Path(output) / stem
+    if (d / "pose.json").exists():
+        pose = json.load(open(d / "pose.json"))["frames"]
+        n = max(int(k) for k in pose) + 1 if pose else 0
+        labels = PlayerLabels.load(stem, d / "pose.json", log=log)
+        log(f"players from the pose tracking{' with your numbers' if labels else ''}")
+        return build(people_from_pose(pose, n, labels), cam, fps)
+    if (d / "players.json").exists():
+        log("players from players.json (older person-detector pass)")
+        return build(json.load(open(d / "players.json")), cam, fps)
+    return None
+
+
 def build(players_json: dict, cam, fps: float, min_frames: int = 15) -> list[Player]:
     H = cam.height
     tracks: dict = {}
@@ -151,7 +196,9 @@ def build(players_json: dict, cam, fps: float, min_frames: int = 15) -> list[Pla
             if tid < 0:
                 continue
             tracks.setdefault(tid, []).append((f, x1, y1, x2, y2))
-    tracks = stitch(tracks, fps)
+    named = {k: v for k, v in tracks.items() if players_json.get("source") == "pose" and k < UNNAMED}
+    tracks = {**named, **stitch({k: v for k, v in tracks.items() if k not in named}, fps)}   # your
+    # numbers are already whole players: only the unnamed pieces get joined
     out = []
     for tid, rows in tracks.items():
         if len(rows) < min_frames:

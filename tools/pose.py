@@ -24,11 +24,15 @@ def main():
     ap.add_argument("--model", default="models/yolov8m-pose.pt")
     ap.add_argument("--imgsz", type=int, default=1280)
     ap.add_argument("--frames", nargs=2, type=int, default=None, help="first and last frame (default: all)")
+    ap.add_argument("--redo", action="store_true", help="run again even if pose.json exists")
     a = ap.parse_args()
     import cv2
     from ultralytics import YOLO
     stem = Path(a.video).stem
     out = paths.clip_dir(stem, a.output) / "pose.json"
+    if out.exists() and not a.redo:
+        print(f"[pose] {stem}: cached  →  {out}  (--redo to run again; player labels are tied to this run)")
+        return
     out.parent.mkdir(parents=True, exist_ok=True)
     m = YOLO(a.model)
     import torch

@@ -38,13 +38,11 @@ def main():
     B = json.load(open(Path(a.output) / stem / "ball3d.json"))
     frames = {int(k): v for k, v in B["frames"].items() if v.get("free")}
     people = {}
-    pp = Path(a.output) / stem / "players.json"
-    if pp.exists():
-        from core.people.players import build
-        for P in build(json.load(open(pp)), cam, B["fps"]):
-            for i, f in enumerate(P.frames):
-                if np.isfinite(P.ground[i, 0]):
-                    people.setdefault(int(f), []).append((P.id, P.ground[i], bool(P.airborne[i]), float(P.feet_z[i]), P.height_m))
+    from core.people.players import UNNAMED, load_people
+    for P in load_people(stem, a.output, cam, B["fps"], log=lambda m: print(f"[ball3d_video] {stem}: " + m)) or []:
+        for i, f in enumerate(P.frames):
+            if np.isfinite(P.ground[i, 0]):
+                people.setdefault(int(f), []).append((P.id, P.ground[i], bool(P.airborne[i]), float(P.feet_z[i]), P.height_m))
     cap = cv2.VideoCapture(a.video)
     fps = cap.get(cv2.CAP_PROP_FPS) or B["fps"]
     W, H = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -94,7 +92,8 @@ def main():
                                      0.35 * np.sin(np.linspace(0, 2 * np.pi, 24)) + g[1], np.zeros(24)])
             cv2.polylines(img, [ring.astype(np.int32)], True, col, 3, cv2.LINE_AA)
             gu = cam.project([[g[0], g[1], 0.0]])[0]
-            lab = f"#{pid} JUMP {fz:.2f} m" if air else f"#{pid}"
+            name = "?" if pid >= UNNAMED else f"#{pid}"           # your number, or "?" if nobody named it
+            lab = f"{name} JUMP {fz:.2f} m" if air else name
             cv2.putText(img, lab, (int(gu[0]) - 30, int(gu[1]) + 45), cv2.FONT_HERSHEY_SIMPLEX, 1.1 if air else 0.9,
                         col, 3, cv2.LINE_AA)
             if -15 < g[0] < 13 and -7 < g[1] < 7:
