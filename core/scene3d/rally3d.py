@@ -406,6 +406,9 @@ def _anchors(o: Obs, bounds) -> list:
     return out
 
 
+REACH_SLACK_M = 0.15   # a touch may sit this much above REACH_M (the ball's centre over a raised hand)
+
+
 def _solve_once(o: Obs, cam, hints, log):
     cands = candidates(o, hints)
     bounds = choose(o, cam, cands)
@@ -441,6 +444,37 @@ def _solve_once(o: Obs, cam, hints, log):
             dense.update(range(bounds[k] + 1, bounds[k + 1]))
         cands = sorted(dense)
         bounds = refine(o, cam, choose(o, cam, cands), cands)
+    # no touch out of reach: a join the final fit puts higher than anyone can touch is a long
+    # flight split in two to match the picture a little better (holdouts: 17 of 58 invented
+    # touches were above 3.5 m, up to 5.6 m; none of your marked touches was above 3.35 m).
+    # Drop the highest such touch and refit, until none is left.
+    for _ in range(len(bounds)):
+        high = []
+        tt = fit.info.get("touch_t") or [L.t for L in links]
+        for j, L in enumerate(links):
+            t_ = np.array([tt[j]])
+            z = 0.5 * (fit.at(L.k, t_)[0][2] + fit.at(L.k + 1, t_)[0][2])
+            if z > REACH_M + REACH_SLACK_M:
+                high.append((z, j))
+        if not high:
+            break
+        z, j = max(high)
+        log(f"touch at {o.frames[bounds[j + 1]]} would be {z:.1f} m up (out of reach): flights joined")
+        bounds = bounds[:j + 1] + bounds[j + 2:]
+        segs = [o.segment(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
+        links = []
+        for k in range(1, len(bounds) - 1):
+            b = bounds[k]
+            tc = 0.5 * (o.t[b - 1] + o.t[b])
+            links.append(Link(k - 1, tc, "touch", max(0.5 / o.fps, 0.5 * (o.t[b] - o.t[b - 1]))))
+        anchors = _anchors(o, bounds) if o.touchers else []
+        fit = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors)
+        bad = []
+        for k, s_ in enumerate(segs):
+            e = np.hypot(*(cam.project(fit.at(k, s_.t)) - s_.uv).T)
+            ok = ~o.edge[bounds[k]:bounds[k + 1]]
+            if float(np.median(e[ok] if ok.sum() >= 3 else e)) > max(8.0, 3 * o.sigma):
+                bad.append(k)
     pieces, resid = [], []
     for k, s in enumerate(segs):
         f0 = int(o.frames[bounds[k]])
