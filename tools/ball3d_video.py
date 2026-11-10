@@ -7,9 +7,11 @@ Per frame:
   ball      the 3D ball projected into the picture: the tracker's fading trail and yellow dot,
             with its height in meters beside it. Frames the 3D left out (held / rolling / bad
             fits) show the 2D track's ball with no height, so the ball never just vanishes.
-  players   your number (#4) above each player's head, "?" for a player nobody named (only on
-            or next to the court, so the bench and crowd stay quiet). While a player is in the
-            air the tag turns orange and shows their feet height.
+  players   your number in a small chip just above each player's head (from the pose's face points),
+            outlined blue on the camera's side of the net and rose on the far side; "?" in grey for a player nobody named (only on or
+            next to the court, so the bench and crowd stay quiet). In the air: "#4 ↑ 0.28 m",
+            the feet height.
+Labels: core.common.labels (one look for all overlay text).
 Plays in real time on phone clips with uneven frame timing, keeps the clip's sound.
 Writes output/<clip>/ball3d.mp4.
 """
@@ -24,24 +26,14 @@ from pathlib import Path
 import numpy as np
 
 from core.common import paths
+from core.common.labels import Labels
 from core.common.render import draw_ball, draw_trail, finish_video
 from core.geometry.camera import Camera
 from core.geometry.court import ATTACK, LENGTH, WIDTH
 
 TRAIL = 15                                  # frames of trail, as in the tracker's video
 NEAR_COURT = (LENGTH / 2 + 1.5, WIDTH / 2 + 1.5)   # where unnamed players still get a "?"
-YELLOW, ORANGE, GREY = (0, 255, 255), (0, 140, 255), (200, 200, 200)
-
-
-def put_tag(cv2, img, text, center, color, scale):
-    """Text centred on a point, on a dark box so it reads over any background."""
-    font, th = cv2.FONT_HERSHEY_SIMPLEX, max(2, int(round(2 * scale)))
-    (w, h), base = cv2.getTextSize(text, font, scale, th)
-    x, y = int(center[0] - w / 2), int(center[1] + h / 2)
-    pad = int(6 * scale)
-    sub = img[max(0, y - h - pad):y + base + pad, max(0, x - pad):x + w + pad]
-    sub[:] = (sub * 0.45).astype(np.uint8)
-    cv2.putText(img, text, (x, y), font, scale, color, th, cv2.LINE_AA)
+YELLOW, ORANGE = (0, 255, 255), (0, 140, 255)      # BGR, debug drawings only
 
 
 def main():
@@ -66,15 +58,18 @@ def main():
             if row.get("pos") is not None:
                 track2d[int(row["f"])] = tuple(row["pos"])
 
+    heads = head_points(clip / "pose.json")
     people: dict[int, list] = {}
     for P in load_people(stem, a.output, cam, fps, log=lambda m: print(f"[ball3d_video] {stem}: " + m)) or []:
         for i, f in enumerate(P.frames):
             g = P.ground[i]
-            if not np.isfinite(g[0]):
+            on_floor = bool(np.isfinite(g[0]))
+            if P.id >= UNNAMED and not (on_floor and abs(g[0]) < NEAR_COURT[0] and abs(g[1]) < NEAR_COURT[1]):
                 continue
-            if P.id >= UNNAMED and not (abs(g[0]) < NEAR_COURT[0] and abs(g[1]) < NEAR_COURT[1]):
-                continue
-            people.setdefault(int(f), []).append((P.id, g, bool(P.airborne[i]), float(P.feet_z[i]), P.height_m))
+            near = (g[0] * cam.position[0] > 0) if on_floor else True      # feet out of the picture = near
+            b = P.box[i]
+            head = heads.get((int(f), _key(b)), ((b[0] + b[2]) / 2, b[1]))
+            people.setdefault(int(f), []).append((P.id, head, near, bool(P.airborne[i]), float(P.feet_z[i]), g))
 
     times = None
     if (clip / "frame_times.json").exists():
@@ -85,11 +80,13 @@ def main():
     cap = cv2.VideoCapture(a.video)
     W, H = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     scale = H / 1080
+    L = Labels(H)
     tmp = os.path.join(tempfile.gettempdir(), f"{stem}_ball3d.mp4")
     out = clip / "ball3d.mp4"
     vw = cv2.VideoWriter(tmp, cv2.VideoWriter_fourcc(*"mp4v"), out_fps, (W, H))
     mini = MiniTop(cv2, cam) if a.debug else None
 
+    eased: dict = {}                         # player id -> (frame, chip point)
     uv: list = []                            # the ball in the picture, per frame (None = no ball)
     f = 0
     while True:
@@ -100,14 +97,18 @@ def main():
         p = cam.project([X])[0] if X is not None else track2d.get(f)
         uv.append(p)
 
-        # players first, so the ball draws over their tags
-        for pid, g, air, fz, hm in people.get(f, []):
-            head = cam.project([[g[0], g[1], hm + fz + 0.25]])[0]
-            name = "?" if pid >= UNNAMED else f"#{pid}"
-            if air:
-                put_tag(cv2, img, f"{name}  {fz:.2f} m up", head, ORANGE, 1.0 * scale)
-            else:
-                put_tag(cv2, img, name, head, GREY if pid >= UNNAMED else (255, 255, 255), 0.9 * scale)
+        # players first, so the ball draws over their chips; each chip sits just above the head,
+        # eased over a few frames so it doesn't shake with the pose points
+        for pid, hp, near, air, fz, _g in people.get(f, []):
+            last = eased.get(pid)
+            hp = hp if last is None or last[0] < f - 3 else (0.4 * hp[0] + 0.6 * last[1][0], 0.4 * hp[1] + 0.6 * last[1][1])
+            eased[pid] = (f, hp)
+            head = (hp[0], hp[1] - 6 * scale)
+            if pid >= UNNAMED:
+                L.chip(img, "?", head, outline=Labels.MUTED, size=22, text_rgb=Labels.MUTED)
+                continue
+            side = Labels.NEAR if near else Labels.FAR
+            L.chip(img, f"#{pid}  \u2191 {fz:.2f} m" if air else f"#{pid}", head, outline=side)
 
         if a.debug and X is not None:
             s = cam.project([[X[0], X[1], 0.0]])[0]
@@ -118,7 +119,7 @@ def main():
         if p is not None:
             draw_ball(img, p)
             if X is not None:
-                put_tag(cv2, img, f"{X[2]:.1f} m", (p[0] + 70 * scale, p[1] - 30 * scale), YELLOW, 1.0 * scale)
+                L.tag(img, f"{X[2]:.1f} m", (p[0] + 26 * scale, p[1] - 26 * scale))
 
         if mini is not None:
             mini.draw(img, f, X, people.get(f, []), W, H)
@@ -131,6 +132,31 @@ def main():
     cap.release()
     finish_video(tmp, a.video, str(out))
     print(f"[ball3d] {stem}: video  →  {out}")
+
+
+def _key(box):
+    return tuple(int(round(v)) for v in box[:4])
+
+
+def head_points(pose_path: Path) -> dict:
+    """(frame, box key) -> the top of the head in the picture, from the pose points: the highest
+    confident face point (nose / eyes / ears), raised by half its distance to the shoulders."""
+    if not pose_path.exists():
+        return {}
+    out = {}
+    for f, people in json.load(open(pose_path))["frames"].items():
+        for p in people:
+            kp = np.asarray(p.get("kp") or [], float)
+            if len(kp) < 7:
+                continue
+            face = kp[:5][kp[:5, 2] > 0.3]
+            sh = kp[5:7][kp[5:7, 2] > 0.3]
+            if not len(face):
+                continue
+            top = face[:, 1].min()
+            neck = sh[:, 1].mean() if len(sh) else top + 0.3 * (p["box"][3] - p["box"][1])
+            out[(int(f), _key(p["box"]))] = (float(face[:, 0].mean()), float(top - 0.5 * max(neck - top, 0)))
+    return out
 
 
 class MiniTop:
@@ -158,8 +184,8 @@ class MiniTop:
         pts = [p for p in self.trail if p is not None]
         for p, q in zip(pts[:-1], pts[1:]):
             cv2.line(m, self.top(*p), self.top(*q), (0, 200, 255), 2, cv2.LINE_AA)
-        for _pid, g, air, _fz, _hm in people:
-            if -15 < g[0] < 13 and -7 < g[1] < 7:
+        for _pid, _hp, _near, air, _fz, g in people:
+            if np.isfinite(g[0]) and -15 < g[0] < 13 and -7 < g[1] < 7:
                 cv2.circle(m, self.top(g[0], g[1]), 4, ORANGE if air else (255, 220, 0), -1)
         if X is not None:
             cv2.circle(m, self.top(X[0], X[1]), 6, YELLOW, -1)

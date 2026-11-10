@@ -216,7 +216,7 @@ def _init_segment(seg: Segment, P: _Proj, default_depth: float) -> np.ndarray:
 
 
 def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0, size_rel: float = 0.15,
-              link_sigma: float = 0.10, bounce_sigma: float = 0.05, default_depth: float = 12.0,
+              link_sigma: float = 0.05, bounce_sigma: float = 0.05, default_depth: float = 12.0,
               loss: str = "soft_l1", time_sigma: float = 1 / 60, drag: float = DRAG_K,
               fit_drag: bool = False, net_h: float | None = None, solid_sigma: float = SOLID_SIGMA_M,
               anchors: list | None = None) -> Fit3D:
@@ -250,6 +250,14 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
 
     D = [len(theta0) - 1] if fit_drag else []             # every block depends on the drag parameter
     cols = []                                             # per residual block: the parameters it uses
+    # The robust loss covers the 2D points and ball sizes ONLY (a few wrong detections must not
+    # drag a flight). The physics terms (flights meeting at a touch, solid floor / net, touch
+    # times, player anchors) stay plain least squares: with the robust loss on them too, a short
+    # flight could sit metres off along the camera's line of sight and pay little for breaking
+    # the path at a touch (test20 717-720: 6.4 m apart, invisible in 2D).
+    if loss not in ("soft_l1", "linear"):
+        raise ValueError(f"loss {loss!r}: soft_l1 or linear")
+    F_SCALE = 2.0
 
     def flight(*ks):
         return [6 * k + i for k in ks for i in range(6)] + D
@@ -257,7 +265,10 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
     def resid(th, record=False):
         out = []
 
-        def add(r, c):
+        def add(r, c, rob=False):
+            if rob and loss == "soft_l1":                   # soft-L1 folded into the residual itself:
+                z = (r / F_SCALE) ** 2                       # same cost as scipy's soft_l1, but only here
+                r = np.sign(r) * F_SCALE * np.sqrt(2 * (np.sqrt(1 + z) - 1))
             out.append(r)
             if record:
                 cols.append((len(r), c))
@@ -265,11 +276,11 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
             X = pos(k, th, s.t)
             uv, z = P(X)
             sw = np.sqrt(s.w)
-            add(((uv - s.uv) / sigma_px * sw[:, None]).ravel(), flight(k))
+            add(((uv - s.uv) / sigma_px * sw[:, None]).ravel(), flight(k), rob=True)
             ok = np.isfinite(s.size) & (s.size > 2)
             if ok.any():
                 pred = P.f * BALL_D / np.maximum(z[ok], 0.1)
-                add((pred - s.size[ok]) / (size_rel * s.size[ok]) * sw[ok], flight(k))
+                add((pred - s.size[ok]) / (size_rel * s.size[ok]) * sw[ok], flight(k), rob=True)
             if len(s.out_t) and s.box is not None:         # out of the picture: no closer than its edge
                 uo, _ = P(pos(k, th, s.out_t))
                 x0, y0, x1, y1 = s.box
@@ -336,7 +347,7 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
     def jac(th):
         return approx_derivative(resid, th, method="2-point", sparsity=(S, groups)).toarray()
 
-    r = least_squares(resid, theta0, jac=jac, loss=loss, f_scale=2.0, x_scale="jac", max_nfev=200 * len(theta0))
+    r = least_squares(resid, theta0, jac=jac, loss="linear", x_scale="jac", max_nfev=200 * len(theta0))
     th = r.x
     # per-segment reprojection rms and covariance
     seg_rms, all_e = [], []
