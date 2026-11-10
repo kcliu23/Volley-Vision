@@ -2,6 +2,8 @@
 
     python -m tools.calibrate_court videos/test74.mov                # men's / coed net (2.43 m)
     python -m tools.calibrate_court videos/test74.mov --net women    # 2.24 m
+    (On save the tool also checks the net: if your net clicks clearly fit the other standard
+    height - men 2.43 / women 2.24 - it says so and uses that one.)
 
 Shows the clip's empty court (the median of frames across the clip, so players fade out; the
 camera must not move during the clip). What to click is named at the top. Two kinds:
@@ -87,7 +89,7 @@ def enhance(img):
 
 def resolve_saved(video: str):
     """Solve a saved calibration again from its clicked points and save it back."""
-    from core.geometry.camera import Camera, solve
+    from core.geometry.camera import Camera, check_net_height, solve
     stem = Path(video).stem
     out = CAM_DIR / f"{stem}.json"
     if not out.exists():
@@ -95,7 +97,13 @@ def resolve_saved(video: str):
         return
     d = json.load(open(out))
     old = Camera.load(out)
-    cam = solve(d.get("points", {}), old.width, old.height, d.get("net_height", 2.43), line_clicks=d.get("line_clicks"))
+    h0 = d.get("net_height", 2.43)
+    h, rms = check_net_height(d.get("points", {}), old.width, old.height, h0, line_clicks=d.get("line_clicks"))
+    if h != h0:
+        print(f"[calibrate] {stem}: your net clicks fit a {h} m net, not {h0} m "
+              f"(rms {rms[h]:.1f} vs {rms[h0]:.1f} px): using {h} m")
+        d["net_height"] = h
+    cam = solve(d.get("points", {}), old.width, old.height, h, line_clicks=d.get("line_clicks"))
     cam.save(out, {k: d[k] for k in ("video", "net_height", "points", "line_clicks") if k in d})
     print(f"[calibrate] {stem}: rms {old.info.get('rms_px')} -> {cam.info['rms_px']} px; focal {old.f:.0f} -> {cam.f:.0f}; "
           f"k1 {old.k1:+.2f} -> {cam.k1:+.2f}; camera {[round(float(v), 2) for v in old.position]} -> "
@@ -105,7 +113,7 @@ def resolve_saved(video: str):
 def main():
     import cv2
 
-    from core.geometry.camera import solve
+    from core.geometry.camera import check_net_height, solve
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("video", nargs="+")
     ap.add_argument("--net", default="men", help="men (2.43 m), women (2.24 m), or a height in meters")
@@ -287,6 +295,12 @@ def main():
             if cam is None:
                 print("[calibrate] not solved yet: more clicks needed")
                 continue
+            h, rms = check_net_height(pts, W, H, net, line_clicks=lcl)
+            if h != net:
+                print(f"[calibrate] {stem}: your net clicks fit a {h} m net, not {net} m "
+                      f"(rms {rms[h]:.1f} vs {rms[net]:.1f} px): using {h} m")
+                net = h
+                resolve()
             cam.save(out, {"video": a.video, "net_height": net, "points": {k: list(v) for k, v in pts.items()},
                            "line_clicks": {k: [list(p) for p in v] for k, v in lcl.items()}})
             changed = False

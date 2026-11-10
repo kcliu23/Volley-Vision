@@ -391,6 +391,28 @@ def _sample(img, x, y):
     return out
 
 
+def check_net_height(points: dict, width: int, height: int, net_height: float, line_clicks: dict | None = None,
+                     clear: float = 0.6):
+    """Which standard net height do your net clicks fit? Solves the camera with each (men 2.43 m,
+    women 2.24 m, and the one given) and returns (height, {height: rms px}). The given height is
+    kept unless another fits clearly better (rms below `clear` x its rms): a few px either way is
+    click noise, a wrong net is 3-6x worse (test20, a women's net solved as men's: 8.7 px vs 2.5).
+    Clicks without any net point or line: (net_height, {}) - nothing to tell it by."""
+    from core.geometry.court import NET_HEIGHT
+    if not any("net" in k for k in list(points or {}) + list(line_clicks or {})):
+        return net_height, {}
+    rms = {}
+    for h in sorted(set(NET_HEIGHT.values()) | {float(net_height)}):
+        try:
+            rms[h] = float(solve(points, width, height, h, line_clicks=line_clicks).info["rms_px"])
+        except Exception:                                  # noqa: BLE001 - too few clicks for this height
+            continue
+    if float(net_height) not in rms or not rms:
+        return net_height, rms
+    best = min(rms, key=rms.get)
+    return (best if rms[best] < clear * rms[float(net_height)] else net_height), rms
+
+
 def refine_to_lines(cam: Camera, image: np.ndarray, points: dict, net_height: float = 2.43,
                     radii=(30, 12, 6, 3), step_px: float = 12.0, click_sigma: float = 6.0,
                     k1_sigma: float = 0.05, skip=(), check_radius: float = 25.0, log=print) -> Camera:
