@@ -387,13 +387,12 @@ def touch_evidence(pose_frames: dict, f: int, ball_uv, cam, ball_px: float, near
             side = -1 if num <= 6 else 1                    # your label, not a guess
             if spot is not None and int(np.sign(spot[0])) not in (0, side) and abs(spot[0]) > 0.4:
                 spot = None                                  # feet on the other side: ankles misread
-        # where they stand AT the touch (ankles in frame f, else the takeoff spot): for the depth
-        # check in core.scene3d.rally3d._anchors, whatever the side guess says
-        k = c["kp"]
-        now = ((k[15][0] + k[16][0]) / 2, (k[15][1] + k[16][1]) / 2) if min(k[15][2], k[16][2]) > 0.5 else best
+        # where they stand: the takeoff spot (lowest ankles around the touch), whatever the side
+        # guess says, for the depth check in core.scene3d.rally3d._anchors. Not the ankles AT the
+        # touch: a jumping hitter's feet are in the air, and their floor point lands metres too
+        # far from the camera (test20 233, 696, 1134: hitters read 4-9 m behind the ball)
         foot = None
-        if now is not None:
-            gf = cam.floor_point([now], ANKLE_H)[0][:2]
-            foot = (float(gf[0]), float(gf[1]))
+        if best is not None:
+            foot = (float(g_[0]), float(g_[1]))
         res.append({"id": pid, "side": side, "spot": spot, "foot": foot, "wrist_px": round(c["d"], 1), "player": num})
     return res

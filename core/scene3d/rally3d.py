@@ -477,6 +477,9 @@ def _bad_flights(o: Obs, cam, segs, bounds, fit) -> list[int]:
     return bad
 
 
+BOUNCE_MAX_Z = 0.4      # m: the ball's centre at a floor bounce (radius 0.105 m, plus slack)
+
+
 def _best_bounce(o: Obs, cam, i: int, j: int) -> tuple[int, float] | None:
     """A flight obs[i:j] that no single arc fits: is it two arcs joined by a floor bounce?
     Tries every split with enough points on both sides; returns (split, median px of the
@@ -554,7 +557,9 @@ def _solve_once(o: Obs, cam, hints, log):
             nanch = _anchors(o, nb, nbo) if o.touchers else []
             nfit = fit_rally(nsegs, nlinks, cam, net_h=o.net_h, anchors=nanch)
             before, after = err_in(segs, fit, lo, hi), err_in(nsegs, nfit, lo, hi)
-            if after < 0.7 * before:
+            tb = 0.5 * (o.t[b - 1] + o.t[b]); kb = nb.index(b)
+            z_join = float(nfit.at(kb, np.array([tb]))[0][2])
+            if after < 0.7 * before and z_join < BOUNCE_MAX_Z:   # a bounce is at the floor
                 log(f"floor bounce at {int(o.frames[b])}: {before:.0f} -> {after:.0f} px")
                 bounds, bounces, segs, links, anchors, fit = nb, nbo, nsegs, nlinks, nanch, nfit
         bad = _bad_flights(o, cam, segs, bounds, fit)
