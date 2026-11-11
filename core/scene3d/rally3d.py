@@ -403,7 +403,21 @@ def _ball_depth(o: Obs, i: int) -> float | None:
     return float(o.cam.f * BALL_D / np.median(sz))
 
 
-def _anchors(o: Obs, bounds, bounces=()) -> list:
+def _anchors_fit(o: Obs, cam, segs, links, bounds, bounces=()) -> list:
+    """_anchors with the ball's distance from a first fit without anchors (size, gravity and the
+    joins together): a single ball box at a touch is unreliable, hands cover the ball (test20
+    942: the box drops from 43 to 30 px, the size read 11.7 m for a ball at ~8 m)."""
+    if not o.touchers:
+        return []
+    fit0 = fit_rally(segs, links, cam, net_h=o.net_h)
+
+    def depth(k, tc):
+        X = 0.5 * (fit0.at(k - 1, np.array([tc]))[0] + fit0.at(k, np.array([tc]))[0])
+        return float(cam.depth(X[None])[0])
+    return _anchors(o, bounds, bounces, depth)
+
+
+def _anchors(o: Obs, bounds, bounces=(), depth=None) -> list:
     """Touches made by a seen player (poses): at each chosen touch, who has a wrist at the ball,
     on which side of the net, standing where. Both flights at the touch get the anchor.
     From one camera, a hand "at the ball" in the picture may belong to someone in front of or
@@ -419,7 +433,7 @@ def _anchors(o: Obs, bounds, bounces=()) -> list:
         tc = 0.5 * (o.t[b - 1] + o.t[b])
         i = b if abs(o.t[b] - tc) < abs(o.t[b - 1] - tc) else b - 1
         ev = o.touchers(int(o.frames[i]), o.uv[i])
-        zb = _ball_depth(o, i)
+        zb = depth(k, tc) if depth is not None else _ball_depth(o, i)
         if zb is not None:
             keep = []
             for e in ev:
@@ -509,7 +523,7 @@ def _solve_once(o: Obs, cam, hints, log):
     for attempt in range(2):
         segs = [o.segment(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
         links = _links(o, bounds, bounces)
-        anchors = _anchors(o, bounds, bounces) if o.touchers else []
+        anchors = _anchors_fit(o, cam, segs, links, bounds, bounces)
         fit = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors)
         drop = False                                     # wrong points: out of the final fit
         for k, sg_ in enumerate(segs):
@@ -554,7 +568,7 @@ def _solve_once(o: Obs, cam, hints, log):
             nb = sorted(set(bounds) | {b}); nbo = bounces | {b}
             nsegs = [o.segment(a_, b_) for a_, b_ in zip(nb[:-1], nb[1:])]
             nlinks = _links(o, nb, nbo)
-            nanch = _anchors(o, nb, nbo) if o.touchers else []
+            nanch = _anchors_fit(o, cam, nsegs, nlinks, nb, nbo)
             nfit = fit_rally(nsegs, nlinks, cam, net_h=o.net_h, anchors=nanch)
             before, after = err_in(segs, fit, lo, hi), err_in(nsegs, nfit, lo, hi)
             tb = 0.5 * (o.t[b - 1] + o.t[b]); kb = nb.index(b)
@@ -582,7 +596,7 @@ def _solve_once(o: Obs, cam, hints, log):
         bounds = bounds[:j + 1] + bounds[j + 2:]
         segs = [o.segment(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
         links = _links(o, bounds, bounces)
-        anchors = _anchors(o, bounds, bounces) if o.touchers else []
+        anchors = _anchors_fit(o, cam, segs, links, bounds, bounces)
         fit = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors)
         bad = []
         for k, s_ in enumerate(segs):

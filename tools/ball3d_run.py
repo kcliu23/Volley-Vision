@@ -27,7 +27,7 @@ from core.geometry.camera import Camera
 from core.scene3d.ball3d import BALL_D, calibrate_size, edge_mask, free_px, sizes_for
 
 
-def positions(stem: str, track: dict, labels: bool, contacts: dict | None = None):
+def positions(stem: str, track: dict, labels: bool, contacts: dict | None = None, my_ball: bool = False):
     """(uv (n, 2) with NaN where no ball, weight (n,))."""
     n = len(track["frames"])
     uv, w = np.full((n, 2), np.nan), np.zeros(n)
@@ -70,6 +70,14 @@ def positions(stem: str, track: dict, labels: bool, contacts: dict | None = None
                 uv[r["f"]] = r["pos"][:2]
                 st = r["state"]
                 w[r["f"]] = filled_weight(r["f"]) if st == "filled" else (0.5 if st == "tracknet" else 1.0)
+    # --my-ball: your clicked ball positions (tools.review) win over the tracker wherever you
+    # placed one. Off by default: on the holdouts it found 1 more touch but invented 7 more
+    # (64 vs 57), since clicks add strong points during contacts where the tracker had none
+    vp = paths.verified(stem)
+    if my_ball and not labels and Path(vp).exists():
+        for k, v in (json.load(open(vp)).get("labels") or {}).items():
+            if isinstance(v, list) and int(k) < n:
+                uv[int(k)], w[int(k)] = v[:2], 1.0
     return uv, w
 
 
@@ -80,6 +88,10 @@ def main():
     ap.add_argument("--output", default=str(paths.OUTPUT))
     ap.add_argument("--v1", action="store_true", help="the first mechanism (core.scene3d.legacy_v1), for comparison")
     ap.add_argument("--v2", action="store_true", help=argparse.SUPPRESS)   # the default now; kept so old commands work
+    ap.add_argument("--picture-timing-only", action="store_true",
+                    help="don't move catch-up skips to where the ball's double step is")
+    ap.add_argument("--my-ball", action="store_true",
+                    help="your clicked ball positions (tools.review) replace the tracker's where you placed one")
     ap.add_argument("--use-my-touches", action="store_true",
                     help="your touch marks (tools.review) are the touches; only the ball in play is fitted")
     a = ap.parse_args()
@@ -90,7 +102,7 @@ def main():
     C = json.load(open(paths.contacts(stem, a.output)))
     fps = float(track.get("fps") or C.get("fps") or 60.0)
     n = len(track["frames"])
-    uv, w = positions(stem, track, a.labels, C)
+    uv, w = positions(stem, track, a.labels, C, my_ball=a.my_ball)
     size = sizes_for(stem, n)
 
     # true frame times: screen recordings repeat a frame now and then and skip one a few frames
@@ -101,6 +113,9 @@ def main():
         T = frame_times(a.video, paths.clip_dir(stem, a.output))
         if len(T) < n:
             T = np.r_[T, T[-1] + np.arange(1, n - len(T) + 1)]
+        if not a.picture_timing_only:
+            from core.common.frametime import place_skips_by_ball
+            T = place_skips_by_ball(T, uv, w, log=lambda m: print(f"[ball3d] {stem}: {m}"))
         print(f"[ball3d] {stem}: frame timing: {summary(T)}")
     # ball-size bias of this clip: YOLO boxes on a moving, blurred ball run larger than the ball;
     # gravity alone fixes depth on long, clean flights, and the ratio says by how much
@@ -138,7 +153,14 @@ def main():
             from evaluation.touches3d import your_touches
             V = json.load(open(paths.verified(stem)))
             keep = in_play(V)
-            fixed = [(t0 + t1) / 2 for t0, t1, _ in your_touches(V)]
+            runs = your_touches(V)
+            fixed = [(t0 + t1) / 2 for t0, t1, _ in runs]
+            # the ball on someone's hands / arms is not in free flight: your marked contact
+            # frames stay out of both flights (test20 942-943: the ball already resting on the
+            # digger's arms bent the incoming flight 921-943 to 10 px)
+            uv = uv.copy()
+            for t0, t1, _ in runs:
+                uv[t0:t1 + 1] = np.nan
             print(f"[ball3d] {stem}: your {len(fixed)} touch marks are the touches (ball in play only)")
         pieces = solve_clip(uv, w, size, edge, box, fps, cam, C["contacts"], players=players, T=T, net_h=net_h,
                             poses=poses, ball_px=bpx, player_labels=plabels, fixed_touches=fixed, keep=keep,

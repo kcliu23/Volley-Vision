@@ -101,6 +101,80 @@ def frame_times(video: str, cache_dir: str | None = None) -> np.ndarray:
     return T
 
 
+BALL_MIN_STEP = 4.0      # px per frame: below this the ball's motion says nothing about timing
+BALL_SKIP = 1.65         # a catch-up skip shows as a ball step this many times its neighbours'
+BALL_NOSKIP = 1.35       # ... and a placed skip with a ball step under this shows none
+
+
+def place_skips_by_ball(T: np.ndarray, uv: np.ndarray, w: np.ndarray, reach: int = 6, log=None) -> np.ndarray:
+    """Move each catch-up skip to where the ball says it is. A skipped frame doubles the ball's
+    step in the picture; the picture check alone sometimes puts the skip a few frames off
+    (test20: repeat at 935/936, skip placed at 939->940, the ball's double step is 936->937; the
+    flight 921-943 fitted 11 px off until moved). Only on a ball that moves clearly and steadily
+    (detected points, steps on both sides of the new spot within 35% of each other), and only
+    when the current spot shows no double step. T: frame -> time (frame units)."""
+    T = np.asarray(T, float).copy()
+    n = min(len(T), len(uv))
+    ok = np.isfinite(uv[:n, 0]) & (w[:n] >= 1.0)
+    step = np.full(n, np.nan)                            # step[k]: ball move from frame k to k+1
+    both = ok[:-1] & ok[1:]
+    step[:-1][both] = np.hypot(*(uv[1:n][both] - uv[:n - 1][both]).T)
+    d = np.diff(T[:n])
+
+    def ratio(k):                                        # step k (one frame) vs the nearest steps
+        if not (0 <= k < n - 1) or not np.isfinite(step[k]):   # on each side (the ball may be
+            return np.nan                                      # speeding up toward the camera)
+        side = []
+        for rng in (range(k - 1, max(-1, k - 4), -1), range(k + 1, min(n - 1, k + 4))):
+            for j in rng:
+                if np.isfinite(step[j]) and d[j] > 0:
+                    side.append(step[j] / d[j])
+                    break
+        if not side:                                     # (one side is enough: the ball may
+            return np.nan                                # just have left the picture / a hand)
+        ref = float(np.mean(side))
+        return step[k] / ref if ref >= BALL_MIN_STEP else np.nan
+
+    def near(k, dirn):                                   # the nearest real one-frame step that side
+        j = k + dirn
+        while 0 <= j < n - 1 and abs(j - k) <= 3:
+            if np.isfinite(step[j]) and d[j] > 0:
+                return step[j] / d[j]
+            j += dirn
+        return np.nan
+
+    moved = 0
+    for k in np.where(np.isclose(d, 2))[0]:
+        rk = ratio(k)
+        # the skip's own step should be ~2x; under BALL_NOSKIP x it the skip isn't here
+        if not np.isfinite(rk) or rk >= BALL_NOSKIP:
+            continue
+        best = None
+        for g in range(max(0, k - reach), min(n - 1, k + reach + 1)):
+            if g == k or not np.isclose(d[g], 1):
+                continue
+            rg = ratio(g)
+            if not np.isfinite(rg) or rg < BALL_SKIP or rg > 2.6:
+                continue
+            a_, b_ = near(g, -1), near(g, +1)
+            if not (np.isfinite(a_) and np.isfinite(b_)) or abs(a_ - b_) > 0.35 * max(a_, b_):
+                continue                                 # speed changing here: a touch, not a skip
+            if best is None or abs(rg - 2) < abs(best[1] - 2):
+                best = (g, rg)
+        if best is None:
+            continue
+        g = best[0]
+        if g < k:
+            T[g + 1:k + 1] += 1
+        else:
+            T[k + 1:g + 1] -= 1
+        d = np.diff(T[:n])
+        moved += 1
+        if log:
+            log(f"timing: skip moved from {k}->{k + 1} to {g}->{g + 1} (the ball's double step)")
+    return T
+
+
 def summary(T: np.ndarray) -> str:
     st = np.diff(T)
     late = np.arange(len(T)) - T
