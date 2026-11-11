@@ -30,6 +30,7 @@ MAX_FLIGHT_S = 2.5     # [guess] longest flight between touches
 MIN_PTS = 4            # [guess] fewest points in one flight
 GRID_S = 0.15          # [synthetic] safety-net touch candidates every this many seconds
 TURN_DEG = 25.0        # [guess] a 2D turn this sharp is a touch candidate
+TURN_MIN_WEIGHT = 0.45 # [guess] low-confidence filled points alone don't propose touch boundaries
 
 # --- players at touches (core.people.players, core.scene3d.rally3d) -----------------------------------------------
 PLAYER_COST = 12.0     # [real] at most this extra for a touch far from every player (24 -> 14

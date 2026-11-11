@@ -27,7 +27,7 @@ from core.geometry.camera import Camera
 from core.scene3d.ball3d import BALL_D, calibrate_size, edge_mask, free_px, sizes_for
 
 
-def positions(stem: str, track: dict, labels: bool):
+def positions(stem: str, track: dict, labels: bool, contacts: dict | None = None):
     """(uv (n, 2) with NaN where no ball, weight (n,))."""
     n = len(track["frames"])
     uv, w = np.full((n, 2), np.nan), np.zeros(n)
@@ -37,10 +37,39 @@ def positions(stem: str, track: dict, labels: bool):
             if isinstance(v, list) and int(k) < n:
                 uv[int(k)], w[int(k)] = v, 1.0
     else:
+        # A filled point is a 2D flight-model prediction, not an image detection. Give it
+        # confidence from the source arc's residual and its distance from measured endpoints.
+        flights = (contacts or {}).get("flights", [])
+        fps = float(track.get("fps") or (contacts or {}).get("fps") or 60.0)
+
+        def filled_weight(frame):
+            inside = [f for f in flights if f["f0"] <= frame <= f["f1"]]
+            if inside:
+                source = min(inside, key=lambda f: min(frame - f["f0"], f["f1"] - frame))
+                age = min(frame - source["f0"], source["f1"] - frame)
+            else:
+                left = [f for f in flights if f["f1"] < frame]
+                right = [f for f in flights if f["f0"] > frame]
+                choices = []
+                if left:
+                    f = max(left, key=lambda x: x["f1"])
+                    choices.append((frame - f["f1"], f))
+                if right:
+                    f = min(right, key=lambda x: x["f0"])
+                    choices.append((f["f0"] - frame, f))
+                if not choices:
+                    return 0.1
+                age, source = min(choices, key=lambda x: x[0])
+            rms = float(source.get("rms", 6.0))
+            arc_quality = 1.0 / (1.0 + (rms / 3.0) ** 2)
+            gap_quality = float(np.exp(-age / max(0.15 * fps, 1.0)))
+            return max(0.05, min(0.6, arc_quality * gap_quality))
+
         for r in track["frames"]:
-            if r.get("pos") is not None and r["state"] in ("detected", "weak", "tracknet"):
+            if r.get("pos") is not None and r["state"] in ("detected", "weak", "tracknet", "filled"):
                 uv[r["f"]] = r["pos"][:2]
-                w[r["f"]] = 1.0 if r["state"] != "tracknet" else 0.5
+                st = r["state"]
+                w[r["f"]] = filled_weight(r["f"]) if st == "filled" else (0.5 if st == "tracknet" else 1.0)
     return uv, w
 
 
@@ -59,7 +88,7 @@ def main():
     C = json.load(open(paths.contacts(stem, a.output)))
     fps = float(track.get("fps") or C.get("fps") or 60.0)
     n = len(track["frames"])
-    uv, w = positions(stem, track, a.labels)
+    uv, w = positions(stem, track, a.labels, C)
     size = sizes_for(stem, n)
 
     # true frame times: screen recordings repeat a frame now and then and skip one a few frames

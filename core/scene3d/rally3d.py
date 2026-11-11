@@ -52,6 +52,7 @@ from core.scene3d.params3d import (  # noqa: F401
     SIZE_REL,
     TOUCH_COST,
     TURN_DEG,
+    TURN_MIN_WEIGHT,
 )
 
 
@@ -220,6 +221,8 @@ def candidates(o: Obs, hints: list[float] = ()) -> list[int]:
             c.add(b)
     k = 3                                             # sharp turns of the 2D path
     for b in range(k, n - k):
+        if np.any(o.w[b - k:b + k + 1] < TURN_MIN_WEIGHT):
+            continue                                 # a 2D model fill may inform a fit, but not invent its touch
         v1 = o.uv[b] - o.uv[b - k]; v2 = o.uv[b + k] - o.uv[b]
         n1, n2 = np.linalg.norm(v1), np.linalg.norm(v2)
         if n1 > 1 and n2 > 1:
@@ -507,6 +510,13 @@ def solve_clip(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_
         full = np.arange(fr[0], fr[-1] + 1)
         out_f = out_of_picture(full, np.isfinite(uv[full, 0]), edge).astype(int)
         tf = (T[fr] if T is not None else fr) / fps
+        # Screen recordings can repeat a decoded image. Such frames have identical true times,
+        # and sometimes identical ball detections, but count as separate samples here. Keeping
+        # both creates a zero-duration step that corrupts turn detection and can look like a
+        # touch to the flight chooser. Keep one observation per instant; output is still evaluated
+        # on every video frame (including repeats) below.
+        unique_time = np.r_[True, np.diff(tf) > 1e-9]
+        fr, tf = fr[unique_time], tf[unique_time]
         o = Obs(tf, uv[fr], size[fr], w[fr], fr, edge[fr], out_f, box, fps, T=T, net_h=net_h, near=near)
         if poses:
             from core.people.players import touch_evidence
