@@ -198,7 +198,7 @@ def main():
                             "depth_std_m": round(float(np.median(np.linalg.norm(sd, axis=1))), 2),
                             "drag_k": round(float(fit.drag), 4)})
         for g, x, d in zip(range(f0, f1 + 1), X, sd):
-            frames_out[g] = {"xyz": [round(float(v), 3) for v in x], "std": [round(float(v), 3) for v in d],
+            frames_out[g] = {"xyz": [round(float(v), 2) for v in x], "std": [round(float(v), 2) for v in d],
                              "flight": len(flights_out) - 1, "free": bool(free)}
 
     out = Path(a.output) / stem / "ball3d.json"

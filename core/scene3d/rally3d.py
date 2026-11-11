@@ -592,7 +592,7 @@ def _solve_once(o: Obs, cam, hints, log):
         if not high:
             break
         z, j = max(high)
-        log(f"touch at {o.frames[bounds[j + 1]]} would be {z:.1f} m up (out of reach): flights joined")
+        log(f"touch at {o.frames[bounds[j + 1]]} would be {z:.2f} m up (out of reach): flights joined")
         bounds = bounds[:j + 1] + bounds[j + 2:]
         segs = [o.segment(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
         links = _links(o, bounds, bounces)

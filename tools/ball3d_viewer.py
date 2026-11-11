@@ -29,14 +29,14 @@ def build(stem: str, output: str = str(paths.OUTPUT)) -> Path:
     B = json.load(open(Path(output) / stem / "ball3d.json"))
     fl = [f for f in B["flights"]]
     keep = {i for i, f in enumerate(fl) if f["free_flight"]}
-    frames = [[int(k)] + [round(v, 3) for v in fr["xyz"]] + [fr["flight"]]
+    frames = [[int(k)] + [round(v, 2) for v in fr["xyz"]] + [fr["flight"]]
               for k, fr in sorted(B["frames"].items(), key=lambda kv: int(kv[0])) if fr["flight"] in keep]
     R = cam.R
     data = {
         "clip": stem, "fps": B["fps"], "source": B.get("source", "track"),
         "n": max(int(k) for k in B["frames"]) + 1 if B["frames"] else 0,
         "net": cj.get("net_height", 2.43),
-        "camera": {"pos": [round(float(v), 3) for v in cam.position],
+        "camera": {"pos": [round(float(v), 2) for v in cam.position],
                    "fwd": [round(float(v), 5) for v in R[2]], "down": [round(float(v), 5) for v in R[1]],
                    "vfov": round(math.degrees(2 * math.atan(cam.height / 2 / cam.f)), 3)},
         "flights": [{"id": i, "f0": f["f0"], "f1": f["f1"], "apex": f["apex_m"], "speed": f["speed_start_mps"],

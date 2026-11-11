@@ -124,7 +124,7 @@ def main():
         if p is not None:
             draw_ball(img, p)
             if X is not None:
-                L.tag(img, f"{X[2]:.1f} m", (p[0] + 26 * scale, p[1] - 26 * scale))
+                L.tag(img, f"{X[2]:.2f} m", (p[0] + 26 * scale, p[1] - 26 * scale))
 
         if mini is not None:
             mini.draw(img, f, X, people.get(f, []), W, H)

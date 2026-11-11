@@ -291,7 +291,7 @@ const D = /*__DATA__*/null;
       const sp = p.clone().project(cam), rect = stage.getBoundingClientRect();
       if (sp.z < 1 && Math.abs(sp.x) < 1.1 && Math.abs(sp.y) < 1.1) {
         tag.hidden = false; tag.style.left = ((sp.x + 1) / 2 * rect.width) + "px"; tag.style.top = ((1 - sp.y) / 2 * rect.height) + "px";
-        tag.textContent = `${r[3].toFixed(1)} m`;
+        tag.textContent = `${r[3].toFixed(2)} m`;
       } else tag.hidden = true;
     } else {
       ball.visible = trail.visible = false; tag.hidden = true; hh.textContent = "–";
