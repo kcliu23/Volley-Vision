@@ -80,6 +80,8 @@ class Obs:
     sigma: float = 3.0                   # 2D noise used for scoring (measured per rally in solve())
     T: np.ndarray | None = None          # frame -> true time in frame units (core.common.frametime); None = f
     net_h: float | None = None           # net height (m): flights can't pass through it
+    fixed: object = None                 # your touch marks as cuts (frame numbers): skip choosing touches
+    cam: object = None                   # the camera (for depths)
     touchers: object = None              # touchers(frame, ball_uv) -> core.people.players.touch_evidence list
     near: object = None                  # near(t, xyz) -> metres outside every player's reach, or
                                          # None where there is no player data (core.people.players.reach)
@@ -387,21 +389,50 @@ def solve(o: Obs, cam, hints=(), log=print):
     return pieces, info
 
 
-def _anchors(o: Obs, bounds) -> list:
+DEPTH_TOL = 0.3        # [guess] a toucher stands within this fraction of the ball's distance from
+DEPTH_TOL_M = 2.5      #         the camera, or this many metres, whichever is more
+
+
+def _ball_depth(o: Obs, i: int) -> float | None:
+    """The ball's distance from the camera (along its view) around point i, from its size in
+    the picture (median over a few points: one box is noisy)."""
+    sz = o.size[max(0, i - 3):i + 4]
+    sz = sz[np.isfinite(sz) & (sz > 2)]
+    if not len(sz) or o.cam is None:
+        return None
+    return float(o.cam.f * BALL_D / np.median(sz))
+
+
+def _anchors(o: Obs, bounds, bounces=()) -> list:
     """Touches made by a seen player (poses): at each chosen touch, who has a wrist at the ball,
-    on which side of the net, standing where. Both flights at the touch get the anchor. Players
-    on both sides at the ball (a joust, a block) put it at the net; one player's spot is used
-    only when they are the only one there."""
+    on which side of the net, standing where. Both flights at the touch get the anchor.
+    From one camera, a hand "at the ball" in the picture may belong to someone in front of or
+    behind it: a player whose feet are much nearer or farther from the camera than the ball is
+    not the toucher (DEPTH_TOL). A side is trusted from your player number or the player's feet,
+    not from which way they face alone. If players of both sides are still left, nothing is
+    known (no anchor); one player's spot is used only when they are the only one there."""
     out = []
     for k in range(1, len(bounds) - 1):
         b = bounds[k]
+        if b in bounces:
+            continue
         tc = 0.5 * (o.t[b - 1] + o.t[b])
         i = b if abs(o.t[b] - tc) < abs(o.t[b - 1] - tc) else b - 1
         ev = o.touchers(int(o.frames[i]), o.uv[i])
-        sides = {e["side"] for e in ev if e["side"]}
-        if not sides:
+        zb = _ball_depth(o, i)
+        if zb is not None:
+            keep = []
+            for e in ev:
+                if e.get("foot") is not None:
+                    zp = float(o.cam.depth(np.array([[e["foot"][0], e["foot"][1], 1.0]]))[0])
+                    if abs(zp - zb) > max(DEPTH_TOL_M, DEPTH_TOL * zb):
+                        continue
+                keep.append(e)
+            ev = keep
+        sides = {e["side"] for e in ev if e["side"] and (isinstance(e.get("player"), int) or e["spot"] is not None)}
+        if len(sides) != 1:
             continue
-        side = 0 if sides == {-1, 1} else sides.pop()
+        side = sides.pop()
         spots = [e["spot"] for e in ev if e["spot"] is not None]
         spot = spots[0] if len(ev) == 1 and spots else None
         for kk in (k - 1, k):
@@ -412,18 +443,70 @@ def _anchors(o: Obs, bounds) -> list:
 REACH_SLACK_M = 0.15   # a touch may sit this much above REACH_M (the ball's centre over a raised hand)
 
 
+def _fixed_bounds(o: Obs, log) -> list[int]:
+    """Your touch marks as flight boundaries: a touch at frame f (middle of your marked run)
+    cuts between the last point before it and the first after it. A cut leaving fewer than 2
+    points on either side is skipped."""
+    n, bounds = len(o.t), [0]
+    for f in sorted(o.fixed):
+        b = int(np.searchsorted(o.frames, f, side="right"))
+        if b - bounds[-1] >= 2 and n - b >= 2:
+            bounds.append(b)
+        elif 0 < b < n:
+            log(f"your touch at {f:g}: too few ball points around it to cut there")
+    return bounds + [n]
+
+
+def _links(o: Obs, bounds, bounces=()) -> list:
+    out = []
+    for k in range(1, len(bounds) - 1):
+        b = bounds[k]
+        tc = 0.5 * (o.t[b - 1] + o.t[b])
+        out.append(Link(k - 1, tc, "bounce" if b in bounces else "touch",
+                        max(0.5 / o.fps, 0.5 * (o.t[b] - o.t[b - 1]))))
+    return out
+
+
+def _bad_flights(o: Obs, cam, segs, bounds, fit) -> list[int]:
+    bad = []
+    for k, s in enumerate(segs):
+        e = np.hypot(*(cam.project(fit.at(k, s.t)) - s.uv).T)
+        ok = ~o.edge[bounds[k]:bounds[k + 1]]
+        if float(np.median(e[ok] if ok.sum() >= 3 else e)) > max(8.0, 3 * o.sigma):
+            bad.append(k)
+    return bad
+
+
+def _best_bounce(o: Obs, cam, i: int, j: int) -> tuple[int, float] | None:
+    """A flight obs[i:j] that no single arc fits: is it two arcs joined by a floor bounce?
+    Tries every split with enough points on both sides; returns (split, median px of the
+    better split) or None. The bounce link puts the ball's centre one radius above the floor
+    at the join, so only a real floor contact can explain the bend."""
+    best = None
+    for b in range(i + MIN_PTS, j - MIN_PTS + 1):
+        segs = [o.segment(i, b), o.segment(b, j)]
+        tc = 0.5 * (o.t[b - 1] + o.t[b])
+        fit = fit_rally(segs, [Link(0, tc, "bounce", max(0.5 / o.fps, 0.5 * (o.t[b] - o.t[b - 1])))], cam, net_h=o.net_h)
+        e = np.concatenate([np.hypot(*(cam.project(fit.at(k, s.t)) - s.uv).T) for k, s in enumerate(segs)])
+        m = float(np.median(e))
+        if best is None or m < best[1]:
+            best = (b, m)
+    return best
+
+
 def _solve_once(o: Obs, cam, hints, log):
-    cands = candidates(o, hints)
-    bounds = choose(o, cam, cands)
-    bounds = refine(o, cam, bounds, cands)
+    bounces = set()
+    if o.fixed is not None:
+        bounds = _fixed_bounds(o, log)
+        cands = list(bounds)
+    else:
+        cands = candidates(o, hints)
+        bounds = choose(o, cam, cands)
+        bounds = refine(o, cam, bounds, cands)
     for attempt in range(2):
         segs = [o.segment(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
-        links = []
-        for k in range(1, len(bounds) - 1):
-            b = bounds[k]
-            tc = 0.5 * (o.t[b - 1] + o.t[b])
-            links.append(Link(k - 1, tc, "touch", max(0.5 / o.fps, 0.5 * (o.t[b] - o.t[b - 1]))))
-        anchors = _anchors(o, bounds) if o.touchers else []
+        links = _links(o, bounds, bounces)
+        anchors = _anchors(o, bounds, bounces) if o.touchers else []
         fit = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors)
         drop = False                                     # wrong points: out of the final fit
         for k, sg_ in enumerate(segs):
@@ -440,18 +523,46 @@ def _solve_once(o: Obs, cam, hints, log):
             med = float(np.median(e[ok] if ok.sum() >= 3 else e))
             if med > max(8.0, 3 * o.sigma):
                 bad.append(k)
-        if not bad or attempt == 1:
+        if not bad or attempt == 1 or o.fixed is not None:
             break
         dense = set(cands)                               # layer 3: every frame inside bad flights
         for k in bad:
             dense.update(range(bounds[k] + 1, bounds[k + 1]))
         cands = sorted(dense)
         bounds = refine(o, cam, choose(o, cam, cands), cands)
+    # a flight still fitting badly may hide a floor bounce nobody marks (the ball lands after the
+    # last touch, before the rally is called): try one bounce in each such flight
+    if bad:
+        added = []
+        for k in bad:
+            r = _best_bounce(o, cam, bounds[k], bounds[k + 1])
+            if r is not None and r[1] <= max(8.0, 3 * o.sigma):
+                added.append(r[0])
+        def err_in(segs_, fit_, lo, hi):                # median px over obs[lo:hi]
+            e = []
+            for k, s_ in enumerate(segs_):
+                m = (s_.frames >= o.frames[lo]) & (s_.frames <= o.frames[hi - 1])
+                if m.any():
+                    e.extend(np.hypot(*(cam.project(fit_.at(k, s_.t[m])) - s_.uv[m]).T).tolist())
+            return float(np.median(e)) if e else np.inf
+        for b in added:                                  # keep a bounce only if the whole fit agrees
+            k = max(i for i in range(len(bounds) - 1) if bounds[i] < b)
+            lo, hi = bounds[k], bounds[k + 1]
+            nb = sorted(set(bounds) | {b}); nbo = bounces | {b}
+            nsegs = [o.segment(a_, b_) for a_, b_ in zip(nb[:-1], nb[1:])]
+            nlinks = _links(o, nb, nbo)
+            nanch = _anchors(o, nb, nbo) if o.touchers else []
+            nfit = fit_rally(nsegs, nlinks, cam, net_h=o.net_h, anchors=nanch)
+            before, after = err_in(segs, fit, lo, hi), err_in(nsegs, nfit, lo, hi)
+            if after < 0.7 * before:
+                log(f"floor bounce at {int(o.frames[b])}: {before:.0f} -> {after:.0f} px")
+                bounds, bounces, segs, links, anchors, fit = nb, nbo, nsegs, nlinks, nanch, nfit
+        bad = _bad_flights(o, cam, segs, bounds, fit)
     # no touch out of reach: a join the final fit puts higher than anyone can touch is a long
     # flight split in two to match the picture a little better (holdouts: 17 of 58 invented
     # touches were above 3.5 m, up to 5.6 m; none of your marked touches was above 3.35 m).
     # Drop the highest such touch and refit, until none is left.
-    for _ in range(len(bounds)):
+    for _ in range(0 if o.fixed is not None else len(bounds)):
         high = []
         tt = fit.info.get("touch_t") or [L.t for L in links]
         for j, L in enumerate(links):
@@ -465,12 +576,8 @@ def _solve_once(o: Obs, cam, hints, log):
         log(f"touch at {o.frames[bounds[j + 1]]} would be {z:.1f} m up (out of reach): flights joined")
         bounds = bounds[:j + 1] + bounds[j + 2:]
         segs = [o.segment(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
-        links = []
-        for k in range(1, len(bounds) - 1):
-            b = bounds[k]
-            tc = 0.5 * (o.t[b - 1] + o.t[b])
-            links.append(Link(k - 1, tc, "touch", max(0.5 / o.fps, 0.5 * (o.t[b] - o.t[b - 1]))))
-        anchors = _anchors(o, bounds) if o.touchers else []
+        links = _links(o, bounds, bounces)
+        anchors = _anchors(o, bounds, bounces) if o.touchers else []
         fit = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors)
         bad = []
         for k, s_ in enumerate(segs):
@@ -489,13 +596,17 @@ def _solve_once(o: Obs, cam, hints, log):
 
 
 def solve_clip(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_s: float = 1.5,
-               players=None, T=None, net_h=None, poses=None, ball_px: float = 25.0, player_labels=None):
+               players=None, T=None, net_h=None, poses=None, ball_px: float = 25.0, player_labels=None,
+               fixed_touches=None, keep=None):
     """A whole clip: split into rallies (stretches with no ball for > rally_gap_s), solve() each
     with the tracker's contacts as hints. T: true frame times (core.common.frametime); players: from
     core.people.players.build; poses: output/<clip>/pose.json frames (tools.pose), to anchor touches to
     the player who made them. Returns [(rally, segment, (f0, f1), fit, i)]."""
     from core.scene3d.ball3d import out_of_picture
-    fr_all = np.where(np.isfinite(uv[:, 0]))[0]
+    ok = np.isfinite(uv[:, 0])
+    if keep is not None:                               # only these frames (e.g. the ball in play)
+        ok &= np.isin(np.arange(len(uv)), sorted(keep))
+    fr_all = np.where(ok)[0]
     if not len(fr_all):
         return []
     near = None
@@ -518,6 +629,9 @@ def solve_clip(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_
         unique_time = np.r_[True, np.diff(tf) > 1e-9]
         fr, tf = fr[unique_time], tf[unique_time]
         o = Obs(tf, uv[fr], size[fr], w[fr], fr, edge[fr], out_f, box, fps, T=T, net_h=net_h, near=near)
+        o.cam = cam
+        if fixed_touches is not None:
+            o.fixed = [f for f in fixed_touches if fr[0] < f < fr[-1]]
         if poses:
             from core.people.players import touch_evidence
             o.touchers = lambda f, uv_, P=poses: touch_evidence(P, f, uv_, cam, ball_px, fps=fps,
@@ -525,7 +639,7 @@ def solve_clip(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_
         hints = [c["frame"] for c in contacts if fr[0] <= c["frame"] <= fr[-1]]
         res, info = solve(o, cam, hints, log=log)
         nt = len(res) - 1
-        log(f"rally {fr[0]}-{fr[-1]}: {nt} touch{'es' if nt != 1 else ''} chosen by the fit"
+        log(f"rally {fr[0]}-{fr[-1]}: {nt} touch{'es' if nt != 1 else ''} {'from your marks' if fixed_touches is not None else 'chosen by the fit'}"
             + (f"; flights still fitting badly: {[res[k][1] for k in info['bad']]}" if info["bad"] else ""))
         for seg, span, fit, i in res:
             pieces.append((ri, seg, span, fit, i))

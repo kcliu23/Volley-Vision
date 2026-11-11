@@ -80,6 +80,8 @@ def main():
     ap.add_argument("--output", default=str(paths.OUTPUT))
     ap.add_argument("--v1", action="store_true", help="the first mechanism (core.scene3d.legacy_v1), for comparison")
     ap.add_argument("--v2", action="store_true", help=argparse.SUPPRESS)   # the default now; kept so old commands work
+    ap.add_argument("--use-my-touches", action="store_true",
+                    help="your touch marks (tools.review) are the touches; only the ball in play is fitted")
     a = ap.parse_args()
     stem = Path(a.video).stem
     cam = Camera.load(Path("data/cameras") / f"{stem}.json")
@@ -130,8 +132,16 @@ def main():
             if plabels is not None:
                 print(f"[ball3d] {stem}: your player numbers: each toucher's side of the net is known")
         bpx = float(np.nanmedian(size)) if np.isfinite(size).any() else 25.0
+        fixed, keep = None, None
+        if a.use_my_touches:
+            from evaluation.inplay import in_play
+            from evaluation.touches3d import your_touches
+            V = json.load(open(paths.verified(stem)))
+            keep = in_play(V)
+            fixed = [(t0 + t1) / 2 for t0, t1, _ in your_touches(V)]
+            print(f"[ball3d] {stem}: your {len(fixed)} touch marks are the touches (ball in play only)")
         pieces = solve_clip(uv, w, size, edge, box, fps, cam, C["contacts"], players=players, T=T, net_h=net_h,
-                            poses=poses, ball_px=bpx, player_labels=plabels,
+                            poses=poses, ball_px=bpx, player_labels=plabels, fixed_touches=fixed, keep=keep,
                             log=lambda m: print(f"[ball3d] {stem}: " + m))
 
     flights_out, frames_out = [], {}
