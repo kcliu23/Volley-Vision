@@ -6,7 +6,10 @@ a new id: a 12-player clip comes out with 30-50 ids. Three things tie the pieces
              their feet are on the court (calibrated camera) says which side (sign of x)
   place      a new piece must start near where an old piece ended, within running distance for
              the time between them (on the court, in meters, not in pixels)
-  look       the torso's colours (jersey, skin): a colour histogram over several frames
+  look       the torso's colours (jersey, skin): a colour histogram over several frames, averaged
+             with a person re-identification model's look vector when it is installed
+             (core.people.reid_model; on holdout1-8: 269 -> 235 key presses to number every
+             player, wrong joins 0-13% -> 0-8%)
 Pieces are joined greedily, best match first, never two pieces that are on screen at the same
 time. Off-court people (feet outside the court + 1.5 m: the bench, referees, spectators) are kept
 apart.
@@ -25,7 +28,8 @@ from core.scene3d.params3d import ANKLE_H
 RUN_MPS = 6.0          # fastest a player covers ground between two pieces
 SLACK_M = 1.5          # plus this (feet jitter, a missed step)
 MAX_GAP_S = 4.0        # pieces further apart in time aren't joined
-LOOK_MAX = 0.45        # colour distance (Bhattacharyya) above this: not the same person
+LOOK_MAX = 0.45        # look distance above this: not the same person (colour Bhattacharyya, or
+                       # its average with the re-ID model's cosine distance when the model is there)
 COURT = (9.0 + 1.5, 4.5 + 1.5)
 
 
@@ -77,14 +81,22 @@ def _looks(T, video, per_track: int = 10):
         for f, b in bs[::max(1, len(bs) // per_track)][:per_track]:
             want[f].append((tid, b))
     hists = defaultdict(list)
+    embs = defaultdict(list)
+    from core.people.reid_model import load_embedder
+    embed = load_embedder()                                # None: not installed, colours only
     cap = cv2.VideoCapture(str(video))
+    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)              # phone clips: stored sideways + a rotation flag
     f = 0
     last = max(want) if want else -1
     while f <= last:
         ok, img = cap.read()
         if not ok:
             break
-        for tid, (x1, y1, x2, y2) in want.get(f, []):
+        W = want.get(f, [])
+        if W and embed is not None:
+            for (tid, _), e in zip(W, embed(img, np.array([b for _, b in W], float))):
+                embs[tid].append(e)
+        for tid, (x1, y1, x2, y2) in W:
             crop = img[max(0, y1):max(y1 + 1, y2), max(0, x1):max(x1 + 1, x2)]
             if crop.size < 30:
                 continue
@@ -92,13 +104,15 @@ def _looks(T, video, per_track: int = 10):
             h = cv2.calcHist([hsv], [0, 1], None, [18, 8], [0, 180, 0, 256])
             hists[tid].append(cv2.normalize(h, h).flatten())
         f += 1
-    return {tid: np.mean(h, axis=0).astype(np.float32) for tid, h in hists.items() if h}
+    looks = {tid: np.mean(h, axis=0).astype(np.float32) for tid, h in hists.items() if h}
+    emb = {tid: (lambda m: m / np.linalg.norm(m))(np.mean(e, axis=0)) for tid, e in embs.items() if e}
+    return looks, emb
 
 
 def build_ids(pose_frames: dict, video: str, cam, fps: float):
     import cv2
     T = _tracklets(pose_frames, cam)
-    look = _looks(T, video)
+    look, emb = _looks(T, video)
     # players: lists of tracklet ids, joined greedily by the best (lowest cost) valid pair
     groups = {tid: [tid] for tid in T}
 
@@ -151,6 +165,11 @@ def build_ids(pose_frames: dict, video: str, cam, fps: float):
         look_cost = 0.3
         if la and lb:
             look_cost = float(cv2.compareHist(np.mean(la, axis=0), np.mean(lb, axis=0), cv2.HISTCMP_BHATTACHARYYA))
+            ea = [emb[t] for t in g1 if t in emb]
+            eb = [emb[t] for t in g2 if t in emb]
+            if ea and eb:
+                ma, mb = np.mean(ea, axis=0), np.mean(eb, axis=0)
+                look_cost = 0.5 * look_cost + 0.5 * (1.0 - float(ma @ mb / (np.linalg.norm(ma) * np.linalg.norm(mb))))
             if look_cost > LOOK_MAX:
                 return None
         return look_cost + 0.5 * dist_cost + 0.2 * gap / fps
