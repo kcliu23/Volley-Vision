@@ -52,7 +52,6 @@ def build(stem: str, output: str = str(paths.OUTPUT)) -> Path:
     head = ('<!doctype html><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n')
     out.write_text(head + html)                    # a standalone page to open in a browser
-    out.with_name("ball3d_view.body.html").write_text(html)   # the same page without the skeleton (to publish)
     return out
 
 
