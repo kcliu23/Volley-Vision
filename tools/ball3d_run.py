@@ -2,12 +2,11 @@
 
     python -m tools.ball3d_run videos/test74.mov --labels    # from your checked labels (data/verified)
     python -m tools.ball3d_run videos/test74.mov             # from the tracker's output
-    python -m tools.ball3d_run videos/test74.mov --v1        # the first mechanism (for comparison)
 
 (tools.scene3d runs this together with frame timing, players and the viewer.)
 
 Load -> solve -> save. Needs data/cameras/<clip>.json (tools.calibrate_court) and
-output/<clip>/{track,contacts}.json; uses output/<clip>/players.json when there (tools.players)
+output/<clip>/{track,contacts}.json; players from the pose tracking (tools.pose)
 and the clip's true frame times (core.common.frametime). The solving is core.scene3d.rally3d.solve_clip (touches
 and arcs chosen together); the physics is core.scene3d.ball3d; every set number is in core.scene3d.params3d.
 
@@ -86,7 +85,6 @@ def main():
     ap.add_argument("video")
     ap.add_argument("--labels", action="store_true", help="use your checked labels instead of the tracker's output")
     ap.add_argument("--output", default=str(paths.OUTPUT))
-    ap.add_argument("--v1", action="store_true", help="the first mechanism (core.scene3d.legacy_v1), for comparison")
     ap.add_argument("--v2", action="store_true", help=argparse.SUPPRESS)   # the default now; kept so old commands work
     ap.add_argument("--picture-timing-only", action="store_true",
                     help="don't move catch-up skips to where the ball's double step is")
@@ -106,17 +104,15 @@ def main():
     size = sizes_for(stem, n)
 
     # true frame times: screen recordings repeat a frame now and then and skip one a few frames
-    # later (core.common.frametime); the global fit uses them (v1 keeps evenly spaced frames)
-    T = None
-    if not a.v1:
-        from core.common.frametime import frame_times, summary
-        T = frame_times(a.video, paths.clip_dir(stem, a.output))
-        if len(T) < n:
-            T = np.r_[T, T[-1] + np.arange(1, n - len(T) + 1)]
-        if not a.picture_timing_only:
-            from core.common.frametime import place_skips_by_ball
-            T = place_skips_by_ball(T, uv, w, log=lambda m: print(f"[ball3d] {stem}: {m}"))
-        print(f"[ball3d] {stem}: frame timing: {summary(T)}")
+    # later (core.common.frametime); the fit uses the true times
+    from core.common.frametime import frame_times, summary
+    T = frame_times(a.video, paths.clip_dir(stem, a.output))
+    if len(T) < n:
+        T = np.r_[T, T[-1] + np.arange(1, n - len(T) + 1)]
+    if not a.picture_timing_only:
+        from core.common.frametime import place_skips_by_ball
+        T = place_skips_by_ball(T, uv, w, log=lambda m: print(f"[ball3d] {stem}: {m}"))
+    print(f"[ball3d] {stem}: frame timing: {summary(T)}")
     # ball-size bias of this clip: YOLO boxes on a moving, blurred ball run larger than the ball;
     # gravity alone fixes depth on long, clean flights, and the ratio says by how much
     size, bias = calibrate_size(C["flights"], uv, w, size, fps, cam, T=T)
@@ -127,44 +123,39 @@ def main():
     edge, box = edge_mask(stem, uv, cam, a.output)
     w = np.where(edge, 0.2 * w, w)
 
-    if a.v1:
-        from core.scene3d.legacy_v1 import solve_v1
-        pieces = solve_v1(uv, w, size, edge, box, fps, cam, C["flights"], C["contacts"],
-                          log=lambda m: print(f"[ball3d] {stem}: " + m))
-    else:
-        from core.people.players import load_people
-        from core.scene3d.rally3d import solve_clip
-        players = load_people(stem, a.output, cam, fps, log=lambda m: print(f"[ball3d] {stem}: " + m))
-        if players:
-            print(f"[ball3d] {stem}: {len(players)} player tracks: a touch away from all of them costs more")
-        poses, plabels = None, None
-        pj2 = paths.clip_dir(stem, a.output) / "pose.json"
-        if pj2.exists():
-            poses = json.load(open(pj2))["frames"]
-            print(f"[ball3d] {stem}: poses found: touches are anchored to the player who made them")
-            from core.people.player_labels import PlayerLabels
-            plabels = PlayerLabels.load(stem, pj2, log=lambda m: print(f"[ball3d] {stem}: " + m))
-            if plabels is not None:
-                print(f"[ball3d] {stem}: your player numbers: each toucher's side of the net is known")
-        bpx = float(np.nanmedian(size)) if np.isfinite(size).any() else 25.0
-        fixed, keep = None, None
-        if a.use_my_touches:
-            from evaluation.inplay import in_play
-            from evaluation.touches3d import your_touches
-            V = json.load(open(paths.verified(stem)))
-            keep = in_play(V)
-            runs = your_touches(V)
-            fixed = [(t0 + t1) / 2 for t0, t1, _ in runs]
-            # the ball on someone's hands / arms is not in free flight: your marked contact
-            # frames stay out of both flights (test20 942-943: the ball already resting on the
-            # digger's arms bent the incoming flight 921-943 to 10 px)
-            uv = uv.copy()
-            for t0, t1, _ in runs:
-                uv[t0:t1 + 1] = np.nan
-            print(f"[ball3d] {stem}: your {len(fixed)} touch marks are the touches (ball in play only)")
-        pieces = solve_clip(uv, w, size, edge, box, fps, cam, C["contacts"], players=players, T=T, net_h=net_h,
-                            poses=poses, ball_px=bpx, player_labels=plabels, fixed_touches=fixed, keep=keep,
-                            log=lambda m: print(f"[ball3d] {stem}: " + m))
+    from core.people.players import load_people
+    from core.scene3d.rally3d import solve_clip
+    players = load_people(stem, a.output, cam, fps, log=lambda m: print(f"[ball3d] {stem}: " + m))
+    if players:
+        print(f"[ball3d] {stem}: {len(players)} player tracks: a touch away from all of them costs more")
+    poses, plabels = None, None
+    pj2 = paths.clip_dir(stem, a.output) / "pose.json"
+    if pj2.exists():
+        poses = json.load(open(pj2))["frames"]
+        print(f"[ball3d] {stem}: poses found: touches are anchored to the player who made them")
+        from core.people.player_labels import PlayerLabels
+        plabels = PlayerLabels.load(stem, pj2, log=lambda m: print(f"[ball3d] {stem}: " + m))
+        if plabels is not None:
+            print(f"[ball3d] {stem}: your player numbers: each toucher's side of the net is known")
+    bpx = float(np.nanmedian(size)) if np.isfinite(size).any() else 25.0
+    fixed, keep = None, None
+    if a.use_my_touches:
+        from evaluation.inplay import in_play
+        from evaluation.touches3d import your_touches
+        V = json.load(open(paths.verified(stem)))
+        keep = in_play(V)
+        runs = your_touches(V)
+        fixed = [(t0 + t1) / 2 for t0, t1, _ in runs]
+        # the ball on someone's hands / arms is not in free flight: your marked contact
+        # frames stay out of both flights (test20 942-943: the ball already resting on the
+        # digger's arms bent the incoming flight 921-943 to 10 px)
+        uv = uv.copy()
+        for t0, t1, _ in runs:
+            uv[t0:t1 + 1] = np.nan
+        print(f"[ball3d] {stem}: your {len(fixed)} touch marks are the touches (ball in play only)")
+    pieces = solve_clip(uv, w, size, edge, box, fps, cam, C["contacts"], players=players, T=T, net_h=net_h,
+                        poses=poses, ball_px=bpx, player_labels=plabels, fixed_touches=fixed, keep=keep,
+                        log=lambda m: print(f"[ball3d] {stem}: " + m))
 
     flights_out, frames_out = [], {}
     nchains = 1 + max((p[0] for p in pieces), default=-1)

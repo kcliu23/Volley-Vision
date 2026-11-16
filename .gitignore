@@ -81,3 +81,9 @@ vv-engineering-patches/
 
 # Pretrained person / pose weights: downloaded automatically by ultralytics
 models/yolov8m*.pt
+
+# Person re-ID weights (core.people.reid_model): download with the curl line in that file
+models/lmbn_n_market.pt
+# Scratch
+.claude_tmp/
+_to_delete/

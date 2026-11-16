@@ -3,7 +3,6 @@ calibrated camera, made as messy as real clips, then scored for each mechanism o
 
     ideal  the true touches handed to the joint fit (core.scene3d.ball3d.fit_rally): the best the physics
            can do with this camera and this noise (what tools.sim_ball3d used to measure)
-    v1     the first mechanism (core.scene3d.legacy_v1: tracker splits + merge / re-split)
     v2     the global rally fit (core.scene3d.rally3d): touches chosen by the fit
 
 --cal-error fits with a camera that is off by the calibration's own reported uncertainty, so the
@@ -20,7 +19,7 @@ about one fake touch per rally (a fake split).
 Scores: per-frame 3D error (median / 95%), coverage (frames with a 3D position), "teleports"
 (frames off by more than 1 m), touch recall / precision (within 3 frames).
 
-    python -m evaluation.sim_rally --rallies 20                 # ideal, v1, v2
+    python -m evaluation.sim_rally --rallies 20                 # ideal, v2
     python -m evaluation.sim_rally --rallies 20 --only v2 --cal-error
 """
 from __future__ import annotations
@@ -107,19 +106,6 @@ def edge_and_box(cam, uv, ball=30.0):
     return e, box
 
 
-def tracker_flights(seen, hints):
-    """What the 2D splitter gives: runs of seen frames, cut at contact hints and gaps > 3 frames."""
-    fl, cur, last = [], [], None
-    hs = set(hints)
-    for f in np.where(seen)[0]:
-        if cur and (f - last > 3 or any(last < h <= f for h in hs)):
-            fl.append((cur[0], cur[-1])); cur = []
-        cur.append(int(f)); last = f
-    if cur:
-        fl.append((cur[0], cur[-1]))
-    return [{"f0": a, "f1": b} for a, b in fl if b - a >= 2]
-
-
 def run_ideal(cam, s, edge, box):
     """The true touches, handed to the joint fit."""
     from core.scene3d.rally3d import Obs
@@ -140,22 +126,6 @@ def run_ideal(cam, s, edge, box):
         for f, x in zip(g, fit.at(i, g / FPS)):
             out[int(f)] = x
     return out, [0.5 * (fr[cuts[k] - 1] + fr[cuts[k]]) for k in keep[1:]]
-
-
-def run_v1(cam, s, edge, box):
-    from core.scene3d.legacy_v1 import solve_v1
-    w = np.where(edge, 0.2, 1.0)
-    contacts = [{"frame": float(h), "kind": "touch"} for h in s["hints"]]
-    pieces = solve_v1(s["uv"], w, s["size"], edge, box, FPS, cam, tracker_flights(s["seen"], s["hints"]), contacts,
-                      log=lambda m: None)
-    out, touches = {}, []
-    for k, (ci, _seg, (f0, f1), fit, i) in enumerate(pieces):
-        fr = np.arange(f0, f1 + 1)
-        for f, x in zip(fr, fit.at(i, fr / FPS)):
-            out[int(f)] = x
-        if k > 0 and pieces[k - 1][0] == ci:
-            touches.append(0.5 * (pieces[k - 1][2][1] + f0))
-    return out, touches
 
 
 def run_v2(cam, s, edge, box):
@@ -196,7 +166,7 @@ def main():
     ap.add_argument("--missing", type=float, default=0.10)
     ap.add_argument("--outliers", type=float, default=0.02)
     ap.add_argument("--block", type=float, default=0.3)
-    ap.add_argument("--only", choices=["ideal", "v1", "v2"], default=None)
+    ap.add_argument("--only", choices=["ideal", "v2"], default=None)
     ap.add_argument("--cal-error", action="store_true",
                     help="fit with a camera off by the calibration's reported uncertainty (f_std, position_std_m)")
     ap.add_argument("--touch-cost", type=float, default=None)
@@ -215,7 +185,7 @@ def main():
         C = cam.position + rng.normal(0, 1, 3) * ps
         fcam = Camera(cam.width, cam.height, cam.f + rng.normal(0, fs), list(cam.rvec), list(-cam.R @ C), cam.k1,
                       cam.cx, cam.cy)
-    for name, run in (("ideal", run_ideal), ("v1 first", run_v1), ("v2 global", run_v2)):
+    for name, run in (("ideal", run_ideal), ("v2 global", run_v2)):
         if a.only and not name.startswith(a.only):
             continue
         E, cov, hit, ntrue, good, nfound, tele, t0 = [], [], 0, 0, 0, 0, 0, time.time()

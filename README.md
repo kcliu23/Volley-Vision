@@ -15,6 +15,11 @@ bounce or other from where the players are.
 The older **classic** pipeline (YOLO on every frame, rule linker + zoom search, TrackNet gap
 filling) is still there: `--pipeline classic`.
 
+**3D:** with the court calibrated, the 2D track becomes the ball in metres: one physics fit per
+rally (gravity + drag, ball size, true frame times of screen recordings), cut into flights at the
+touches, anchored to the player who touched it (poses + your player numbers). **Players:** a pose
+model (with a zoomed pass on the far back court) and re-identification guesses for numbering them.
+
 ## Usage
 
 ```bash
@@ -22,6 +27,29 @@ pip install -e ".[ml,dev]"          # once: installs the project and its depende
 pre-commit install                  # once: ruff checks every commit
 python main.py videos/test42.MP4
 ```
+
+## Labeling a clip: one pass
+
+```bash
+python -m tools.annotate holdout/holdout1.mov      # court -> ball + touches -> poses -> players -> 3D + check list
+python -m tools.check_labels holdout1 --summary    # what's left to re-check (ball, touches, players, 3D)
+```
+
+Each step shows what's there and asks (Enter do it, s skip, q stop). In `tools.review`, `b` jumps
+to frames worth a second look in your labels, and after `m` + the touch type you can type who
+touched it (number + Enter). Clips in `holdout/` are always test clips: never trained on.
+
+## The ball in 3D
+
+```bash
+python -m tools.ball3d_run videos/test20.mov       # -> output/<clip>/ball3d.json (+ --use-my-touches, --my-ball)
+python -m tools.ball3d_video videos/test20.mov     # the overlay video (--debug: shadow, top view, frame numbers)
+python -m tools.ball3d_viewer videos/test20.mov    # interactive 3D page
+python -m tools.scene3d videos/test20.mov          # all of it, in order
+```
+
+Needs `tools.calibrate_court` (once per camera position) and, for the player clues, `tools.pose`.
+Metres are shown with two decimals.
 
 ## Development
 
@@ -63,7 +91,6 @@ Outputs, one folder per clip (`output/<clip>/`; all paths are defined in `core/c
 - `cache/dets.json`, `cache/tracknet.json` — classic pipeline (and autolabel): YOLO on every frame, TrackNet candidates
 - caches are rebuilt automatically if deleted
 
-`output/dev/` holds comparison runs and experiments; `output/archive/` holds files from older versions.
 
 ## Accuracy
 
@@ -95,6 +122,16 @@ resolution. Settings are in **seconds** and **ball-widths** (1 ball-width ≈ 0.
 depth), not frames and pixels, and fits use each frame's real timestamp. Camera motion is
 measured but not yet compensated, so handheld footage is weaker.
 
+### 3D, on the 10 holdouts (2026-11-15)
+
+| | touches found | fake touches | 3D ball > 3 m from every player at your touches |
+|---|---|---|---|
+| automatic, with your player numbers | 99 / 103 | 43 | 18% (hits 3%, sets 10%, passes 26%) |
+
+`python -m evaluation.touches3d holdout1 ... holdout10` and `python -m evaluation.reach3d ...`.
+Servers behind the far baseline were not detected before the far court zoom in `tools.pose`
+(2026-11-15); serves and serve receptions are the weakest part until the poses are rerun.
+
 ## More training data: autolabel → review → export
 
 ```bash
@@ -113,7 +150,8 @@ python -m tools.export_training --name v3 \
   click the ball / `n` no ball / `N` a run of no ball / `h` hidden / `i` fill a straight line
   between two clicks / `I` fill between all your clicks in the rally; Shift+click (or `e`)
   confirms another ball through the whole clip, `o` jumps to the next suggestion; `m` + 1–6/0
-  marks a touch (serve, pass, set, attack, block, dig, other), `M` jumps between marks.
+  marks a touch (serve, pass, set, hit, block, dig, other; 9 = rally over), then optionally who
+  touched it (number + Enter); `M` jumps between marks, `b` to the next frame worth re-checking.
   Saves to `data/verified/<clip>.json` after every action. Clips in `holdout/` are always test
   clips (never exported). `?` prints all keys.
 - **export_training** writes versioned sets, never overwriting: `training/datasets/yolo_<name>/`
@@ -130,10 +168,13 @@ python -m tools.export_training --name v3 \
 
 ```bash
 python -m evaluation.regression [--linker finder-first|joint|cost] [--tracknet]   # 12 known-tricky moments
-python -m evaluation.compare_finders --runs --finders tracknet wasb:models/wasb/wasb_ft2.pth.tar   # finders alone
-python -m evaluation.eval_finder_first --finder models/wasb/wasb_ft2.pth.tar     # classic vs YOLO+finder vs finder-first crop rules
 python -m evaluation.ablate [--variants joint classic]   # test a pipeline change on cached inputs (holdout/dev/checked + regression)
 python -m tools.dump_detections videos/*.mov      # pre-compute the full YOLO pass for many clips
+python -m evaluation.touches3d holdout1 ... --detail   # 3D touches vs your touch marks
+python -m evaluation.reach3d holdout1 ... --detail     # 3D ball vs the players at your touches (metres)
+python -m evaluation.joins3d holdout1                  # breaks between 3D flights at touches
+python -m evaluation.reid_eval holdout1                # player re-ID guesses vs your numbers
+python -m evaluation.sim_rally --rallies 20            # 3D on synthetic rallies with known truth
 ```
 
 ## Layout
@@ -155,29 +196,33 @@ core/                   the library (no command-line code)
     contacts.py           touch / bounce / other, from where the people are
     other_balls.py        other volleyballs in the picture (suggestions for the review tool)
   geometry/             camera.py (calibration: pixels <-> meters), court.py (court and net)
-  scene3d/              ball3d.py (physics fit), rally3d.py (global rally fit), params3d.py (every set number),
-                        legacy_v1.py (first 3D mechanism, for comparison)
-  people/               players.py (positions, jumps), reid.py (one id per player)
+  scene3d/              ball3d.py (physics fit), rally3d.py (global rally fit), params3d.py (every set number)
+  people/               players.py (who touched it, where they stand, jumps), reid.py (player guesses),
+                        reid_model.py (optional re-ID model), player_labels.py (your numbers)
   common/               paths.py (where every file lives), safe_io.py (safe saves + backups),
-                        frametime.py, device.py, render.py
+                        frametime.py (true frame times of screen recordings), label_checks.py (what to
+                        re-check in your labels), labels.py (overlay text), device.py, render.py
   archive/              retired code
-tools/                  the commands you run: autolabel, review, label_players, calibrate_court, pose, players,
-                        scene3d, ball3d_run/_video/_viewer, export_training, build_tracknet_data, calibrate,
-                        dump_detections, resnap_labels, todo
-evaluation/             how good is each part: scoreboard, regression, ablate, compare_finders, eval_finder_first,
-                        failures, reid_eval, sim_rally + sim_camera (synthetic rallies and cameras)
+tools/                  the commands you run: annotate (one labeling pass), review, label_players,
+                        calibrate_court, pose, check_labels, autolabel, scene3d, ball3d_run/_video/_viewer,
+                        export_training, build_tracknet_data, calibrate, dump_detections, resnap_labels, todo
+evaluation/             how good is each part: scoreboard, regression, ablate, failures, touches3d, reach3d,
+                        joins3d, inplay, reid_eval, sim_rally + sim_camera (synthetic rallies and cameras)
+evaluation/archive/     one-off experiments (finder comparisons)
 tests/                  pytest: unit tests + labeling-tool replays + the slow 3D accuracy gate
 tools/archive/          retired tools and dev/ (linker debugging, visualisation)
 videos/                 your clip pool: everything labelled for training (not in git)
 holdout/                test clips: never trained on, only scored (not in git)
 data/gt/                old dev labels, every 5th frame (10 clips)
-data/verified/          your checked ball labels       data/player_ids/   your player labels
+data/verified/          your checked ball labels, touch marks, who touched it
+data/player_ids/        your player numbers
 data/cameras/           court calibrations             data/proposals/    autolabel suggestions (not in git)
 models/best4.pt         YOLO ball weights (best5.pt: candidate); models/yolov8n.pt: COCO person detector
 models/yolov8m*.pt      person + pose models (downloaded automatically, not in git)
 models/wasb/            wasb_ft3.pth.tar (fine-tuned, default since 2026-11-09), wasb_ft2.pth.tar (previous) + wasb_volleyball_best.pth.tar (authors' weights)
 models/tracknet/        FT_TrackNet_best.pt + .offset.json (classic pipeline)
 models/score_calibration.json   score calibration (tools.calibrate)
+models/lmbn_n_market.pt         person re-ID weights (optional; download line in core/people/reid_model.py)
 training/yolo/          YOLO fine-tuning notebook (Colab)
 training/wasb/          WASB fine-tuning notebook + train_wasb.py (Colab)
 training/tracknet/      dataset_labels.json + datasets/ (not in git)

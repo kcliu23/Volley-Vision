@@ -15,7 +15,7 @@ Add a variant here to test a change (e.g. a stage removed) against the pipeline 
 2026-10-28: a tracklet layer + rival/fixture removal before the joint linker scored the same on
 holdout/dev and worse on the checked clips, so it was removed (core/archive/tracklet_linker.py).
 
-Scored like evaluation.eval_finder_first (on-ball = within 1 ball-width of your label), per group
+Scored like the finder-first evaluation (evaluation/archive/eval_finder_first.py; on-ball = within 1 ball-width of your label), per group
 (holdout / dev / checked) and per clip, plus the regression cases.
 """
 from __future__ import annotations
