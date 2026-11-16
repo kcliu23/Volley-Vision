@@ -38,6 +38,7 @@ def main():
     parser.add_argument("--tracknet",   default="models/tracknet/FT_TrackNet_best.pt",
                         help="(classic) gap-filling finder: TrackNet (.pt) or WASB (.pth.tar)")
     parser.add_argument("--no-tracknet", action="store_true",      help="(classic) Skip the TrackNet stage")
+    parser.add_argument("--no-render",  action="store_true",       help="Track only: no tracked.mp4 (saves ~45 s)")
     args = parser.parse_args()
 
     if not Path(args.input).exists():
@@ -50,7 +51,7 @@ def main():
         show_preview=args.preview, touches=not args.no_touches, ring=args.ring,
         tracknet=None if args.no_tracknet else args.tracknet, pipeline=args.pipeline, finder=args.finder,
         crop_top=2 if args.loose else args.crop_top, crop_p=None if args.loose else args.crop_p,
-        guided=not args.no_guided)
+        guided=not args.no_guided, render=not args.no_render)
 
 
 if __name__ == "__main__":

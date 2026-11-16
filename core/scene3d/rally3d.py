@@ -82,6 +82,8 @@ class Obs:
     net_h: float | None = None           # net height (m): flights can't pass through it
     fixed: object = None                 # your touch marks as cuts (frame numbers): skip choosing touches
     cam: object = None                   # the camera (for depths)
+    who: object = None                   # your "who touched it" (tools.review): frame -> player number
+    named: object = None                 # named(frame, number) -> {"side", "spot"}: where that player stands
     touchers: object = None              # touchers(frame, ball_uv) -> core.people.players.touch_evidence list
     near: object = None                  # near(t, xyz) -> metres outside every player's reach, or
                                          # None where there is no player data (core.people.players.reach)
@@ -389,6 +391,9 @@ def solve(o: Obs, cam, hints=(), log=print):
     return pieces, info
 
 
+NAMED_REACH_M = 1.5    # [guess] the ball at a touch by the player you named: this far from where they
+                       #         stood (a dig reaches out, a hitter drifts), more and it costs
+NAMED_SIDE_SIGMA_M = 0.01   # your number says the side: as firm as the floor (a guessed toucher is soft)
 DEPTH_TOL = 0.3        # [guess] a toucher stands within this fraction of the ball's distance from
 DEPTH_TOL_M = 2.5      #         the camera, or this many metres, whichever is more
 
@@ -407,7 +412,7 @@ def _anchors_fit(o: Obs, cam, segs, links, bounds, bounces=()) -> list:
     """_anchors with the ball's distance from a first fit without anchors (size, gravity and the
     joins together): a single ball box at a touch is unreliable, hands cover the ball (test20
     942: the box drops from 43 to 30 px, the size read 11.7 m for a ball at ~8 m)."""
-    if not o.touchers:
+    if not o.touchers and not o.who:
         return []
     fit0 = fit_rally(segs, links, cam, net_h=o.net_h)
 
@@ -432,6 +437,21 @@ def _anchors(o: Obs, bounds, bounces=(), depth=None) -> list:
             continue
         tc = 0.5 * (o.t[b - 1] + o.t[b])
         i = b if abs(o.t[b] - tc) < abs(o.t[b - 1] - tc) else b - 1
+        # you said who touched it: that settles it (their number's side; where they stood, when
+        # they have a box). test95 1060: #3 (our side) and #9 (theirs) both at the ball in the
+        # picture, no anchor, and the 3D put the pass on the wrong side of the net
+        f_a, f_b = int(o.frames[b - 1]), int(o.frames[b])
+        said = sorted((abs(g - 0.5 * (f_a + f_b)), n) for g, n in (o.who or {}).items() if f_a - 3 <= g <= f_b + 3)
+        if said:
+            n = said[0][1]
+            got = (o.named(int(o.frames[i]), n) if o.named else None) or {}
+            side = got.get("side", -1 if n <= 6 else 1)
+            for kk in (k - 1, k):
+                out.append({"k": kk, "t": tc, "side": side, "spot": got.get("spot"), "reach": NAMED_REACH_M,
+                            "side_sigma": NAMED_SIDE_SIGMA_M})
+            continue
+        if not o.touchers:
+            continue
         ev = o.touchers(int(o.frames[i]), o.uv[i])
         zb = depth(k, tc) if depth is not None else _ball_depth(o, i)
         if zb is not None:
@@ -616,7 +636,7 @@ def _solve_once(o: Obs, cam, hints, log):
 
 def solve_clip(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_s: float = 1.5,
                players=None, T=None, net_h=None, poses=None, ball_px: float = 25.0, player_labels=None,
-               fixed_touches=None, keep=None):
+               fixed_touches=None, keep=None, who=None, named=None):
     """A whole clip: split into rallies (stretches with no ball for > rally_gap_s), solve() each
     with the tracker's contacts as hints. T: true frame times (core.common.frametime); players: from
     core.people.players.build; poses: output/<clip>/pose.json frames (tools.pose), to anchor touches to
@@ -651,11 +671,15 @@ def solve_clip(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_
         o.cam = cam
         if fixed_touches is not None:
             o.fixed = [f for f in fixed_touches if fr[0] < f < fr[-1]]
+        if who:
+            o.who = {int(g): int(n) for g, n in who.items() if fr[0] - 3 <= int(g) <= fr[-1] + 3}
+            o.named = named
         if poses:
             from core.people.players import touch_evidence
             o.touchers = lambda f, uv_, P=poses: touch_evidence(P, f, uv_, cam, ball_px, fps=fps,
                                                                 labels=player_labels)
         hints = [c["frame"] for c in contacts if fr[0] <= c["frame"] <= fr[-1]]
+        hints += [g for g in (o.who or {}) if fr[0] < g < fr[-1]]      # a touch you named is a touch
         res, info = solve(o, cam, hints, log=log)
         nt = len(res) - 1
         log(f"rally {fr[0]}-{fr[-1]}: {nt} touch{'es' if nt != 1 else ''} {'from your marks' if fixed_touches is not None else 'chosen by the fit'}"

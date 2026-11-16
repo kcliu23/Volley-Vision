@@ -80,6 +80,26 @@ def positions(stem: str, track: dict, labels: bool, contacts: dict | None = None
     return uv, w
 
 
+def _named_player(poses, plabels, cam, fps):
+    """named(frame, number) -> {"side", "spot"}: the side from the number (1-6 near, 7-12 far) and,
+    when that player has a box (pose.json + your numbers), where they stood: the lowest box bottom
+    in the half second up to the touch (a jumper's takeoff spot), on the floor."""
+    def named(f: int, n: int) -> dict:
+        out = {"side": -1 if n <= 6 else 1}
+        if not poses or plabels is None:
+            return out
+        best = None
+        for g in range(f - int(0.5 * fps), f + 3):
+            for p in poses.get(str(g), []):
+                if plabels.number(p["id"], g) == n and (best is None or p["box"][3] > best[1]):
+                    best = ((p["box"][0] + p["box"][2]) / 2, p["box"][3])
+        if best is not None:
+            g = cam.floor_point([best], 0.0)[0]
+            out["spot"] = (float(g[0]), float(g[1]))
+        return out
+    return named
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("video")
@@ -94,6 +114,8 @@ def main():
                     help="your touch marks (tools.review) are the touches; only the ball in play is fitted")
     a = ap.parse_args()
     stem = Path(a.video).stem
+    from core.common.timing import Laps
+    TL = Laps(f"[ball3d] {stem}:")
     cam = Camera.load(Path("data/cameras") / f"{stem}.json")
     net_h = json.load(open(Path("data/cameras") / f"{stem}.json")).get("net_height", 2.43)
     track = json.load(open(paths.track(stem, a.output)))
@@ -125,6 +147,7 @@ def main():
 
     from core.people.players import load_people
     from core.scene3d.rally3d import solve_clip
+    TL.lap("inputs, frame times, ball sizes")
     players = load_people(stem, a.output, cam, fps, log=lambda m: print(f"[ball3d] {stem}: " + m))
     if players:
         print(f"[ball3d] {stem}: {len(players)} player tracks: a touch away from all of them costs more")
@@ -153,8 +176,17 @@ def main():
         for t0, t1, _ in runs:
             uv[t0:t1 + 1] = np.nan
         print(f"[ball3d] {stem}: your {len(fixed)} touch marks are the touches (ball in play only)")
+    # your "who touched it" (tools.review): the 3D puts those touches at that player, on their side
+    who, named = None, None
+    vp = Path(paths.verified(stem))
+    if vp.exists():
+        who = {int(k): int(v) for k, v in (json.load(open(vp)).get("touched_by") or {}).items()} or None
+    if who:
+        named = _named_player(poses, plabels, cam, fps)
+        print(f"[ball3d] {stem}: your 'who touched it' on {len(who)} touches: each one is put at that player")
+    TL.lap("players and poses")
     pieces = solve_clip(uv, w, size, edge, box, fps, cam, C["contacts"], players=players, T=T, net_h=net_h,
-                        poses=poses, ball_px=bpx, player_labels=plabels, fixed_touches=fixed, keep=keep,
+                        poses=poses, ball_px=bpx, player_labels=plabels, fixed_touches=fixed, keep=keep, who=who, named=named,
                         log=lambda m: print(f"[ball3d] {stem}: " + m))
 
     flights_out, frames_out = [], {}
@@ -193,6 +225,7 @@ def main():
                              "flight": len(flights_out) - 1, "free": bool(free)}
 
     out = Path(a.output) / stem / "ball3d.json"
+    TL.lap("3D fit (all rallies)")
     json.dump({"schema": "vv-ball3d/1", "video": a.video, "fps": fps, "source": "labels" if a.labels else "track",
                "camera": str(Path("data/cameras") / f"{stem}.json"), "flights": flights_out,
                "frames": {str(k): v for k, v in sorted(frames_out.items())}}, open(out, "w"), indent=0)
@@ -204,6 +237,8 @@ def main():
         print(f"  {fl['f0']:5d}-{fl['f1']:<5d} {'yes' if fl['free_flight'] else 'NO':>5s} {fl['median_px']:6.1f} "
               f"{fl['apex_m']:7.2f} {fl['speed_start_mps']:9.1f} {fl['min_height_m']:8.2f} {fl['depth_std_m']:5.2f}  {ncs}")
     plot(out.with_suffix(".png"), flights_out, frames_out, cam, net_h, stem)
+    TL.lap("output files and picture")
+    TL.report("3D time")
 
 
 def plot(path, flights, frames, cam, net_h, stem):

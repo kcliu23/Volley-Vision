@@ -49,60 +49,86 @@ DRAG_K = AIR_RHO * BALL_CD * math.pi * (BALL_D / 2) ** 2 / (2 * BALL_M)     # ~0
 STEP = 1 / 60                      # integration step (s); Hermite interpolation in between (error < 0.001 mm)
 
 
+def _traj_dir(px, py, pz, u, v, w, q, k, sgn, step):
+    """One direction from the reference time: positions at |t - tr| = q (q >= 0), RK4 steps of
+    about `step` s under gravity + quadratic drag k, cubic Hermite in between. Plain floats and
+    loops: compiled by numba when it is installed (about 30x faster), run as Python otherwise."""
+    g = -9.81
+    T = 0.0
+    for j in range(q.shape[0]):
+        if q[j] > T:
+            T = q[j]
+    out = np.empty((q.shape[0], 3))
+    if T == 0.0:
+        for j in range(q.shape[0]):
+            out[j, 0], out[j, 1], out[j, 2] = px, py, pz
+        return out
+    n = max(1, int(math.ceil(T / step)))
+    h = sgn * T / n
+    X = np.empty((n + 1, 3))
+    V = np.empty((n + 1, 3))
+    x, y, z = px, py, pz
+    X[0, 0], X[0, 1], X[0, 2] = x, y, z
+    V[0, 0], V[0, 1], V[0, 2] = u, v, w
+    for i in range(n):
+        if u * u + v * v + w * w <= 1e4:                    # > 100 m/s: a diverging guess; freeze it
+            s = k * math.sqrt(u * u + v * v + w * w)
+            a1u, a1v, a1w = -s * u, -s * v, g - s * w
+            u2, v2, w2 = u + 0.5 * h * a1u, v + 0.5 * h * a1v, w + 0.5 * h * a1w
+            s = k * math.sqrt(u2 * u2 + v2 * v2 + w2 * w2)
+            a2u, a2v, a2w = -s * u2, -s * v2, g - s * w2
+            u3, v3, w3 = u + 0.5 * h * a2u, v + 0.5 * h * a2v, w + 0.5 * h * a2w
+            s = k * math.sqrt(u3 * u3 + v3 * v3 + w3 * w3)
+            a3u, a3v, a3w = -s * u3, -s * v3, g - s * w3
+            u4, v4, w4 = u + h * a3u, v + h * a3v, w + h * a3w
+            s = k * math.sqrt(u4 * u4 + v4 * v4 + w4 * w4)
+            a4u, a4v, a4w = -s * u4, -s * v4, g - s * w4
+            x += h / 6 * (u + 2 * u2 + 2 * u3 + u4)
+            y += h / 6 * (v + 2 * v2 + 2 * v3 + v4)
+            z += h / 6 * (w + 2 * w2 + 2 * w3 + w4)
+            u += h / 6 * (a1u + 2 * a2u + 2 * a3u + a4u)
+            v += h / 6 * (a1v + 2 * a2v + 2 * a3v + a4v)
+            w += h / 6 * (a1w + 2 * a2w + 2 * a3w + a4w)
+        X[i + 1, 0], X[i + 1, 1], X[i + 1, 2] = x, y, z
+        V[i + 1, 0], V[i + 1, 1], V[i + 1, 2] = u, v, w
+    hh = abs(h)
+    for j in range(q.shape[0]):                             # velocity along q = |t - tr|: V * sgn
+        i = min(int(q[j] / hh), n - 1)
+        r = (q[j] - i * hh) / hh
+        h00, h10 = 2 * r ** 3 - 3 * r ** 2 + 1, r ** 3 - 2 * r ** 2 + r
+        h01, h11 = -2 * r ** 3 + 3 * r ** 2, r ** 3 - r ** 2
+        for c in range(3):
+            out[j, c] = (h00 * X[i, c] + h10 * hh * sgn * V[i, c]
+                         + h01 * X[i + 1, c] + h11 * hh * sgn * V[i + 1, c])
+    return out
+
+
+try:                                                        # optional: pip install numba
+    import numba
+    _traj_dir = numba.njit(cache=True, fastmath=False)(_traj_dir)
+except ImportError:
+    pass
+
+
 def traj(p0, v0, tr: float, ts, k: float = DRAG_K) -> np.ndarray:
     """Ball positions (N, 3) at times ts for a flight that is at p0 with velocity v0 at time tr,
-    under gravity and quadratic air drag k (k = 0: the exact parabola). RK4 in plain floats
-    (small loops: much faster than numpy here), both directions from tr, cubic Hermite
-    interpolation between the steps from positions AND velocities (2026-11-09: 1/240 s steps with
-    linear interpolation were 0.06 mm off and 3.5x slower; this is 0.0004 mm off)."""
+    under gravity and quadratic air drag k (k = 0: the exact parabola). RK4, both directions from
+    tr, cubic Hermite interpolation between the steps from positions AND velocities (2026-11-09:
+    1/240 s steps with linear interpolation were 0.06 mm off and 3.5x slower; this is 0.0004 mm
+    off). The inner loop is _traj_dir (compiled by numba when installed: 2026-11-16, test95's 3D
+    fit spent 61 of its 84 s here)."""
     ts = np.atleast_1d(np.asarray(ts, float))
     p0 = np.asarray(p0, float); v0 = np.asarray(v0, float)
     if k == 0:
         dt = ts - tr
         return p0 + np.outer(dt, v0) + 0.5 * np.outer(dt ** 2, G)
     out = np.empty((len(ts), 3))
-    g = -9.81
     for sgn in (1, -1):
         m = (ts >= tr) if sgn == 1 else (ts < tr)
         if not m.any():
             continue
-        T = float(np.max(np.abs(ts[m] - tr)))
-        if T == 0.0:                                        # only the reference time itself
-            out[m] = p0
-            continue
-        n = max(1, int(math.ceil(T / STEP)))
-        h = sgn * T / n
-        x, y, z = p0
-        u, v, w = v0
-        X, V = [(x, y, z)], [(u, v, w)]
-        for _ in range(n):
-            if u * u + v * v + w * w > 1e4:                # > 100 m/s: a diverging guess; freeze it
-                X.append((x, y, z)); V.append((u, v, w))
-                continue
-            s = k * math.sqrt(u * u + v * v + w * w)
-            a1 = (-s * u, -s * v, g - s * w)
-            u2, v2, w2 = u + 0.5 * h * a1[0], v + 0.5 * h * a1[1], w + 0.5 * h * a1[2]
-            s = k * math.sqrt(u2 * u2 + v2 * v2 + w2 * w2)
-            a2 = (-s * u2, -s * v2, g - s * w2)
-            u3, v3, w3 = u + 0.5 * h * a2[0], v + 0.5 * h * a2[1], w + 0.5 * h * a2[2]
-            s = k * math.sqrt(u3 * u3 + v3 * v3 + w3 * w3)
-            a3 = (-s * u3, -s * v3, g - s * w3)
-            u4, v4, w4 = u + h * a3[0], v + h * a3[1], w + h * a3[2]
-            s = k * math.sqrt(u4 * u4 + v4 * v4 + w4 * w4)
-            a4 = (-s * u4, -s * v4, g - s * w4)
-            x += h / 6 * (u + 2 * u2 + 2 * u3 + u4)
-            y += h / 6 * (v + 2 * v2 + 2 * v3 + v4)
-            z += h / 6 * (w + 2 * w2 + 2 * w3 + w4)
-            u += h / 6 * (a1[0] + 2 * a2[0] + 2 * a3[0] + a4[0])
-            v += h / 6 * (a1[1] + 2 * a2[1] + 2 * a3[1] + a4[1])
-            w += h / 6 * (a1[2] + 2 * a2[2] + 2 * a3[2] + a4[2])
-            X.append((x, y, z)); V.append((u, v, w))
-        X, V = np.array(X), np.array(V) * sgn               # velocity along q = |t - tr|
-        q, hh = np.abs(ts[m] - tr), abs(h)
-        i = np.minimum((q / hh).astype(int), n - 1)
-        s_ = ((q - i * hh) / hh)[:, None]
-        out[m] = ((2 * s_ ** 3 - 3 * s_ ** 2 + 1) * X[i] + (s_ ** 3 - 2 * s_ ** 2 + s_) * hh * V[i]
-                  + (-2 * s_ ** 3 + 3 * s_ ** 2) * X[i + 1] + (s_ ** 3 - s_ ** 2) * hh * V[i + 1])
+        out[m] = _traj_dir(float(p0[0]), float(p0[1]), float(p0[2]), float(v0[0]), float(v0[1]), float(v0[2]),
+                           np.ascontiguousarray(np.abs(ts[m] - tr)), float(k), float(sgn), STEP)
     return out
 
 
@@ -310,13 +336,13 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
             side = A.get("side")
             if side in (-1, 1):
                 over = side * (-x[0]) - ANCHOR_OVER_M           # how far past the net, toward the other side
-                r_side = max(0.0, over) / ANCHOR_SIGMA_M
+                r_side = max(0.0, over) / A.get("side_sigma", ANCHOR_SIGMA_M)
             elif side == 0:
                 r_side = max(0.0, abs(x[0]) - ANCHOR_OVER_M) / ANCHOR_SIGMA_M
             else:
                 r_side = 0.0
             sp = A.get("spot")
-            r_spot = max(0.0, float(np.hypot(x[0] - sp[0], x[1] - sp[1])) - ANCHOR_REACH_M) / ANCHOR_SIGMA_M \
+            r_spot = max(0.0, float(np.hypot(x[0] - sp[0], x[1] - sp[1])) - A.get("reach", ANCHOR_REACH_M)) / ANCHOR_SIGMA_M \
                 if sp is not None else 0.0
             add(np.array([r_side, r_spot]), flight(A["k"]))
         for j, L in enumerate(links):

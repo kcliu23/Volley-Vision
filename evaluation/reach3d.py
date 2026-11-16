@@ -77,7 +77,7 @@ def gaps(stem: str, output: str):
     cam = Camera.load(Path("data/cameras") / f"{stem}.json")
     B = json.load(open(Path(output) / stem / "ball3d.json"))
     fr = {int(k): np.array(v["xyz"]) for k, v in B["frames"].items()}
-    play = in_play(V) or set()
+    play = in_play(V)                                    # None: no serve marks: every touch counts
     fps = float(B.get("fps") or 60.0)
     from tools.ball3d_run import positions
     tr = json.load(open(Path(output) / stem / "track.json"))
@@ -86,7 +86,7 @@ def gaps(stem: str, output: str):
     out, skipped = [], 0
     who_at = {int(k): int(v) for k, v in (V.get("touched_by") or {}).items()}
     for t0, t1, kind in touches_all(V):
-        if not (t0 in play or t1 in play or kind == "serve"):
+        if play is not None and not (t0 in play or t1 in play or kind == "serve"):
             continue
         f = (t0 + t1) // 2
         near = [g for g in range(f - 2, f + 3) if g in fr]

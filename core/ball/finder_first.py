@@ -208,7 +208,10 @@ def track(video: str, model, finder: str = DEFAULT_FINDER, cal=None, crop_top: i
     from core.ball.profile import link_args
 
     stem = Path(video).stem
+    from core.common.timing import Laps
+    T = Laps("[VolleyVision]   ", log=log)
     d = sparse_dets(video, model, paths.cache_dir(stem, root) / "sample_dets.json", log=log)
+    T.lap("sparse YOLO pass (every 20th frame; cached after the first run)")
     before = d.get("profile")
     get_profile(video, d)                          # frame times, repeated frames, content box, ball size
     if d.get("profile") is not before:
@@ -217,11 +220,13 @@ def track(video: str, model, finder: str = DEFAULT_FINDER, cal=None, crop_top: i
     cands = finders.candidates(video, d, finder, cache_path=finders.cache_path(stem, finder, root), log=log)
     if cands is None:
         raise FileNotFoundError(f"ball finder weights not found: {finder}")
+    T.lap("ball finder on every frame (WASB; cached after the first run)")
     cands = finders.correct(cands, ball, finder)
     cal = (cal or Calibration.load()).for_finder(finders.calib_name(finder))
     ftag = finders.tag(finder) or "tracknet"
     cf = crop_finds(stem, video, cands, ball, ftag, model, lambda pk: float(cal.prob("tracknet", [pk])[0]),
                     crop_top, crop_p, root=root)
+    T.lap("YOLO checks on crops (cached after the first run)")
     a = link_args(d)
     d2 = dict(d)
     d2["frames"] = [list(fr) if f % SAMPLE_EVERY == 0 else [] for f, fr in enumerate(d["frames"])]
@@ -231,6 +236,7 @@ def track(video: str, model, finder: str = DEFAULT_FINDER, cal=None, crop_top: i
     jp = JointParams(tn_only_bias=FINDER_ONLY_BIAS)
     kw = dict(dup_flags=a["dup_flags"], content=a["content"], times=a["times"])
     t = joint_link(d2, cands, cal, a["fps"], d["width"], d["height"], ball, jp, **kw)
+    T.lap("joint linker (the ball's path)")
     info = {"ball_px": ball, "crops": cf["crops"], "frames": len(cands), "crop_frames": len(cf["found"]),
             "fps": a["fps"], "width": d["width"], "height": d["height"]}
     if guided:
@@ -244,6 +250,7 @@ def track(video: str, model, finder: str = DEFAULT_FINDER, cal=None, crop_top: i
         d2["zoom"] = ps.merge_zoom(d2["zoom"], res["found"])
         t = joint_link(d2, cands, cal, a["fps"], d["width"], d["height"], ball, jp, **kw)
         info["guided_crops"], info["guided_found"] = res["crops"], len(res["found"])
+        T.lap("physics-guided search + linking again")
         if log:
             log(f"[VolleyVision] physics-guided search: {res['crops']} crops where the flights predict the ball, "
                 f"found it in {len(res['found'])} frames")

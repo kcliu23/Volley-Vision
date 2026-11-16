@@ -83,11 +83,14 @@ def run(
     print(f"[VolleyVision] {Path(input_path).name}  {width}x{height}  {fps:.1f}fps  {total} frames  "
           f"({pipeline + (' pipeline' if pipeline == 'finder-first' else f', {linker} linker')})")
     t0 = time.time()
+    from core.common.timing import Laps
+    T = Laps("[VolleyVision]")
 
     # true frame times first (screen recordings repeat and skip frames): written once per clip
     # to output/<clip>/frame_times.json for every later stage
     from core.common.frametime import frame_times, summary
     print(f"[VolleyVision] frame timing: {summary(frame_times(input_path, paths.clip_dir(stem, output_dir)))}")
+    T.lap("frame timing (screen recording check; cached after the first run)")
 
     if pipeline == "finder-first":
         # finder-first (default): WASB on every frame, YOLO only on crops around its top
@@ -149,6 +152,7 @@ def run(
                 got = tracknet_fill(track, finders.correct(tn, ball_px, tracknet), ball_px)
                 print(f"[VolleyVision] {name} filled {got['gap']} gap frames, extended track ends by {got['end']} frames")
 
+    T.lap("2D ball tracking")
     s = track.summary()
     print(f"[VolleyVision] ball tracked in {s['coverage']:.1%} of frames "
           f"(detected {s['detected']}, weak {s['weak']}, tracknet {s['tracknet']}, filled {s['filled']}, none {s['none']})")
@@ -185,6 +189,7 @@ def run(
         for c in found:
             print(f"    {c.t:6.2f}s  frame {c.frame:7.1f}  {c.kind:6s}{'  (ball hidden at contact)' if c.in_gap else ''}")
 
+    T.lap("flights + contacts (person boxes at contacts)")
     track_path = str(paths.track(stem, output_dir))
     with open(track_path, "w") as fh:
         json.dump({"schema": "vv-track/2", "video": str(input_path), "fps": fps, "width": width,
@@ -194,6 +199,7 @@ def run(
 
     # 4. render
     if not render:
+        T.report("2D time (no render)")
         print(f"[VolleyVision] Done in {time.time() - t0:.1f}s (no render)")
         return track_path
     out_path = str(paths.video(stem, output_dir))
@@ -229,5 +235,7 @@ def run(
         cv2.destroyAllWindows()
     used_ffmpeg = finish_video(tmp_path, input_path, out_path)
     print(f"[VolleyVision] {'H.264 + audio' if used_ffmpeg else 'ffmpeg not found — no audio'}")
+    T.lap("render tracked.mp4")
+    T.report("2D time")
     print(f"[VolleyVision] Done in {time.time() - t0:.1f}s  →  {out_path}")
     return out_path

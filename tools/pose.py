@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import time
 from pathlib import Path
 
 import numpy as np
@@ -67,6 +68,64 @@ def _covered(b, boxes, thr: float = 0.4) -> bool:
     return False
 
 
+EVERY = 2                # the whole picture on every 2nd frame ...
+FAR_EVERY = 4            # ... the far court zoom on every 4th (one the whole picture also ran on) ...
+NEAR_TOUCH = 10          # ... and both on EVERY frame within this many frames of a touch
+FILL_GAP = 4             # a person seen at frames a and b (b - a <= this) is filled in between
+
+
+def touch_frames(stem: str, root) -> list[int]:
+    """Touches known before pose runs: the 2D tracker's contacts, and your touch marks."""
+    out = []
+    cp = paths.contacts(stem, root)
+    if Path(cp).exists():
+        out += [int(round(c["frame"])) for c in json.load(open(cp)).get("contacts", [])]
+    vp = Path(paths.verified(stem))
+    if vp.exists():
+        out += [int(k) for k in (json.load(open(vp)).get("contacts") or {})]
+    return sorted(set(out))
+
+
+def schedule(f0: int, f1: int, every: int, touches, near: int = NEAR_TOUCH) -> set[int]:
+    """Frames to run the model on: every `every`-th frame, and all frames near a touch."""
+    keep = set(range(f0, f1 + 1, max(1, every))) | {f1}
+    for t in touches:
+        keep |= set(range(max(f0, t - near), min(f1, t + near) + 1))
+    return keep
+
+
+def fill_between(frames: dict, max_gap: int = FILL_GAP) -> int:
+    """People seen at frames a and b (a < b, b - a <= max_gap) but not in between (the model didn't
+    run there): their box and body points, straight-line between a and b, marked "fill". At 60 fps
+    a player moves a few pixels a frame; touches run at full rate (schedule), so wrists there are
+    the model's own. Returns how many were filled."""
+    seen = {}
+    for f in sorted(frames):
+        for p in frames[f]:
+            if p["id"] >= 0:
+                seen.setdefault(p["id"], []).append((f, p))
+    n = 0
+    for pid, L in seen.items():
+        for (fa, pa), (fb, pb) in zip(L, L[1:]):
+            if not 1 < fb - fa <= max_gap:
+                continue
+            ba, bb = np.asarray(pa["box"], float), np.asarray(pb["box"], float)
+            ka, kb = np.asarray(pa["kp"], float), np.asarray(pb["kp"], float)
+            for f in range(fa + 1, fb):
+                if any(q["id"] == pid for q in frames.setdefault(f, [])):
+                    continue
+                u = (f - fa) / (fb - fa)
+                k = (1 - u) * ka + u * kb
+                k[:, 2] = np.minimum(ka[:, 2], kb[:, 2])     # as sure as the less sure end
+                q = {"id": pid, "box": [round(float(v), 1) for v in (1 - u) * ba + u * bb],
+                     "kp": [[round(float(x), 1), round(float(y), 1), round(float(c), 2)] for x, y, c in k], "fill": True}
+                if pa.get("far"):
+                    q["far"] = True
+                frames[f].append(q)
+                n += 1
+    return n
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("video")
@@ -76,6 +135,9 @@ def main():
     ap.add_argument("--frames", nargs=2, type=int, default=None, help="first and last frame (default: all)")
     ap.add_argument("--redo", action="store_true", help="run again even if pose.json exists")
     ap.add_argument("--no-far-zoom", action="store_true", help="skip the far back court zoom pass")
+    ap.add_argument("--every", type=int, default=EVERY, help="whole picture on every Nth frame (1: all); "
+                    "every frame near a touch either way")
+    ap.add_argument("--far-every", type=int, default=FAR_EVERY, help="far court zoom on every Nth frame")
     a = ap.parse_args()
     import cv2
     from ultralytics import YOLO
@@ -108,17 +170,29 @@ def main():
     f0, f1 = a.frames or (0, n - 1)
     cap.set(cv2.CAP_PROP_POS_FRAMES, f0)
     frames = {}
+    touches = touch_frames(stem, a.output)
+    run_whole = schedule(f0, f1, a.every, touches)
+    run_far = schedule(f0, f1, a.far_every, touches) & run_whole   # never alone: duplicates of far players
+    print(f"[pose] {stem}: whole picture on {len(run_whole)} of {f1 - f0 + 1} frames, far court zoom on "
+          f"{len(run_far)} (every frame within {NEAR_TOUCH} of {len(touches)} touches)")
+    t_start, t_whole, t_far = time.time(), 0.0, 0.0
     for f in range(f0, f1 + 1):
         ok, img = cap.read()
         if not ok:
             break
+        frames.setdefault(f, [])
+        if f not in run_whole:
+            continue
+        t_a = time.time()
         r = m.track(img, persist=True, tracker="bytetrack.yaml", imgsz=a.imgsz, verbose=False, conf=0.25,
                     device=device)[0]
         ids = r.boxes.id.int().tolist() if r.boxes.id is not None else [-1] * len(r.boxes)
         frames[f] = [{"id": i, "box": [round(v, 1) for v in b.tolist()],
                       "kp": [[round(x, 1), round(y, 1), round(c, 2)] for x, y, c in k.tolist()]}
                      for i, b, k in zip(ids, r.boxes.xyxy, r.keypoints.data)]
-        if m_far is not None:
+        t_whole += time.time() - t_a
+        t_b = time.time()
+        if m_far is not None and f in run_far:
             whole = [p["box"] for p in frames[f]]
             for ti, ((x0, y0, x1, y1), mt) in enumerate(zip(T, m_far)):
                 crop = cv2.resize(img[y0:y1, x0:x1], None, fx=FAR_ZOOM, fy=FAR_ZOOM, interpolation=cv2.INTER_CUBIC)
@@ -140,12 +214,19 @@ def main():
                                       "box": [round(v, 1) for v in bb], "far": True,
                                       "kp": [[round(x / FAR_ZOOM + x0, 1), round(y / FAR_ZOOM + y0, 1), round(c, 2)]
                                              for x, y, c in k.tolist()]})
+        t_far += time.time() - t_b
         if (f - f0) % 100 == 0:
             print(f"[pose] {stem}: frame {f}/{f1}", flush=True)
-    json.dump({"schema": "vv-pose/1", "video": a.video, "model": a.model, "keypoints": "coco17",
+    nf = fill_between(frames)
+    print(f"[pose] {stem}: {nf} boxes filled in between the frames the model ran on")
+    json.dump({"schema": "vv-pose/1", "video": a.video, "every": a.every, "far_every": a.far_every, "model": a.model, "keypoints": "coco17",
                "far_zoom": {"region": region, "zoom": FAR_ZOOM} if region else None,
                "frames": frames}, open(out, "w"), separators=(",", ":"))
     print(f"[pose] {stem}: {len(frames)} frames  →  {out}")
+    n_ = max(len(frames), 1)
+    print(f"[pose] {stem}: time: whole picture {t_whole:.0f} s ({t_whole / n_:.2f} s/frame), "
+          f"far court zoom {t_far:.0f} s ({t_far / n_:.2f} s/frame), reading video and the rest "
+          f"{time.time() - t_start - t_whole - t_far:.0f} s")
 
 
 if __name__ == "__main__":
