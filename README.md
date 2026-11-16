@@ -42,10 +42,10 @@ pip install numba            # optional: about 3.5x faster 3D fitting
 python -m tools.calibrate_court videos/match.mov
 
 # 2. Track, find people, reconstruct in 3D, and build the viewer
-python -m tools.scene3d videos/match.mov --all
+python -m main videos/match.mov
 
 # 3. Optional: the overlay videos too
-python -m tools.scene3d videos/match.mov --all --video
+python -m main videos/match.mov --video
 ```
 
 Results land in `output/<clip>/`:
@@ -88,9 +88,9 @@ Screen recordings and very low cameras make the 3D less certain near the net.
 ## Project layout
 
 ```
-main.py         2D ball tracking for one clip
+main.py         the whole pipeline for one clip
 core/           the library: ball tracking, geometry, people, 3D
-tools/          the commands: calibration, labeling, pose, 3D, viewers
+tools/          helpers: calibration, labeling, single steps, viewers
 evaluation/     benchmarks and accuracy checks
 tests/          unit tests and the 3D accuracy gate
 training/       model fine-tuning notebooks

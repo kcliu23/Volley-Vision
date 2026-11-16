@@ -153,7 +153,7 @@ def run(linker_name="rule", verbose=True, tracknet=False):
                 bpx = sorted(sz)[len(sz) // 2] if sz else 30.0
                 tracknet_fill(cache[stem], correct(json.load(open(tp))["frames"], bpx), bpx)
             elif tracknet:
-                print(f"  (no TrackNet cache for {stem}: run main.py on it first)")
+                print(f"  (no TrackNet cache for {stem}: run tools.track2d on it first)")
         ok, detail = check(cache[stem])
         passed += ok
         results.append((stem, desc, ok, detail))

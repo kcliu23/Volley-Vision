@@ -4,7 +4,7 @@
     python -m evaluation.scoreboard --finder models/wasb/wasb_ft4.pth.tar
     python -m evaluation.scoreboard --pipeline classic --tracknet models/tracknet/FT2_TrackNet_best.pt
 
-Runs the full pipeline (main.py without the video render) with the current models and with
+Runs the full pipeline (tools.track2d without the video render) with the current models and with
 the candidate, each in its own folder under output/dev/scoreboard/ (your real outputs are
 untouched), and compares:
   - holdout clips (holdout/, checked every frame): the real test; decide on these

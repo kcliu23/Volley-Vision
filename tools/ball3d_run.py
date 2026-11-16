@@ -3,7 +3,7 @@
     python -m tools.ball3d_run videos/test74.mov --labels    # from your checked labels (data/verified)
     python -m tools.ball3d_run videos/test74.mov             # from the tracker's output
 
-(tools.scene3d runs this together with frame timing, players and the viewer.)
+(main.py runs this together with the 2D track, players and the viewer.)
 
 Load -> solve -> save. Needs data/cameras/<clip>.json (tools.calibrate_court) and
 output/<clip>/{track,contacts}.json; players from the pose tracking (tools.pose)

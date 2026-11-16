@@ -18,7 +18,7 @@ from pathlib import Path
 from core.common import paths
 
 TRACKNET_DEFAULT = "models/tracknet/FT_TrackNet_best.pt"
-# THE default ball finder: everything (pipeline, main.py, autolabel, scoreboard) reads it from here.
+# THE default ball finder: everything (pipeline, tools.track2d, autolabel, scoreboard) reads it from here.
 # wasb_ft3 (2026-11-09): holdout on-ball 94.6 -> 96.1%, missed 4.0 -> 2.9% vs wasb_ft2
 FINDER_DEFAULT = "models/wasb/wasb_ft3.pth.tar"
 

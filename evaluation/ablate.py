@@ -210,7 +210,7 @@ def main():
         for s in ss:
             if not ((paths.cache_dir(s) / "crops_wasb_ft3.json").exists()
                     or (paths.cache_dir(s) / f"crops_wasb_ft3{crop_suffix(CROP_TOP, CROP_P)}.json").exists()):
-                print(f"  {s}: no crop cache (run main.py on it), skipped")
+                print(f"  {s}: no crop cache (run tools.track2d on it), skipped")
                 continue
             t0 = time.time()
             d2, cands, ball, args_ = inputs(s, cal, (CROP_TOP, CROP_P))

@@ -198,7 +198,7 @@ def main():
         stem = Path(v).stem
         dp = paths.dets(stem)
         if not dp.exists():
-            print(f"[wasb] {stem}: no YOLO cache ({dp}); run main.py or tools.dump_detections first")
+            print(f"[wasb] {stem}: no YOLO cache ({dp}); run tools.track2d or tools.dump_detections first")
             continue
         candidates(v, json.load(open(dp)), a.ckpt, redo=a.redo)
 
