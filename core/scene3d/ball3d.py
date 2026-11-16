@@ -298,9 +298,12 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
                     zc = X[i, 2] + a * (X[i + 1, 2] - X[i, 2])
                     yc = X[i, 1] + a * (X[i + 1, 1] - X[i, 1])
                     top = net_h + BALL_D / 2
-                    bot = net_h - NET_BAND_M - BALL_D / 2
-                    if abs(yc) <= NET_HALF_W and bot < zc < top:
-                        worst = max(worst, min(top - zc, zc - bot))
+                    # A free-flight crossing under the top of the net is invalid, including
+                    # the open-looking space below the 1 m mesh band: a volleyball cannot pass
+                    # under the net. Penalize the full clearance deficit, not only intersections
+                    # inside the visible mesh band.
+                    if abs(yc) <= NET_HALF_W:
+                        worst = max(worst, max(0.0, top - zc))
                 add(np.array([worst / solid_sigma]), flight(k))
         for A in anchors or []:                            # touches made by a seen player
             x = pos(A["k"], th, [A["t"]])[0]
