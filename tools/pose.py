@@ -70,7 +70,9 @@ def _covered(b, boxes, thr: float = 0.4) -> bool:
 
 EVERY = 2                # the whole picture on every 2nd frame ...
 FAR_EVERY = 4            # ... the far court zoom on every 4th (one the whole picture also ran on) ...
-NEAR_TOUCH = 10          # ... and both on EVERY frame within this many frames of a touch
+NEAR_TOUCH = 6           # ... the whole picture on EVERY frame within this many frames of a touch
+FAR_NEAR_TOUCH = 2       # ... the far court zoom on every frame within this many (all far people at
+                         #     touches kept on holdouts 6, 7, 10; 1/5 fewer zoom frames than 6)
 FILL_GAP = 4             # a person seen at frames a and b (b - a <= this) is filled in between
 
 
@@ -172,9 +174,9 @@ def main():
     frames = {}
     touches = touch_frames(stem, a.output)
     run_whole = schedule(f0, f1, a.every, touches)
-    run_far = schedule(f0, f1, a.far_every, touches) & run_whole   # never alone: duplicates of far players
+    run_far = schedule(f0, f1, a.far_every, touches, near=FAR_NEAR_TOUCH) & run_whole   # never alone: duplicates of far players
     print(f"[pose] {stem}: whole picture on {len(run_whole)} of {f1 - f0 + 1} frames, far court zoom on "
-          f"{len(run_far)} (every frame within {NEAR_TOUCH} of {len(touches)} touches)")
+          f"{len(run_far)} (every frame within {NEAR_TOUCH} / {FAR_NEAR_TOUCH} of {len(touches)} touches)")
     t_start, t_whole, t_far = time.time(), 0.0, 0.0
     for f in range(f0, f1 + 1):
         ok, img = cap.read()

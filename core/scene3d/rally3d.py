@@ -349,6 +349,12 @@ def refine(o: Obs, cam, bounds: list[int], cands: list[int], rounds: int = 3) ->
             inner = [c for c in cands if a + MIN_PTS <= c <= b - MIN_PTS]
             best = None
             for c in inner:
+                # Every score is >= 0 and a touch costs at least TOUCH_COST, so the gain is at most
+                # S(a, b) - S(a, c) - TOUCH_COST: when that can't beat the best so far, the second
+                # half needn't be fitted. Same answer, far fewer fits.
+                bound = S(a, b) - S(a, c) - TOUCH_COST
+                if not bound > (best[0] if best else 0.0):
+                    continue
                 gain = S(a, b) - (S(a, c) + S(c, b) + T(a, c, b))
                 if gain > 0 and (best is None or gain > best[0]):
                     best = (gain, c)
