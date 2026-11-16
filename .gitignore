@@ -87,3 +87,6 @@ models/lmbn_n_market.pt
 # Scratch
 .claude_tmp/
 _to_delete/
+
+# Private developer notes (details, accuracy history, decisions): kept locally, not published
+notes/
