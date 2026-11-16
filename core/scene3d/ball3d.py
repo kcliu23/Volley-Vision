@@ -35,9 +35,13 @@ from core.scene3d.params3d import (  # noqa: E402
     ANCHOR_OVER_M,
     ANCHOR_REACH_M,
     ANCHOR_SIGMA_M,
+    ANCHOR_UNDER_M,
     FREE_MIN_PX,
     FREE_X,
+    NET_REACH_BELOW_M,
     SOLID_SIGMA_M,
+    SPIN_MAX_A,
+    SPIN_SIGMA_A,
 )
 
 NET_HALF_W = 4.5 + 0.1                # m: the net (and its antennas) spans the court's width
@@ -49,10 +53,12 @@ DRAG_K = AIR_RHO * BALL_CD * math.pi * (BALL_D / 2) ** 2 / (2 * BALL_M)     # ~0
 STEP = 1 / 60                      # integration step (s); Hermite interpolation in between (error < 0.001 mm)
 
 
-def _traj_dir(px, py, pz, u, v, w, q, k, sgn, step):
+def _traj_dir(px, py, pz, u, v, w, q, k, sgn, step, sp, ax, ay):
     """One direction from the reference time: positions at |t - tr| = q (q >= 0), RK4 steps of
     about `step` s under gravity + quadratic drag k, cubic Hermite in between. Plain floats and
-    loops: compiled by numba when it is installed (about 30x faster), run as Python otherwise."""
+    loops: compiled by numba when it is installed (about 30x faster), run as Python otherwise.
+    Spin: + sp * (a x V), a = (ax, ay, 0) the spin axis (horizontal, across the travel), sp the
+    spin strength (1/s; > 0 backspin: lift, < 0 topspin: dive)."""
     g = -9.81
     T = 0.0
     for j in range(q.shape[0]):
@@ -73,16 +79,16 @@ def _traj_dir(px, py, pz, u, v, w, q, k, sgn, step):
     for i in range(n):
         if u * u + v * v + w * w <= 1e4:                    # > 100 m/s: a diverging guess; freeze it
             s = k * math.sqrt(u * u + v * v + w * w)
-            a1u, a1v, a1w = -s * u, -s * v, g - s * w
+            a1u, a1v, a1w = -s * u + sp * ay * w, -s * v - sp * ax * w, g - s * w + sp * (ax * v - ay * u)
             u2, v2, w2 = u + 0.5 * h * a1u, v + 0.5 * h * a1v, w + 0.5 * h * a1w
             s = k * math.sqrt(u2 * u2 + v2 * v2 + w2 * w2)
-            a2u, a2v, a2w = -s * u2, -s * v2, g - s * w2
+            a2u, a2v, a2w = -s * u2 + sp * ay * w2, -s * v2 - sp * ax * w2, g - s * w2 + sp * (ax * v2 - ay * u2)
             u3, v3, w3 = u + 0.5 * h * a2u, v + 0.5 * h * a2v, w + 0.5 * h * a2w
             s = k * math.sqrt(u3 * u3 + v3 * v3 + w3 * w3)
-            a3u, a3v, a3w = -s * u3, -s * v3, g - s * w3
+            a3u, a3v, a3w = -s * u3 + sp * ay * w3, -s * v3 - sp * ax * w3, g - s * w3 + sp * (ax * v3 - ay * u3)
             u4, v4, w4 = u + h * a3u, v + h * a3v, w + h * a3w
             s = k * math.sqrt(u4 * u4 + v4 * v4 + w4 * w4)
-            a4u, a4v, a4w = -s * u4, -s * v4, g - s * w4
+            a4u, a4v, a4w = -s * u4 + sp * ay * w4, -s * v4 - sp * ax * w4, g - s * w4 + sp * (ax * v4 - ay * u4)
             x += h / 6 * (u + 2 * u2 + 2 * u3 + u4)
             y += h / 6 * (v + 2 * v2 + 2 * v3 + v4)
             z += h / 6 * (w + 2 * w2 + 2 * w3 + w4)
@@ -110,16 +116,23 @@ except ImportError:
     pass
 
 
-def traj(p0, v0, tr: float, ts, k: float = DRAG_K) -> np.ndarray:
+def traj(p0, v0, tr: float, ts, k: float = DRAG_K, spin: float = 0.0) -> np.ndarray:
     """Ball positions (N, 3) at times ts for a flight that is at p0 with velocity v0 at time tr,
     under gravity and quadratic air drag k (k = 0: the exact parabola). RK4, both directions from
     tr, cubic Hermite interpolation between the steps from positions AND velocities (2026-11-09:
     1/240 s steps with linear interpolation were 0.06 mm off and 3.5x slower; this is 0.0004 mm
     off). The inner loop is _traj_dir (compiled by numba when installed: 2026-11-16, test95's 3D
-    fit spent 61 of its 84 s here)."""
+    fit spent 61 of its 84 s here).
+    spin: lift from the ball's spin (Magnus), as an acceleration spin * |V| across the travel in
+    the vertical plane of the flight (> 0 backspin, < 0 topspin; no side spin). The spin axis is
+    fixed by v0's horizontal direction."""
     ts = np.atleast_1d(np.asarray(ts, float))
     p0 = np.asarray(p0, float); v0 = np.asarray(v0, float)
-    if k == 0:
+    hv = math.hypot(v0[0], v0[1])
+    ax, ay = (v0[1] / hv, -v0[0] / hv) if hv > 1e-6 else (0.0, 0.0)
+    if spin == 0 or hv <= 1e-6:
+        spin = 0.0
+    if k == 0 and spin == 0:
         dt = ts - tr
         return p0 + np.outer(dt, v0) + 0.5 * np.outer(dt ** 2, G)
     out = np.empty((len(ts), 3))
@@ -128,7 +141,8 @@ def traj(p0, v0, tr: float, ts, k: float = DRAG_K) -> np.ndarray:
         if not m.any():
             continue
         out[m] = _traj_dir(float(p0[0]), float(p0[1]), float(p0[2]), float(v0[0]), float(v0[1]), float(v0[2]),
-                           np.ascontiguousarray(np.abs(ts[m] - tr)), float(k), float(sgn), STEP)
+                           np.ascontiguousarray(np.abs(ts[m] - tr)), float(k), float(sgn), STEP,
+                           float(spin), float(ax), float(ay))
     return out
 
 
@@ -172,10 +186,14 @@ class Fit3D:
     seg_rms_px: list
     info: dict = field(default_factory=dict)
     drag: float = DRAG_K
+    spin: list | None = None       # per segment: spin strength (1/s), see traj; None = no spin
+
+    def sp(self, k: int) -> float:
+        return float(self.spin[k]) if self.spin else 0.0
 
     def at(self, k: int, t) -> np.ndarray:
         p0, v0 = self.params[k]
-        return traj(p0, v0, self.tr[k], t, self.drag)
+        return traj(p0, v0, self.tr[k], t, self.drag, self.sp(k))
 
     def std(self, k: int, t) -> np.ndarray:
         """1-sigma position uncertainty (N, 3) at times t (fit covariance pushed through the
@@ -186,12 +204,12 @@ class Fit3D:
             return np.full((len(t), 3), np.nan)
         p0, v0 = self.params[k]
         th = np.r_[p0, v0]
-        base = traj(p0, v0, self.tr[k], t, self.drag)
+        base = traj(p0, v0, self.tr[k], t, self.drag, self.sp(k))
         J = np.zeros((len(t), 3, 6))
         for i in range(6):
             d = np.zeros(6); d[i] = 1e-4
             q = th + d
-            J[:, :, i] = (traj(q[:3], q[3:], self.tr[k], t, self.drag) - base) / 1e-4
+            J[:, :, i] = (traj(q[:3], q[3:], self.tr[k], t, self.drag, self.sp(k)) - base) / 1e-4
         return np.sqrt(np.maximum(np.einsum("nij,jk,nik->ni", J, c, J), 0))
 
     def apex(self, k: int, t0: float | None = None, t1: float | None = None) -> tuple[float, float]:
@@ -245,7 +263,7 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
               link_sigma: float = 0.05, bounce_sigma: float = 0.05, default_depth: float = 12.0,
               loss: str = "soft_l1", time_sigma: float = 1 / 60, drag: float = DRAG_K,
               fit_drag: bool = False, net_h: float | None = None, solid_sigma: float = SOLID_SIGMA_M,
-              anchors: list | None = None) -> Fit3D:
+              anchors: list | None = None, spin: list | None = None) -> Fit3D:
     """All flights of a rally together. sigma_px: 2D position noise; size_rel: relative noise of
     the ball's pixel size; link_sigma (m): how exactly consecutive flights meet at a touch;
     time_sigma (s): how far off a detected touch time may be. Each touch's exact time is solved
@@ -255,13 +273,20 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
     that meets them is a touch / bounce between flights, never inside one.
     anchors: [{"k": flight, "t": time (s), "side": -1 near / +1 far / 0 both, "spot": (x, y) or
     None}] - a touch made by a player: the ball is on their side of the net (up to
-    ANCHOR_OVER_M past it), within ANCHOR_REACH_M (horizontally) of where they stood."""
+    ANCHOR_OVER_M past it), within ANCHOR_REACH_M (horizontally) of where they stood.
+    spin: [bool] per flight: also fit that flight's spin lift (traj), pulled toward none
+    (SPIN_SIGMA_A) and kept under SPIN_MAX_A; None = no spin anywhere."""
     from scipy.optimize import least_squares
     P = _Proj(cam)
     K = len(segs)
     theta0 = np.concatenate([_init_segment(s, P, default_depth) for s in segs])
     NL = len(links)
     theta0 = np.r_[theta0, np.zeros(NL)]                  # + one time offset per touch
+    SI = {}                                               # flight -> index of its spin number
+    for k in range(K):
+        if spin and spin[k]:
+            SI[k] = len(theta0)
+            theta0 = np.r_[theta0, 0.0]
     if fit_drag:
         theta0 = np.r_[theta0, math.log(max(drag, 1e-4))]
 
@@ -272,7 +297,8 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
         return [(th[6 * k:6 * k + 3], th[6 * k + 3:6 * k + 6]) for k in range(K)]
 
     def pos(k, th, t):
-        return traj(th[6 * k:6 * k + 3], th[6 * k + 3:6 * k + 6], segs[k].tr, t, kd(th))
+        return traj(th[6 * k:6 * k + 3], th[6 * k + 3:6 * k + 6], segs[k].tr, t, kd(th),
+                    th[SI[k]] if k in SI else 0.0)
 
     D = [len(theta0) - 1] if fit_drag else []             # every block depends on the drag parameter
     cols = []                                             # per residual block: the parameters it uses
@@ -286,7 +312,7 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
     F_SCALE = 2.0
 
     def flight(*ks):
-        return [6 * k + i for k in ks for i in range(6)] + D
+        return [6 * k + i for k in ks for i in range(6)] + [SI[k] for k in ks if k in SI] + D
 
     def resid(th, record=False):
         out = []
@@ -334,11 +360,14 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
         for A in anchors or []:                            # touches made by a seen player
             x = pos(A["k"], th, [A["t"]])[0]
             side = A.get("side")
+            # hands reach over the net only up at the tape (blocks, attacks); a touch lower down
+            # (a dig, a pass) is on the player's own side
+            reach_over = ANCHOR_OVER_M if net_h is None or x[2] > net_h - NET_REACH_BELOW_M else ANCHOR_UNDER_M
             if side in (-1, 1):
-                over = side * (-x[0]) - ANCHOR_OVER_M           # how far past the net, toward the other side
+                over = side * (-x[0]) - reach_over              # how far past the net, toward the other side
                 r_side = max(0.0, over) / A.get("side_sigma", ANCHOR_SIGMA_M)
             elif side == 0:
-                r_side = max(0.0, abs(x[0]) - ANCHOR_OVER_M) / ANCHOR_SIGMA_M
+                r_side = max(0.0, abs(x[0]) - reach_over) / ANCHOR_SIGMA_M
             else:
                 r_side = 0.0
             sp = A.get("spot")
@@ -354,6 +383,9 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
             add(np.array([th[6 * K + j] / (L.t_sigma or time_sigma)]), [6 * K + j])
             if L.kind == "bounce":
                 add(np.array([a[2] - BALL_D / 2, b[2] - BALL_D / 2]) / bounce_sigma, flight(L.k, L.k + 1) + [6 * K + j])
+        for k, j in SI.items():                            # spin: none unless the picture needs it
+            a = th[j] * float(np.linalg.norm(th[6 * k + 3:6 * k + 6]))          # lift, m/s^2 (signed)
+            add(np.array([a / SPIN_SIGMA_A, max(0.0, abs(a) - SPIN_MAX_A) / 0.05]), flight(k))
         if fit_drag:                                       # weak prior: the ball's physics value, x/÷ 2
             add(np.array([(th[-1] - math.log(DRAG_K)) / math.log(2)]), D)
         return np.concatenate(out)
@@ -399,7 +431,8 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
     return Fit3D(unpack(th), [s.tr for s in segs], covs, float(np.median(all_e)) if all_e else float("nan"),
                  seg_rms, {"cost": float(r.cost), "nfev": int(r.nfev), "status": int(r.status),
                            "touch_t": touch_t, "median_px": float(np.median(all_e)) if all_e else None,
-                           "drag": kd(th)}, kd(th))
+                           "drag": kd(th)}, kd(th),
+                 [float(th[SI[k]]) if k in SI else 0.0 for k in range(K)] if SI else None)
 
 
 # --- the clip's 2D observations, prepared for the fit -------------------------------------------

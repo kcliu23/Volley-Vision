@@ -54,7 +54,17 @@ SOLID_SIGMA_M = 0.03   # [guess] how hard the floor and net push back
 
 # --- touches made by a seen player (poses: core.people.players.touch_evidence, core.scene3d.ball3d.fit_rally) ------
 ANCHOR_OVER_M = 0.3    # [guess] a player's touch can be this far past the net (hands over it)
+ANCHOR_UNDER_M = -0.105 # [physics] ... but only up at the tape: a touch lower than NET_REACH_BELOW_M
+NET_REACH_BELOW_M = 0.3  # [guess]  under the net top has the whole ball on the player's side (radius)
 ANCHOR_REACH_M = 1.0   # [guess] ... and this far (horizontally) from where they stood
+SPIN_SIGMA_A = 1.5     # [guess] m/s^2: spin lift is pulled toward none with this softness (backspin
+                       #   on test95 1013-1060 needs ~2: about 20% of gravity)
+SPIN_MAX_A = 4.0       # [guess] m/s^2: no more spin lift than this (~40% of gravity)
+SPIN_MODE = "pinned"   # [real] which flights get a spin number: off / all / pinned (a touch at both
+                       #   ends); VV_SPIN overrides it. Holdouts 2026-11-16 (+ the under-the-tape rule):
+                       #   touches 99/103 and 43 invented either way; flights not clean 9 -> 7 (all: 6),
+                       #   over 3 m from a player 18.0% -> 17.1%, 3D fit +14% time (all: +32%).
+                       #   test95 1005-1131 (block back to our side) needs it
 ANCHOR_SIGMA_M = 0.1   # [guess] how hard those limits push back
 
 # --- frame timing (core.common.frametime) ------------------------------------------------------------------

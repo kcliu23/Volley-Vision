@@ -219,7 +219,9 @@ def main():
                             "speed_start_mps": round(float(np.linalg.norm(v_start)), 1),
                             "min_height_m": round(float(X[:, 2].min()), 2), "net_crossing": cross,
                             "depth_std_m": round(float(np.median(np.linalg.norm(sd, axis=1))), 2),
-                            "drag_k": round(float(fit.drag), 4)})
+                            "drag_k": round(float(fit.drag), 4),
+                            # spin lift at the start, m/s^2: + backspin (floats), - topspin (dives), 0 = none fitted
+                            "spin_lift_mps2": round(fit.sp(i) * float(np.linalg.norm(v_start)), 2)})
         for g, x, d in zip(range(f0, f1 + 1), X, sd):
             frames_out[g] = {"xyz": [round(float(v), 2) for v in x], "std": [round(float(v), 2) for v in d],
                              "flight": len(flights_out) - 1, "free": bool(free)}
@@ -230,12 +232,12 @@ def main():
                "camera": str(Path("data/cameras") / f"{stem}.json"), "flights": flights_out,
                "frames": {str(k): v for k, v in sorted(frames_out.items())}}, open(out, "w"), indent=0)
     print(f"[ball3d] {stem}: {len(flights_out)} flights in {nchains} chains  →  {out}")
-    print(f"  {'frames':>11s} {'free':>5s} {'2D px':>6s} {'apex m':>7s} {'speed m/s':>9s} {'lowest m':>8s} {'+-m':>5s}  net crossing")
+    print(f"  {'frames':>11s} {'free':>5s} {'2D px':>6s} {'apex m':>7s} {'speed m/s':>9s} {'lowest m':>8s} {'+-m':>5s} {'spin':>5s}  net crossing")
     for fl in flights_out:
         nc = fl["net_crossing"]
         ncs = f"at {nc['height_m']:.2f} m (clears by {nc['clears_net_by_m']:+.2f})" if nc else ""
         print(f"  {fl['f0']:5d}-{fl['f1']:<5d} {'yes' if fl['free_flight'] else 'NO':>5s} {fl['median_px']:6.1f} "
-              f"{fl['apex_m']:7.2f} {fl['speed_start_mps']:9.1f} {fl['min_height_m']:8.2f} {fl['depth_std_m']:5.2f}  {ncs}")
+              f"{fl['apex_m']:7.2f} {fl['speed_start_mps']:9.1f} {fl['min_height_m']:8.2f} {fl['depth_std_m']:5.2f} {fl['spin_lift_mps2']:+5.1f}  {ncs}")
     plot(out.with_suffix(".png"), flights_out, frames_out, cam, net_h, stem)
     TL.lap("output files and picture")
     TL.report("3D time")

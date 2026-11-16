@@ -50,6 +50,7 @@ from core.scene3d.params3d import (  # noqa: F401
     REACH_M,
     SIGMA_PX,
     SIZE_REL,
+    SPIN_MODE,
     TOUCH_COST,
     TURN_DEG,
     TURN_MIN_WEIGHT,
@@ -414,13 +415,26 @@ def _ball_depth(o: Obs, i: int) -> float | None:
     return float(o.cam.f * BALL_D / np.median(sz))
 
 
+def spin_flags(n: int) -> list | None:
+    """Which of a rally's n flights get a spin number (params3d.SPIN_MODE, or VV_SPIN): off, all,
+    or pinned (a touch at both ends: the joins fix the flight's ends, so a bend between them is
+    spin, not a wrong depth)."""
+    import os
+    mode = os.environ.get("VV_SPIN", SPIN_MODE)
+    if mode == "all":
+        return [True] * n
+    if mode == "pinned":
+        return [0 < k < n - 1 for k in range(n)]
+    return None
+
+
 def _anchors_fit(o: Obs, cam, segs, links, bounds, bounces=()) -> list:
     """_anchors with the ball's distance from a first fit without anchors (size, gravity and the
     joins together): a single ball box at a touch is unreliable, hands cover the ball (test20
     942: the box drops from 43 to 30 px, the size read 11.7 m for a ball at ~8 m)."""
     if not o.touchers and not o.who:
         return []
-    fit0 = fit_rally(segs, links, cam, net_h=o.net_h)
+    fit0 = fit_rally(segs, links, cam, net_h=o.net_h, spin=spin_flags(len(segs)))
 
     def depth(k, tc):
         X = 0.5 * (fit0.at(k - 1, np.array([tc]))[0] + fit0.at(k, np.array([tc]))[0])
@@ -550,7 +564,7 @@ def _solve_once(o: Obs, cam, hints, log):
         segs = [o.segment(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
         links = _links(o, bounds, bounces)
         anchors = _anchors_fit(o, cam, segs, links, bounds, bounces)
-        fit = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors)
+        fit = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors, spin=spin_flags(len(segs)))
         drop = False                                     # wrong points: out of the final fit
         for k, sg_ in enumerate(segs):
             e = np.abs(cam.project(fit.at(k, sg_.t)) - sg_.uv).max(axis=1) / o.sigma
@@ -558,7 +572,7 @@ def _solve_once(o: Obs, cam, hints, log):
             if off.any() and (~off).sum() >= MIN_PTS:
                 sg_.w = np.where(off, 0.0, sg_.w); drop = True
         if drop:
-            fit = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors)
+            fit = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors, spin=spin_flags(len(segs)))
         bad = []
         for k, s in enumerate(segs):
             e = np.hypot(*(cam.project(fit.at(k, s.t)) - s.uv).T)
@@ -595,7 +609,7 @@ def _solve_once(o: Obs, cam, hints, log):
             nsegs = [o.segment(a_, b_) for a_, b_ in zip(nb[:-1], nb[1:])]
             nlinks = _links(o, nb, nbo)
             nanch = _anchors_fit(o, cam, nsegs, nlinks, nb, nbo)
-            nfit = fit_rally(nsegs, nlinks, cam, net_h=o.net_h, anchors=nanch)
+            nfit = fit_rally(nsegs, nlinks, cam, net_h=o.net_h, anchors=nanch, spin=spin_flags(len(nsegs)))
             before, after = err_in(segs, fit, lo, hi), err_in(nsegs, nfit, lo, hi)
             tb = 0.5 * (o.t[b - 1] + o.t[b]); kb = nb.index(b)
             z_join = float(nfit.at(kb, np.array([tb]))[0][2])
@@ -623,7 +637,7 @@ def _solve_once(o: Obs, cam, hints, log):
         segs = [o.segment(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
         links = _links(o, bounds, bounces)
         anchors = _anchors_fit(o, cam, segs, links, bounds, bounces)
-        fit = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors)
+        fit = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors, spin=spin_flags(len(segs)))
         bad = []
         for k, s_ in enumerate(segs):
             e = np.hypot(*(cam.project(fit.at(k, s_.t)) - s_.uv).T)
