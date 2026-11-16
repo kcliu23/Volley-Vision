@@ -26,6 +26,10 @@ it resumes where you left off.
   accept         Enter  accept the segment you're in and go to the next unchecked one
                  y      accept the whole clip (after watching it all)
   move           f      next flagged frame     j / k  previous / next segment
+                 b      next frame to re-check in YOUR labels (purple ticks): a ball that jumps, sits
+                        off its arc, blinks out for one frame, a long fill at a touch, a touch with a
+                        gap or two types, a rally without its serve / rally over mark
+                        (core.common.label_checks); the reason shows at the top
                  click the timeline to jump there
   other balls    mark EVERY volleyball that isn't the game ball (spare balls, one on the sideline,
                  one held by someone): WASB is then never taught that a real ball is "nothing".
@@ -44,6 +48,9 @@ it resumes where you left off.
   contacts       m      mark a touch at this frame, then its type: 1 serve, 2 pass/receive,
                         3 set, 4 hit (anything sent over that isn't a serve or block), 5 block,
                         6 dig, 0 other (m on a marked frame removes it)
+                        then, optional, who touched it: their number (1-12) and Enter; any other
+                        key skips. Fine for a player with no box (hidden, not detected): you can
+                        still see who it was
                         9 rally over: the ball is dead (not a touch). Serve -> rally over marks
                         which frames are IN PLAY: the scores report those on their own
                  M      jump to the next marked touch
@@ -55,7 +62,8 @@ at the top); green = accepted, yellow = your edits. Ball labels: data/verified/<
   {"labels": {"<frame>": [x, y] | "none" | "hidden" | "skip"}, "boxes": {"<frame>": [w, h]},
    "src": {"<frame>": "auto" | "fixed" | "interp"}, "role": "train" | "test", "reviewed": [[f0, f1], ...],
    "others": {"<frame>": [[x, y, w, h], ...]},   other balls you confirmed (only these are exported)
-   "contacts": {"<frame>": "serve" | "pass" | "set" | "hit" | "block" | "dig" | "other"}}   touches you marked
+   "contacts": {"<frame>": "serve" | "pass" | "set" | "hit" | "block" | "dig" | "other"},   touches you marked
+   "touched_by": {"<frame>": 7}}                                               who touched it, when you said
 """
 from __future__ import annotations
 
@@ -89,6 +97,8 @@ class Review:
         self.others_edit: dict[int, list] = {int(k): x for k, x in v.get("others", {}).items()}
         self.contacts: dict[int, str] = {int(k): {"attack": "hit"}.get(x, x)       # "attack" was the old name
                                          for k, x in v.get("contacts", {}).items()}
+        self.touched_by: dict[int, int] = {int(k): int(x) for k, x in v.get("touched_by", {}).items()}
+        self._checks = None                      # label_checks flags, rebuilt after an edit
         self.labels: dict[int, object] = {int(k): x for k, x in v.get("labels", {}).items()}
         self.boxes: dict[int, list] = {int(k): x for k, x in v.get("boxes", {}).items()}
         self.src: dict[int, str] = {int(k): x for k, x in v.get("src", {}).items()}
@@ -385,16 +395,38 @@ class Review:
         self._push([f])
         if kind is None:
             self.contacts.pop(f, None)
+            self.touched_by.pop(f, None)
         else:
             self.contacts[f] = kind
+
+    def set_toucher(self, f: int, number: int | None):
+        """Who touched the ball at frame f (a player number), or not known (None)."""
+        self._push([f])
+        if number is None:
+            self.touched_by.pop(f, None)
+        else:
+            self.touched_by[f] = int(number)
+
+    def checks(self) -> dict[int, str]:
+        """Frames to re-check in your labels (core.common.label_checks), cached until an edit."""
+        if self._checks is None:
+            from core.common.label_checks import all_flags
+            self._checks = all_flags({"labels": self.labels, "contacts": self.contacts, "src": self.src})
+        return self._checks
+
+    def next_check(self, f: int) -> int | None:
+        C = sorted(self.checks())
+        later = [g for g in C if g > f]
+        return later[0] if later else (C[0] if C else None)
 
     def next_contact(self, f: int) -> int | None:
         later = [g for g in sorted(self.contacts) if g > f]
         return later[0] if later else None
 
     def _push(self, frames):
+        self._checks = None
         self.undo_stack.append(([(f, self.labels.get(f), self.boxes.get(f), self.src.get(f), self.others_edit.get(f),
-                                  self.contacts.get(f)) for f in frames],
+                                  self.contacts.get(f), self.touched_by.get(f)) for f in frames],
                                 [list(r) for r in self.reviewed], list(self.clicks), list(self.other_clicks)))
         if len(self.undo_stack) > 200:
             self.undo_stack.pop(0)
@@ -528,9 +560,10 @@ class Review:
         if not self.undo_stack:
             return False
         saved, reviewed, clicks, other_clicks = self.undo_stack.pop()
-        for f, lab, box, src, oth, con in saved:
+        self._checks = None
+        for f, lab, box, src, oth, con, who in saved:
             for d, v in ((self.labels, lab), (self.boxes, box), (self.src, src), (self.others_edit, oth),
-                         (self.contacts, con)):
+                         (self.contacts, con), (self.touched_by, who)):
                 if v is None:
                     d.pop(f, None)
                 else:
@@ -576,6 +609,7 @@ class Review:
                 "reviewed": self.reviewed,
                 "others": {str(f): self.others_edit[f] for f in sorted(self.others_edit)},
                 "contacts": {str(f): self.contacts[f] for f in sorted(self.contacts)},
+                "touched_by": {str(f): self.touched_by[f] for f in sorted(self.touched_by)},
                 "proposals": {"pipeline": P.get("pipeline"), "file": str(paths.proposals(Path(video).stem))}}
 
 
@@ -863,7 +897,7 @@ def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, pl
                "proposal": "proposal"}[src]
     shown = {"tracknet": "WASB only"}               # old name in the proposal files: finder point, no YOLO box
     note = msg or (("check: " + ", ".join(shown.get(x, x) for x in d) + "   ") if d and not R.is_edited(f) else "") + lab_txt \
-        + (f"   TOUCH: {R.contacts[f]}" if f in R.contacts else "")
+        + (f"   TOUCH: {R.contacts[f]}" + (f" by #{R.touched_by[f]}" if f in R.touched_by else "") if f in R.contacts else "")
     cv2.putText(img, note, (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (255, 255, 255) if msg else ((90, 90, 255) if d and not R.is_edited(f) else (180, 180, 180)),
                 1, cv2.LINE_AA)
@@ -883,6 +917,8 @@ def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, pl
             cv2.line(img, (xs(g), y0 + 32), (xs(g), y0 + 42), (0, 220, 255), 1)
     for g, _kind in R.contacts.items():                      # marked touches: white ticks above the timeline
         cv2.line(img, (xs(g), y0 + 1), (xs(g), y0 + 8), (255, 255, 255), 2)
+    for g in R.checks():                                     # to re-check in your labels (b): purple
+        cv2.line(img, (xs(g), y0 + 22), (xs(g), y0 + 42), (249, 121, 232), 2)
     cv2.line(img, (xs(f), y0), (xs(f), H), (255, 255, 255), 2)
     return img
 
@@ -916,7 +952,7 @@ def review(video: str, test: bool = False):
         seg_i = 0
     f = P["segments"][seg_i]["f0"]
     playing, speed_i = False, SPEEDS.index(1.0)
-    state = {"mouse": None, "click": None, "extra": False, "contact": False, "snap": True}
+    state = {"mouse": None, "click": None, "extra": False, "contact": False, "snap": True, "who": None, "who_txt": ""}
     yolo = {}
 
     def snap_by_crop(img, xy, ball, scale):
@@ -1041,11 +1077,32 @@ def review(video: str, test: bool = False):
                     msg, msg_t = "end of clip - Enter / y to accept, q to quit", time.time()
             continue
         k = chr(key) if key < 128 else ""
+        if state["who"] is not None:                            # optional: who touched it (number + Enter)
+            g = state["who"]
+            if k.isdigit() and len(state["who_txt"]) < 2:
+                state["who_txt"] += k
+                msg, msg_t = f"who touched it at {g}? #{state['who_txt']}  (Enter to keep, Backspace, any other key: skip)", time.time()
+                continue
+            if key in (8, 127) and state["who_txt"]:
+                state["who_txt"] = state["who_txt"][:-1]
+                msg, msg_t = f"who touched it at {g}? #{state['who_txt']}", time.time()
+                continue
+            txt, state["who"], state["who_txt"] = state["who_txt"], None, ""
+            if key in (13, 10) and txt and 1 <= int(txt) <= 99:
+                R.set_toucher(g, int(txt)); save()
+                msg, msg_t = f"touch at frame {g}: {R.contacts.get(g)} by #{int(txt)}", time.time()
+                continue
+            msg, msg_t = f"touch at frame {g}: {R.contacts.get(g)} (who: not given)", time.time()
+            if key in (13, 10):
+                continue
         if state["contact"]:                                    # waiting for the touch type after "m"
             state["contact"] = False
             if k in Review.CONTACT_TYPES:
                 R.set_contact(f, Review.CONTACT_TYPES[k]); save()
                 msg, msg_t = f"touch at frame {f}: {Review.CONTACT_TYPES[k]}", time.time()
+                if Review.CONTACT_TYPES[k] != "dead":
+                    state["who"], state["who_txt"] = f, ""
+                    msg = f"touch at frame {f}: {Review.CONTACT_TYPES[k]} - who touched it? number + Enter (any other key: skip)"
             else:
                 msg, msg_t = "no touch marked (type keys: 1 serve 2 pass 3 set 4 hit 5 block 6 dig 0 other 9 rally over)", time.time()
             continue
@@ -1057,6 +1114,14 @@ def review(video: str, test: bool = False):
             else:
                 state["contact"] = True
                 msg, msg_t = "touch type? 1 serve 2 pass 3 set 4 hit 5 block 6 dig 0 other 9 rally over", time.time()
+            continue
+        if k == "b":
+            g = R.next_check(f); playing = False
+            if g is None:
+                msg, msg_t = "nothing to re-check in your labels", time.time()
+            else:
+                f = g; seg_i = R.segment_of(f)
+                msg, msg_t = f"re-check {f}: {R.checks()[g]}  ({len(R.checks())} to look at)", time.time() + 3
             continue
         if k == "M":
             g = R.next_contact(f); playing = False
