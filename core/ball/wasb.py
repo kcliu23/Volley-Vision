@@ -100,42 +100,83 @@ def affine(w: int, h: int, in_w: int = IN_W, in_h: int = IN_H, resize: str = "le
     return np.array([[s, 0, in_w / 2 - s * w / 2], [0, s, in_h / 2 - s * h / 2]], np.float32)
 
 
-def heatmaps(model, dev, video: str, n: int, batch: int = 4, log=None) -> tuple[np.ndarray, np.ndarray]:
-    """Per-frame heatmaps (n, IN_H, IN_W) in [0, 1], and the frame->input affine matrix."""
+def iter_heatmaps(model, dev, video: str, n: int, batch: int = 4, log=None):
+    """Per-frame heatmaps (IN_H, IN_W) in [0, 1], streamed: yields (frame, heatmap) in order, reading
+    the video a few frames at a time (a full game is ~50k frames: all of them in memory at once
+    would take ~85 GB). The model takes 3 frames and gives 3 heatmaps; frames go in triplets, the
+    last triplet ends at the clip's last frame (overlapping the one before when n isn't a multiple
+    of 3). The frame -> input affine matrix: input_affine(model, video)."""
     import torch
     cap = cv2.VideoCapture(video)
     w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     vv = getattr(model, "vv", {"input_wh": [IN_W, IN_H], "resize": "letterbox"})
     in_w, in_h = vv["input_wh"]
     M = affine(w, h, in_w, in_h, vv.get("resize", "letterbox"))
-    frames = []
-    for _ in range(n):
-        ok, img = cap.read()
-        if not ok:
-            break
+
+    def prep(img):
         if vv.get("resize") == "stretch":
             x = cv2.resize(img, (in_w, in_h), interpolation=cv2.INTER_LINEAR)
         else:
             x = cv2.warpAffine(img, M, (in_w, in_h), flags=cv2.INTER_LINEAR, borderValue=(0, 0, 0))
-        x = (cv2.cvtColor(x, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0 - MEAN) / STD
-        frames.append(x.transpose(2, 0, 1))
+        return ((cv2.cvtColor(x, cv2.COLOR_BGR2RGB).astype(np.float32) / 255.0 - MEAN) / STD).transpose(2, 0, 1)
+
+    def run(trips):
+        x = torch.from_numpy(np.stack([np.concatenate(t, 0) for t in trips])).to(dev)
+        with torch.no_grad():
+            return torch.sigmoid(model(x)[0]).float().cpu().numpy()          # (B, 3, H, W)
+
+    t0, done, buf, f0 = time.time(), 0, [], 0           # buf: frames not yet run; f0: frame number of buf[0]
+    last3 = []                                           # the last 3 frames read (for the final triplet)
+    eof = False
+    while not eof:
+        while len(buf) < batch * FRAMES and f0 + len(buf) < n:
+            ok, img = cap.read()
+            if not ok:
+                eof = True
+                break
+            x = prep(img)
+            buf.append(x)
+            last3 = (last3 + [x])[-FRAMES:]
+        if f0 + len(buf) >= n:
+            eof = True
+        k = (len(buf) // FRAMES) * FRAMES
+        if k:
+            y = run([buf[i:i + FRAMES] for i in range(0, k, FRAMES)])
+            for b, hm in enumerate(y):
+                for j in range(FRAMES):
+                    yield f0 + b * FRAMES + j, hm[j]
+            done = f0 + k
+            if log and (done // (batch * FRAMES)) % 200 == 0:
+                log(f"  WASB {done}/{n} frames  {time.time() - t0:.0f}s")
+            buf, f0 = buf[k:], f0 + k
+        if eof and buf:                                  # 1-2 frames left: the triplet ending at the last frame
+            hm = run([last3])[0] if len(last3) == FRAMES else None
+            if hm is not None:
+                for j in range(FRAMES - len(buf), FRAMES):
+                    yield f0 + j - (FRAMES - len(buf)), hm[j]
+            buf = []
     cap.release()
-    m = len(frames)
-    out = np.zeros((m, in_h, in_w), np.float16)
-    starts = list(range(0, max(m - FRAMES, 0) + 1, FRAMES))
-    if starts and starts[-1] + FRAMES < m:            # last frames: one more triplet ending at the clip end
-        starts.append(m - FRAMES)
-    t0 = time.time()
-    with torch.no_grad():
-        for b in range(0, len(starts), batch):
-            idx = starts[b:b + batch]
-            x = torch.from_numpy(np.stack([np.concatenate(frames[s:s + FRAMES], 0) for s in idx])).to(dev)
-            y = torch.sigmoid(model(x)[0]).float().cpu().numpy()          # (B, 3, H, W)
-            for s, hm in zip(idx, y):
-                out[s:s + FRAMES] = hm
-            if log and (b // batch) % 50 == 0:
-                log(f"  WASB {min(idx[-1] + FRAMES, m)}/{m} frames  {time.time() - t0:.0f}s")
-    return out, M
+
+
+def input_affine(model, video: str) -> np.ndarray:
+    """The frame -> model-input affine matrix (letterbox or stretch) for this video."""
+    cap = cv2.VideoCapture(video)
+    w, h = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    cap.release()
+    vv = getattr(model, "vv", {"input_wh": [IN_W, IN_H], "resize": "letterbox"})
+    return affine(w, h, *vv["input_wh"], vv.get("resize", "letterbox"))
+
+
+def heatmaps(model, dev, video: str, n: int, batch: int = 4, log=None) -> tuple[np.ndarray, np.ndarray]:
+    """All heatmaps at once (n, IN_H, IN_W) float16, and the affine matrix: for short clips and
+    tools that need them all; the pipeline streams (iter_heatmaps)."""
+    vv = getattr(model, "vv", {"input_wh": [IN_W, IN_H]})
+    out = np.zeros((n, vv["input_wh"][1], vv["input_wh"][0]), np.float16)
+    m = 0
+    for f, hm in iter_heatmaps(model, dev, video, n, batch, log):
+        out[f] = hm
+        m = max(m, f + 1)
+    return out[:m], input_affine(model, video)
 
 
 def candidates(video: str, dets: dict, ckpt: str = DEFAULT_CKPT, cache_path=None, thr: float = 0.1,
@@ -162,20 +203,18 @@ def candidates(video: str, dets: dict, ckpt: str = DEFAULT_CKPT, cache_path=None
     model, dev = load_model(ckpt)
     if log:
         log(f"[VolleyVision] WASB on {dev} ({Path(ckpt).name})")
-    hms, M = heatmaps(model, dev, video, n, log=log)
-    Minv = cv2.invertAffineTransform(M)
+    Minv = cv2.invertAffineTransform(input_affine(model, video))
     sizes = ball_sizes(dets, dets.get("fps") or 60)
-    out = []
-    for f in range(n):
-        if f >= len(hms):
-            out.append([])
+    out = [[] for _ in range(n)]
+    for f, hm in iter_heatmaps(model, dev, video, n, log=log):   # streamed: memory stays flat on long games
+        if f >= n:
             continue
         s = round(sizes[f], 1)
         row = []
-        for x, y, p in blobs(hms[f].astype(np.float32), thr):
+        for x, y, p in blobs(hm.astype(np.float32), thr):
             X, Y = Minv @ [x, y, 1.0]
             row.append([round(float(X), 1), round(float(Y), 1), s, s, round(p, 4)])
-        out.append(row)
+        out[f] = row
     cp.parent.mkdir(parents=True, exist_ok=True)
     json.dump({"schema": "vv-tracknet/1", "model": "wasb", "video": str(video), "key": key, "thr": thr,
                "frames": out}, open(cp, "w"), separators=(",", ":"))

@@ -88,6 +88,37 @@ def touch_frames(stem: str, root) -> list[int]:
     return sorted(set(out))
 
 
+PLAY_GAP_S = 1.0         # flights of the 2D ball this close together belong to one rally ...
+PLAY_MIN_S = 1.2         # ... a group shorter than this isn't a rally (a toss back to the server) ...
+PLAY_PAD_S = 3.0         # ... and this much is kept around each rally (the serve toss, the last touch): no touch you
+                         #   marked on the holdouts falls outside
+
+
+def in_play(stem: str, root) -> set[int] | None:
+    """Frames during play, from the 2D flights (contacts.json): the ball flying in arcs, in groups
+    at most PLAY_GAP_S apart lasting at least PLAY_MIN_S, plus PLAY_PAD_S around each. (The ball
+    being seen isn't enough: between rallies it's held, bounced and tossed back.) None without them."""
+    cp = paths.contacts(stem, root)
+    if not Path(cp).exists():
+        return None
+    C = json.load(open(cp))
+    fps = float(C.get("fps") or 60.0)
+    fl = sorted((int(F["f0"]), int(F["f1"])) for F in C.get("flights", []))
+    if not fl:
+        return None
+    gap, mn, pad = int(PLAY_GAP_S * fps), int(PLAY_MIN_S * fps), int(PLAY_PAD_S * fps)
+    out, (a, b) = set(), fl[0]
+    for g in fl[1:] + [None]:
+        if g is not None and g[0] - b <= gap:
+            b = max(b, g[1])
+            continue
+        if b - a >= mn:
+            out |= set(range(max(0, a - pad), b + pad + 1))
+        if g is not None:
+            a, b = g
+    return out
+
+
 def schedule(f0: int, f1: int, every: int, touches, near: int = NEAR_TOUCH) -> set[int]:
     """Frames to run the model on: every `every`-th frame, and all frames near a touch."""
     keep = set(range(f0, f1 + 1, max(1, every))) | {f1}
@@ -136,6 +167,8 @@ def main():
     ap.add_argument("--imgsz", type=int, default=1280)
     ap.add_argument("--frames", nargs=2, type=int, default=None, help="first and last frame (default: all)")
     ap.add_argument("--redo", action="store_true", help="run again even if pose.json exists")
+    ap.add_argument("--with-dead-time", action="store_true",
+                    help="also between rallies (default: only while the ball is in play, from the 2D track)")
     ap.add_argument("--no-far-zoom", action="store_true", help="skip the far back court zoom pass")
     ap.add_argument("--every", type=int, default=EVERY, help="whole picture on every Nth frame (1: all); "
                     "every frame near a touch either way")
@@ -174,17 +207,25 @@ def main():
     frames = {}
     touches = touch_frames(stem, a.output)
     run_whole = schedule(f0, f1, a.every, touches)
+    play = None if a.with_dead_time else in_play(stem, a.output)
+    if play is not None:                                 # between rallies nobody needs poses: skip it
+        run_whole &= play
+        print(f"[pose] {stem}: ball in play on {len(play & set(range(f0, f1 + 1)))} of {f1 - f0 + 1} frames: "
+              f"the rest (between rallies) skipped")
     run_far = schedule(f0, f1, a.far_every, touches, near=FAR_NEAR_TOUCH) & run_whole   # never alone: duplicates of far players
     print(f"[pose] {stem}: whole picture on {len(run_whole)} of {f1 - f0 + 1} frames, far court zoom on "
           f"{len(run_far)} (every frame within {NEAR_TOUCH} / {FAR_NEAR_TOUCH} of {len(touches)} touches)")
     t_start, t_whole, t_far = time.time(), 0.0, 0.0
     for f in range(f0, f1 + 1):
+        if f not in run_whole:                           # not needed: skip without decoding the picture
+            if not cap.grab():
+                break
+            frames.setdefault(f, [])
+            continue
         ok, img = cap.read()
         if not ok:
             break
         frames.setdefault(f, [])
-        if f not in run_whole:
-            continue
         t_a = time.time()
         r = m.track(img, persist=True, tracker="bytetrack.yaml", imgsz=a.imgsz, verbose=False, conf=0.25,
                     device=device)[0]

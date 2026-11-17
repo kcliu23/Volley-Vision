@@ -1,0 +1,237 @@
+{
+ "schema": "vv-camera/1",
+ "width": 1920,
+ "height": 1080,
+ "f": 1312.6793682348757,
+ "cx": 960.0,
+ "cy": 540.0,
+ "k1": 0.0,
+ "rvec": [
+  1.2681616254430323,
+  -1.229502950290038,
+  1.1535752468619176
+ ],
+ "tvec": [
+  0.7373539354334521,
+  0.6021194286601541,
+  10.579311915522798
+ ],
+ "position_m": [
+  -10.542,
+  0.38,
+  1.246
+ ],
+ "fov_deg": 72.36,
+ "info": {
+  "rms_px": 3.67,
+  "n_points": 14,
+  "n_line_clicks": 24,
+  "fit_k1": false,
+  "residual_px": {
+   "far end corner left": 4.6,
+   "far end corner right": 4.8,
+   "far attack line left": 6.8,
+   "far attack line right": 4.3,
+   "centre line left": 5.1,
+   "centre line right": 3.9,
+   "near attack line left": 1.4,
+   "near attack line right": 0.9,
+   "net bottom left": 7.2,
+   "net bottom right": 3.8,
+   "net top left": 3.1,
+   "net top right": 3.0,
+   "antenna top left": 6.2,
+   "antenna top right": 11.1
+  },
+  "line_px": {
+   "net tape": 1.1,
+   "net band": 3.5,
+   "left sideline": 1.0,
+   "right sideline": 1.1,
+   "centre line": 3.2,
+   "near attack line": 1.9,
+   "far attack line": 2.6,
+   "far end line": 1.0
+  },
+  "f_std": 10.0,
+  "position_std_m": [
+   0.072,
+   0.038,
+   0.017
+  ]
+ },
+ "video": "videos/full_rally_test.mp4",
+ "net_height": 2.24,
+ "points": {
+  "far end corner left": [
+   725.4,
+   545.4
+  ],
+  "far end corner right": [
+   1339.3,
+   542.7
+  ],
+  "far attack line left": [
+   616.6,
+   579.0
+  ],
+  "far attack line right": [
+   1477.6,
+   580.3
+  ],
+  "centre line left": [
+   505.1,
+   613.9
+  ],
+  "centre line right": [
+   1616.0,
+   617.9
+  ],
+  "near attack line left": [
+   306.3,
+   674.3
+  ],
+  "near attack line right": [
+   1867.2,
+   678.4
+  ],
+  "net bottom left": [
+   491.6,
+   456.7
+  ],
+  "net bottom right": [
+   1626.7,
+   460.7
+  ],
+  "net top left": [
+   490.3,
+   338.5
+  ],
+  "net top right": [
+   1624.0,
+   330.4
+  ],
+  "antenna top left": [
+   495.7,
+   233.7
+  ],
+  "antenna top right": [
+   1625.4,
+   217.6
+  ]
+ },
+ "line_clicks": {
+  "net tape": [
+   [
+    502.4,
+    337.2
+   ],
+   [
+    1621.3,
+    330.4
+   ],
+   [
+    1067.9,
+    333.1
+   ]
+  ],
+  "net band": [
+   [
+    493.0,
+    456.7
+   ],
+   [
+    1624.0,
+    456.7
+   ],
+   [
+    980.6,
+    462.1
+   ]
+  ],
+  "left sideline": [
+   [
+    701.2,
+    552.1
+   ],
+   [
+    505.1,
+    613.9
+   ],
+   [
+    227.0,
+    698.5
+   ]
+  ],
+  "right sideline": [
+   [
+    1387.6,
+    558.8
+   ],
+   [
+    1616.0,
+    615.2
+   ],
+   [
+    1864.5,
+    677.0
+   ]
+  ],
+  "centre line": [
+   [
+    624.6,
+    617.9
+   ],
+   [
+    1551.5,
+    617.9
+   ],
+   [
+    1007.5,
+    617.9
+   ]
+  ],
+  "near attack line": [
+   [
+    624.6,
+    677.0
+   ],
+   [
+    1203.6,
+    675.7
+   ],
+   [
+    1720.7,
+    679.7
+   ]
+  ],
+  "far attack line": [
+   [
+    738.8,
+    583.0
+   ],
+   [
+    1473.6,
+    581.6
+   ],
+   [
+    1260.0,
+    584.3
+   ]
+  ],
+  "far end line": [
+   [
+    737.5,
+    545.4
+   ],
+   [
+    1323.1,
+    544.0
+   ],
+   [
+    1237.2,
+    542.7
+   ]
+  ]
+ }
+}
