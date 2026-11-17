@@ -54,3 +54,36 @@ def test_review_saves_number_and_box_and_undoes():
     assert 10 not in R.touched_by and 10 not in R.touched_box
     R.set_contact(10, None)
     assert 10 not in R.contacts
+
+
+def test_next_frame_joins_the_touch():
+    from tools.review import Review
+    prop = {"n": 20, "fps": 60, "width": 640, "height": 360, "video": "x.mov", "segments": [{"f0": 0, "f1": 19, "kind": "rally"}],
+            "frames": [{"state": "detected", "xy": [10, 10], "box": [20, 20], "doubt": []} for _ in range(20)]}
+    R = Review(prop)
+    R.set_contact(10, "set")
+    R.set_toucher(10, 2, [1, 2, 3, 4])
+    assert R.extend_touch(11) == [10, 11]
+    assert R.extend_touch(9) == [9, 10, 11]
+    assert R.contacts[9] == "set" and R.touched_by[9] == 2 and R.touched_box[11] == [1, 2, 3, 4]
+    R.set_toucher(11, 5)                                   # naming it on one frame names the whole touch
+    assert all(R.touched_by[g] == 5 for g in (9, 10, 11))
+    assert R.extend_touch(15) is None                      # nothing next to it
+    R.undo()
+    assert all(R.touched_by[g] == 2 for g in (9, 10, 11))
+
+
+def test_toucher_box_follows_the_player():
+    from tools.review import Review
+    prop = {"n": 20, "fps": 60, "width": 640, "height": 360, "video": "x.mov", "segments": [{"f0": 0, "f1": 19, "kind": "rally"}],
+            "frames": [{"state": "detected", "xy": [10, 10], "box": [20, 20], "doubt": []} for _ in range(20)]}
+    R = Review(prop)
+    base = {2: 90, 4: 288}                                  # each player moves 1 px a frame
+    R.box_at = lambda g, n, ref: [base[n] + g, 0, base[n] + 50 + g, 200]
+    R.set_contact(10, "set")
+    R.set_toucher(10, 2, [100, 0, 150, 200])
+    R.extend_touch(11)
+    R.extend_touch(12)
+    assert R.touched_box[12] == [102.0, 0.0, 152.0, 200.0] and R.touched_box[10] == [100.0, 0.0, 150.0, 200.0]
+    R.set_toucher(12, 4, [300, 0, 350, 200])               # re-named on frame 12: every frame follows
+    assert R.touched_box[12] == [300.0, 0.0, 350.0, 200.0] and R.touched_box[10] == [298.0, 0.0, 348.0, 200.0]

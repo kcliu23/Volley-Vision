@@ -46,6 +46,8 @@ it resumes where you left off.
                  (F: old crop following with YOLO, slow; off by default)
                  Every action goes to data/verified/.logs/<clip>.log.
   contacts       m      mark a touch at this frame, then its type: 1 serve, 2 pass/receive,
+                        (ball held a few frames, e.g. a set: mark every frame; m on a frame next
+                        to a marked touch joins it: same type and toucher, no questions)
                         3 set, 4 hit (anything sent over that isn't a serve or block), 5 block,
                         6 dig, 0 other (m on a marked frame removes it)
                         then, optional, who touched it: the numbered players are drawn (your
@@ -102,6 +104,7 @@ class Review:
                                          for k, x in v.get("contacts", {}).items()}
         self.touched_by: dict[int, int] = {int(k): int(x) for k, x in v.get("touched_by", {}).items()}
         self.touched_box: dict[int, list] = {int(k): x for k, x in v.get("touched_box", {}).items()}
+        self.box_at = None                       # (frame, number, box) -> that player's box at frame (or None)
         self._checks = None                      # label_checks flags, rebuilt after an edit
         self.labels: dict[int, object] = {int(k): x for k, x in v.get("labels", {}).items()}
         self.boxes: dict[int, list] = {int(k): x for k, x in v.get("boxes", {}).items()}
@@ -404,18 +407,63 @@ class Review:
         else:
             self.contacts[f] = kind
 
+    def touch_run(self, f: int) -> list[int]:
+        """The frames of the touch at f: consecutive marked frames of the same type (the ball held
+        on the hands for a few frames is one touch)."""
+        if f not in self.contacts:
+            return []
+        kind, a, b = self.contacts[f], f, f
+        while self.contacts.get(a - 1) == kind:
+            a -= 1
+        while self.contacts.get(b + 1) == kind:
+            b += 1
+        return list(range(a, b + 1))
+
+    def extend_touch(self, f: int) -> list[int] | None:
+        """m on a frame right next to a marked touch: f joins that touch (same type, same toucher),
+        no questions. Returns the touch's frames, or None (no touch next to f)."""
+        for g in (f - 1, f + 1):
+            kind = self.contacts.get(g)
+            if kind is None or kind == "dead" or f in self.contacts:
+                continue
+            run = self.touch_run(g)
+            self._push([f])
+            self.contacts[f] = kind
+            who = next((self.touched_by[h] for h in run if h in self.touched_by), None)
+            if who is not None:
+                self.touched_by[f] = who
+                h = min((h for h in run if h in self.touched_box), key=lambda h: abs(h - f), default=None)
+                if h is not None:
+                    box = self._toucher_box(f, who, self.touched_box[h])
+                    if box is not None:
+                        self.touched_box[f] = box
+            return self.touch_run(f)
+        return None
+
     def set_toucher(self, f: int, number: int | None, box: list | None = None):
         """Who touched the ball at frame f (a player number, and their pose box when they were
-        detected: it ties the touch to that person in the pose data), or not known (None)."""
-        self._push([f])
-        if number is None:
-            self.touched_by.pop(f, None)
-        else:
-            self.touched_by[f] = int(number)
-        if box is None:
-            self.touched_box.pop(f, None)
-        else:
-            self.touched_box[f] = [round(float(v), 1) for v in box]
+        detected: it ties the touch to that person in the pose data), or not known (None). Applies
+        to every frame of that touch (touch_run)."""
+        run = self.touch_run(f) or [f]
+        self._push(run)
+        for g in run:
+            if number is None:
+                self.touched_by.pop(g, None)
+            else:
+                self.touched_by[g] = int(number)
+            b = None
+            if box is not None:
+                b = [round(float(v), 1) for v in box] if g == f else self._toucher_box(g, number, box)
+            if b is None:
+                self.touched_box.pop(g, None)
+            else:
+                self.touched_box[g] = b
+
+    def _toucher_box(self, g: int, number, box) -> list | None:
+        """That player's box at frame g (they move during a touch): from the pose players via
+        box_at; without poses, the box as it was."""
+        b = self.box_at(g, number, box) if self.box_at else box
+        return None if b is None else [round(float(v), 1) for v in b]
 
     def checks(self) -> dict[int, str]:
         """Frames to re-check in your labels (core.common.label_checks), cached until an edit."""
@@ -969,6 +1017,17 @@ def review(video: str, test: bool = False):
     players = Players.load(stem, paths.clip_dir(stem) / "pose.json", log=lambda m: print(f"[review] {m}"))
     if players is None:
         print(f"[review] {stem}: no poses yet (tools.pose): who touched it is typed as a number")
+    if players:
+        def box_at(g, number, ref):
+            """The toucher at frame g: the same number, else the box overlapping theirs most."""
+            p = players.with_number(g, number) if number is not None else None
+            if p is None:
+                from core.people.player_labels import _iou
+                c = [(_iou(ref, q["box"]), q) for q in players.at(g)]
+                c = [x for x in c if x[0] > 0.3]
+                p = max(c, key=lambda x: x[0])[1] if c else None
+            return p["box"] if p else None
+        R.box_at = box_at
     cam3d, ball3d = None, {}                  # a 3D from an earlier run: the suggestion also checks depth
     b3 = paths.clip_dir(stem) / "ball3d.json"
     cp = Path("data/cameras") / f"{stem}.json"
@@ -1177,6 +1236,11 @@ def review(video: str, test: bool = False):
             if f in R.contacts:
                 R.set_contact(f, None); save()
                 msg, msg_t = f"touch at frame {f} removed", time.time()
+            elif (run := R.extend_touch(f)) is not None:         # next to a marked touch: it joins it
+                save()
+                who = R.touched_by.get(f)
+                msg, msg_t = (f"touch {R.contacts[f]} now frames {run[0]}-{run[-1]}"
+                              + (f" by #{who}" if who is not None else "")), time.time()
             else:
                 state["contact"] = True
                 msg, msg_t = "touch type? 1 serve 2 pass 3 set 4 hit 5 block 6 dig 0 other 9 rally over", time.time()
