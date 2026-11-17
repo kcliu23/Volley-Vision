@@ -16,6 +16,7 @@ HALF_L, HALF_W = 9.0, 4.5      # m: the court (x across the net, y along it)
 LINE = 0.10                    # m: a ball touching the line is in (FIVB 8.3); our 3D has some slack too
 FLOOR_Z = 0.30                 # m: the ball's centre this low is on the floor
 MAX_GAP_S = 4.0                # s: the ball unseen longer than this between two pieces: a new rally
+NET_UNSURE_M = 1.5             # m: a landing this close to the net: its side from the last flight (over or not)
 CARRY_FROM_Z = 1.5             # m: a rally's last arc ending this low and falling is carried to the floor ...
 CARRY_MAX_S = 0.6              # s: ... if it gets there within this
 
@@ -105,7 +106,22 @@ def find_rallies(B: dict, touches: list) -> list[Rally]:
         before = [t for t in tc if start < t["frame"] < end_f and t.get("kind") != "serve"]
         last = before[-1] if before else serve
         last_side = last["side"] if last else None
-        if land is not None:
+        if land is not None and abs(land[0]) < NET_UNSURE_M and last_side is not None:
+            # landing by the net: from one camera its side is a guess; whether the last flight went
+            # over the tape is not. Didn't go over: it fell on the last toucher's side (into the net)
+            Fl = next((F for F in fl if F["f0"] <= end_f <= F["f1"]), fl[-1])
+            nc = Fl.get("net_crossing")
+            over = bool(nc) and nc.get("clears_net_by_m", -1) >= 0 and (last is None or Fl["f0"] >= last["frame"] - 6)
+            land_side = -last_side if over else last_side
+            inside = abs(land[1]) <= HALF_W + LINE
+            end = "in" if inside else "out"
+            if not over:
+                winner, why = -last_side, f"fell on the {'near' if last_side < 0 else 'far'} side by the net (didn't go over)"
+            elif inside:
+                winner, why = -land_side, f"went over and landed in on the {'near' if land_side < 0 else 'far'} side by the net"
+            else:
+                winner, why = -last_side, f"went over and out by the net after the {'near' if last_side < 0 else 'far'} team's touch"
+        elif land is not None:
             inside = abs(land[0]) <= HALF_L + LINE and abs(land[1]) <= HALF_W + LINE
             end = "in" if inside else "out"
             if inside:
