@@ -88,34 +88,35 @@ def touch_frames(stem: str, root) -> list[int]:
     return sorted(set(out))
 
 
-PLAY_GAP_S = 1.0         # flights of the 2D ball this close together belong to one rally ...
-PLAY_MIN_S = 1.2         # ... a group shorter than this isn't a rally (a toss back to the server) ...
-PLAY_PAD_S = 3.0         # ... and this much is kept around each rally (the serve toss, the last touch): no touch you
-                         #   marked on the holdouts falls outside
+PLAY_GAP_S = 1.5         # the ball unseen longer than this: between rallies ...
+PLAY_MIN_S = 1.0         # ... a stretch with the ball shorter than this isn't a rally ...
+PLAY_PAD_S = 3.0         # ... and this much is kept around each stretch (the serve toss, the last touch)
 
 
 def in_play(stem: str, root) -> set[int] | None:
-    """Frames during play, from the 2D flights (contacts.json): the ball flying in arcs, in groups
-    at most PLAY_GAP_S apart lasting at least PLAY_MIN_S, plus PLAY_PAD_S around each. (The ball
-    being seen isn't enough: between rallies it's held, bounced and tossed back.) None without them."""
-    cp = paths.contacts(stem, root)
-    if not Path(cp).exists():
+    """Frames that may be play: where the 2D track (track.json) has the ball, in stretches of at
+    least PLAY_MIN_S with gaps under PLAY_GAP_S, plus PLAY_PAD_S around each. Generous on purpose
+    (a ball held between rallies counts too): what's skipped is only where no ball is seen at all,
+    so no touch is lost. (The 2D flights were tried first: on a screen-recorded game they found the
+    ball flying in only 3% of frames.) None without a track."""
+    tp = paths.track(stem, root)
+    if not Path(tp).exists():
         return None
-    C = json.load(open(cp))
-    fps = float(C.get("fps") or 60.0)
-    fl = sorted((int(F["f0"]), int(F["f1"])) for F in C.get("flights", []))
-    if not fl:
+    T = json.load(open(tp))
+    fps = float(T.get("fps") or 60.0)
+    seen = sorted(int(r["f"]) for r in T["frames"] if r.get("pos") is not None)
+    if not seen:
         return None
     gap, mn, pad = int(PLAY_GAP_S * fps), int(PLAY_MIN_S * fps), int(PLAY_PAD_S * fps)
-    out, (a, b) = set(), fl[0]
-    for g in fl[1:] + [None]:
-        if g is not None and g[0] - b <= gap:
-            b = max(b, g[1])
+    out, a, b = set(), seen[0], seen[0]
+    for f in seen[1:] + [None]:
+        if f is not None and f - b <= gap:
+            b = f
             continue
         if b - a >= mn:
             out |= set(range(max(0, a - pad), b + pad + 1))
-        if g is not None:
-            a, b = g
+        if f is not None:
+            a = b = f
     return out
 
 
