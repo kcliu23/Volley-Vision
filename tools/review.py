@@ -969,6 +969,12 @@ def review(video: str, test: bool = False):
     players = Players.load(stem, paths.clip_dir(stem) / "pose.json", log=lambda m: print(f"[review] {m}"))
     if players is None:
         print(f"[review] {stem}: no poses yet (tools.pose): who touched it is typed as a number")
+    cam3d, ball3d = None, {}                  # a 3D from an earlier run: the suggestion also checks depth
+    b3 = paths.clip_dir(stem) / "ball3d.json"
+    cp = Path("data/cameras") / f"{stem}.json"
+    if players and b3.exists() and cp.exists():
+        from core.geometry.camera import Camera
+        cam3d, ball3d = Camera.load(cp), json.load(open(b3)).get("frames", {})
     scale = min(MAX_W / P["width"], (MAX_H - TIMELINE_H - TOP_H) / P["height"], 1.0)
     src = FrameSource(video, scale)
 
@@ -1157,7 +1163,8 @@ def review(video: str, test: bool = False):
                     state["who"], state["who_txt"] = f, ""
                     lab = R.label(f)
                     xy = lab if isinstance(lab, list) else R.proposal(f)
-                    sug = players.suggest(f, xy) if players and isinstance(xy, list) else None
+                    X3 = (ball3d.get(str(f)) or {}).get("xyz")
+                    sug = players.suggest(f, xy, cam3d if X3 else None, X3) if players and isinstance(xy, list) else None
                     state["who_sug"] = sug
                     msg = (f"touch at frame {f}: {Review.CONTACT_TYPES[k]} - who touched it? "
                            + (f"#{sug['number']} (yellow): Enter accepts; " if sug else "")

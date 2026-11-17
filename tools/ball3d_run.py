@@ -100,6 +100,47 @@ def _named_player(poses, plabels, cam, fps):
     return named
 
 
+def write_touches(path, flights, frames, uv, T, fps, cam, poses, plabels, stem):
+    """output/<clip>/touches.json: every touch in the 3D (where one flight hands over to the next),
+    with who touched it (core.people.touchers: the same rule review suggests with) and the side.
+
+      {"touches": [{"frame", "time_s", "xyz", "side": -1 near / +1 far,
+                    "toucher": {"number" | null, "track", "box", "d", "feet"} | null}]}"""
+    from core.people.touchers import Players
+    P = Players(poses, plabels) if poses else None
+    out = []
+    for a, b in zip(flights[:-1], flights[1:]):
+        if b["chain"] != a["chain"] or b["f0"] != a["f1"] + 1:
+            continue
+        t = b["f0"]
+        X = frames.get(t, {}).get("xyz")
+        xy = None
+        for g in sorted(range(t - 3, t + 4), key=lambda g: abs(g - t)):   # the ball in the picture, nearest frame
+            if 0 <= g < len(uv) and np.isfinite(uv[g]).all():
+                xy = [float(uv[g][0]), float(uv[g][1])]
+                break
+        who = None
+        if P is not None and xy is not None:
+            r = P.rank(t, xy, cam, X)
+            if r:
+                p = r[0]
+                who = {"number": p["number"], "track": p["id"], "box": [round(float(v), 1) for v in p["box"]],
+                       "d": p["d"], "feet": p.get("feet")}
+        side = None
+        if who and isinstance(who["number"], int):
+            side = -1 if who["number"] <= 6 else 1
+        elif who and who.get("feet"):
+            side = -1 if who["feet"][0] < 0 else 1
+        elif X is not None:
+            side = -1 if X[0] < 0 else 1
+        out.append({"frame": int(t), "time_s": round(float(T[t] / fps if T is not None else t / fps), 3),
+                    "xyz": X, "side": side, "toucher": who})
+    json.dump({"schema": "vv-touches/1", "clip": stem, "touches": out}, open(path, "w"), indent=1)
+    named = sum(1 for x in out if x["toucher"] and x["toucher"]["number"] is not None)
+    seen = sum(1 for x in out if x["toucher"])
+    print(f"[ball3d] {stem}: {len(out)} touches, toucher found for {seen} ({named} with a number)  →  {path}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("video")
@@ -238,6 +279,7 @@ def main():
         ncs = f"at {nc['height_m']:.2f} m (clears by {nc['clears_net_by_m']:+.2f})" if nc else ""
         print(f"  {fl['f0']:5d}-{fl['f1']:<5d} {'yes' if fl['free_flight'] else 'NO':>5s} {fl['median_px']:6.1f} "
               f"{fl['apex_m']:7.2f} {fl['speed_start_mps']:9.1f} {fl['min_height_m']:8.2f} {fl['depth_std_m']:5.2f} {fl['spin_lift_mps2']:+5.1f}  {ncs}")
+    write_touches(Path(a.output) / stem / "touches.json", flights_out, frames_out, uv, T, fps, cam, poses, plabels, stem)
     plot(out.with_suffix(".png"), flights_out, frames_out, cam, net_h, stem)
     TL.lap("output files and picture")
     TL.report("3D time")
