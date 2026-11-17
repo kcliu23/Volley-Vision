@@ -62,6 +62,9 @@ def main():
     ap.add_argument("video")
     ap.add_argument("--output", default=str(paths.OUTPUT))
     ap.add_argument("--debug", action="store_true", help="also the floor shadow, a mini top view and frame numbers")
+    ap.add_argument("--players", choices=["touch", "all", "none"], default="touch",
+                    help="player tags: touch (default) = only whoever touched the ball, fading in and out around "
+                         "the touch; all = every player (checking your numbers); none")
     ap.add_argument("--labels", action="store_true", help="the 3D built from your labels (ball3d_run --use-labels): "
                     "ball3d_labels.json -> ball3d_labels.mp4, with your player numbers")
     a = ap.parse_args()
@@ -91,6 +94,21 @@ def main():
             b = P.box[i]
             head = heads.get((int(f), _key(b)), ((b[0] + b[2]) / 2, b[1]))
             people.setdefault(int(f), []).append((P.id, head, near, bool(P.airborne[i]), float(P.feet_z[i]), g))
+
+    # touch mode: the toucher's tag, from just before each touch to a little after, fading
+    show: dict = {}                          # frame -> {player id: opacity}
+    tp = clip / f"touches{sfx}.json"
+    if a.players == "touch" and tp.exists():
+        pre, hold, fade = int(0.15 * fps), int(0.5 * fps), int(0.3 * fps)
+        for t in json.load(open(tp))["touches"]:
+            w = t.get("toucher")
+            if not w:
+                continue
+            pid = w["number"] if isinstance(w.get("number"), int) else UNNAMED + int(w["track"])
+            f0 = t["frame"]
+            for g in range(f0 - pre, f0 + hold + fade + 1):
+                o = (g - (f0 - pre)) / max(pre, 1) if g < f0 else (1.0 if g <= f0 + hold else 1 - (g - f0 - hold) / max(fade, 1))
+                show.setdefault(g, {})[pid] = max(show.get(g, {}).get(pid, 0.0), min(1.0, max(0.0, o)))
 
     times = None
     if (clip / "frame_times.json").exists():
@@ -123,15 +141,22 @@ def main():
         # eased over a few frames so it doesn't shake with the pose points
         chips = []
         for pid, hp, near, air, fz, _g in people.get(f, []):
+            op = 1.0
+            if a.players == "none":
+                continue
+            if a.players == "touch":
+                op = show.get(f, {}).get(pid, 0.0)
+                if op <= 0.02:
+                    continue
             last = eased.get(pid)
             hp = hp if last is None or last[0] < f - 3 else (0.4 * hp[0] + 0.6 * last[1][0], 0.4 * hp[1] + 0.6 * last[1][1])
             eased[pid] = (f, hp)
             head = (hp[0], hp[1] - 6 * scale)
             if pid >= UNNAMED:
-                chips.append(("?", head, Labels.UNNAMED, 24))
+                chips.append(("?", head, Labels.UNNAMED, 24, op))
             else:
                 text = f"#{pid}  \u2191 {fz:.2f} m" if air else f"#{pid}"
-                chips.append((text, head, Labels.NEAR if near else Labels.FAR))
+                chips.append((text, head, Labels.NEAR if near else Labels.FAR, 28, op))
         L.chips(img, chips)
         if any(c[2] is not Labels.UNNAMED for c in chips):
             L.legend(img)

@@ -141,7 +141,7 @@ def main():
     if r == "go":
         _run(["tools.ball3d_run", a.video, "--output", a.output, "--use-labels"])
         _run(["tools.ball3d_viewer", a.video, "--output", a.output, "--labels"])
-        _run(["tools.ball3d_video", a.video, "--output", a.output, "--labels"])
+        _run(["tools.ball3d_video", a.video, "--output", a.output, "--labels", "--players", "all"])
         _run(["tools.check_labels", stem, "--output", a.output])
         d = paths.clip_dir(stem, a.output)
         print(f"   look: {d / 'ball3d_labels.mp4'}  and  {d / 'ball3d_labels_view.html'}")

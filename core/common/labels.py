@@ -53,8 +53,8 @@ class Labels:
 
     def chips(self, img, items):
         """Several plates at once, nudged apart so none covers another: items are (text,
-        bottom_centre, color[, size]); a plate that would overlap one already placed moves up
-        just clear of it (players close together in the picture get a short stack)."""
+        bottom_centre, color[, size[, opacity 0-1]]); a plate that would overlap one already placed
+        moves up just clear of it (players close together in the picture get a short stack)."""
         gap = max(2, round(4 * self.s))
         placed = []                                     # (x0, y0, x1, y1)
         for it in sorted(items, key=lambda it: -it[1][1]):
@@ -70,7 +70,7 @@ class Labels:
                         y1 = b0 - gap
                         moved = True
             placed.append((x0, y1 - h, x0 + w, y1))
-            _blend(img, spr, x0, y1 - h)
+            _blend(img, spr, x0, y1 - h, it[4] if len(it) > 4 else 1.0)
 
     def tag(self, img, text: str, left_middle, color=VALUE, size: float = 30):
         spr = self._plate(text, color, size, bar=False)
@@ -118,13 +118,13 @@ def _sprite(text, px, color, edge, bar):
     return np.ascontiguousarray(np.asarray(im)[..., [2, 1, 0, 3]])
 
 
-def _blend(img, spr, x, y):
+def _blend(img, spr, x, y, opacity: float = 1.0):
     h, w = spr.shape[:2]
     H, W = img.shape[:2]
     xa, ya, xb, yb = max(x, 0), max(y, 0), min(x + w, W), min(y + h, H)
     if xa >= xb or ya >= yb:
         return
     s = spr[ya - y:yb - y, xa - x:xb - x]
-    al = s[..., 3:4].astype(np.float32) / 255
+    al = s[..., 3:4].astype(np.float32) / 255 * opacity
     roi = img[ya:yb, xa:xb]
     roi[:] = (roi * (1 - al) + s[..., :3] * al).astype(np.uint8)
