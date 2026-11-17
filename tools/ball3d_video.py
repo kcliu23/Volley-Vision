@@ -37,6 +37,22 @@ NEAR_COURT = (LENGTH / 2 + 1.5, WIDTH / 2 + 1.5)   # where unnamed players still
 YELLOW, ORANGE = (0, 255, 255), (0, 140, 255)      # BGR, debug drawings only
 
 
+def player_near(P, cam) -> bool:
+    """Is this player on the camera's side of the net? Players don't change sides during a rally,
+    so it's one answer per player, not per frame (feet in the air or hidden give nonsense floor
+    spots: the side flickered). A numbered player: from the number (1-6 near, 7-12 far); an
+    unnumbered one: the side their feet are on most, counting only frames with the feet on the
+    floor, on the court area, clear of the net."""
+    from core.people.players import UNNAMED
+    if P.id < UNNAMED:
+        return P.id <= 6
+    g = P.ground
+    ok = ~P.airborne & np.isfinite(g[:, 0]) & (np.abs(g[:, 0]) > 1.0) & (np.abs(g[:, 0]) < 12.0) & (np.abs(g[:, 1]) < 8.0)
+    if not ok.any():
+        return True                                       # feet never seen on the floor: likely near (cut off)
+    return bool(np.mean(g[ok, 0] * cam.position[0] > 0) >= 0.5)
+
+
 def main():
     import cv2
 
@@ -66,12 +82,12 @@ def main():
     people: dict[int, list] = {}
     for P in load_people(stem, a.output, cam, fps, log=lambda m: print(f"[ball3d_video] {stem}: " + m),
                          use_labels=a.labels) or []:
+        near = player_near(P, cam)
         for i, f in enumerate(P.frames):
             g = P.ground[i]
             on_floor = bool(np.isfinite(g[0]))
             if P.id >= UNNAMED and not (on_floor and abs(g[0]) < NEAR_COURT[0] and abs(g[1]) < NEAR_COURT[1]):
                 continue
-            near = (g[0] * cam.position[0] > 0) if on_floor else True      # feet out of the picture = near
             b = P.box[i]
             head = heads.get((int(f), _key(b)), ((b[0] + b[2]) / 2, b[1]))
             people.setdefault(int(f), []).append((P.id, head, near, bool(P.airborne[i]), float(P.feet_z[i]), g))
@@ -83,6 +99,7 @@ def main():
     out_fps, repeats = render_timing(times, fps)
 
     cap = cv2.VideoCapture(a.video)
+    cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)            # phone videos stored sideways: upright, as everywhere else
     W, H = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     scale = H / 1080
     L = Labels(H)
