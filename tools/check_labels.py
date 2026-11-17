@@ -25,6 +25,7 @@ from core.common import paths
 from core.common.label_checks import all_flags
 
 SIDE_HOLD = 30            # frames a number must stay on the other side to count as a switch
+COURT_X, COURT_Y = 12.0, 8.0   # feet beyond this (court + free zone) aren't on the floor: skipped
 
 
 def _iou(a, b):
@@ -63,6 +64,8 @@ def player_flags(ids: dict, cam) -> dict[int, str]:
             if cam is not None:
                 x0, y0, x1, y1 = b["box"]
                 g = cam.floor_point([((x0 + x1) / 2, y1)], 0.0)[0]
+                if abs(g[0]) > COURT_X or abs(g[1]) > COURT_Y:   # off the court area: feet in the air
+                    continue                                    # (a jump) or not in the picture
                 if abs(g[0]) > 1.0:                     # near the net: no side
                     side_runs[n].append((f, int(np.sign(g[0]))))
         for n, bs in seen.items():

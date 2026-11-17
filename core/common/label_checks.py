@@ -121,7 +121,7 @@ def touch_flags(contacts: dict) -> dict[int, str]:
             if serve_open is None or f - serve_open > 3:
                 serve_open = f
         elif v == "dead":
-            if serve_open is None:
+            if serve_open is None and dict(c).get(f - 1) != "dead":   # a run of "rally over" frames is one end
                 out.setdefault(f, "no serve: this rally has no serve mark (1) before it")
             serve_open = None
     return out

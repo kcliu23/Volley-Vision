@@ -127,6 +127,7 @@ def main():
             G += [x[2] for x in g]; sk += k
             far += [(s,) + x for x in g if x[2] > FAR_M]
         G = np.array(G)
+        G = G[np.isfinite(G)]                       # a toucher with no feet seen (e.g. the server) can't be judged
         print(f"{name:14s} {len(G):7d} {np.median(G):9.2f}m {np.percentile(G, 90):5.2f}m {np.mean(G > FAR_M):8.1%} {sk:14d}")
         if a.detail:
             for s, f, kind, d, n, z in sorted(far, key=lambda q: -q[4]):

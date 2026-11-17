@@ -3,7 +3,8 @@ against your who-touched-it (tools.review: touched_by + touched_box).
 
     python -m evaluation.whotouched holdout1 holdout2 ... [--output output]
 
-Each touch you named is matched to the pipeline's touch within MATCH frames:
+Each touch you named (consecutive marked frames = one touch) is matched to the pipeline's touch
+within MATCH frames of it:
   right       the same number (or, for a player you didn't number, the same box: overlap > 0.5)
   wrong       another player
   no toucher  the pipeline has the touch but names nobody (no player at the ball)
@@ -35,9 +36,16 @@ def score(stem: str, output: str) -> dict:
     who = {int(k): int(v) for k, v in (V.get("touched_by") or {}).items()}
     boxes = {int(k): v for k, v in (V.get("touched_box") or {}).items()}
     mine = json.load(open(tp))["touches"]
-    for f, n in who.items():
+    runs = []                                          # one touch = consecutive frames you marked
+    for f in sorted(who):
+        if runs and f - runs[-1][-1] <= 1 and who[f] == who[runs[-1][-1]]:
+            runs[-1].append(f)
+        else:
+            runs.append([f])
+    for run in runs:
+        f, n = run[len(run) // 2], who[run[0]]
         out["named"] += 1
-        near = [t for t in mine if abs(t["frame"] - f) <= MATCH]
+        near = [t for t in mine if run[0] - MATCH <= t["frame"] <= run[-1] + MATCH]
         if not near:
             out["no touch"] += 1
             continue
@@ -45,7 +53,7 @@ def score(stem: str, output: str) -> dict:
         w = t["toucher"]
         if not w:
             out["no toucher"] += 1
-        elif w["number"] == n or (f in boxes and w.get("box") and _iou(boxes[f], w["box"]) > 0.5):
+        elif w["number"] == n or any(g in boxes and w.get("box") and _iou(boxes[g], w["box"]) > 0.5 for g in run):
             out["right"] += 1
         else:
             out["wrong"] += 1
