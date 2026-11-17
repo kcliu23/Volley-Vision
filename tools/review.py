@@ -48,9 +48,12 @@ it resumes where you left off.
   contacts       m      mark a touch at this frame, then its type: 1 serve, 2 pass/receive,
                         3 set, 4 hit (anything sent over that isn't a serve or block), 5 block,
                         6 dig, 0 other (m on a marked frame removes it)
-                        then, optional, who touched it: their number (1-12) and Enter; any other
-                        key skips. Fine for a player with no box (hidden, not detected): you can
-                        still see who it was
+                        then, optional, who touched it: the numbered players are drawn (your
+                        numbers from tools.label_players) and the one nearest the ball is
+                        suggested in yellow: Enter accepts it, click another player's box, or
+                        type a number + Enter (a player with no box: hidden, not detected);
+                        any other key skips. Saved: touched_by (number) + touched_box (their
+                        pose box, so the touch is tied to that person in the pose data)
                         9 rally over: the ball is dead (not a touch). Serve -> rally over marks
                         which frames are IN PLAY: the scores report those on their own
                  M      jump to the next marked touch
@@ -63,7 +66,7 @@ at the top); green = accepted, yellow = your edits. Ball labels: data/verified/<
    "src": {"<frame>": "auto" | "fixed" | "interp"}, "role": "train" | "test", "reviewed": [[f0, f1], ...],
    "others": {"<frame>": [[x, y, w, h], ...]},   other balls you confirmed (only these are exported)
    "contacts": {"<frame>": "serve" | "pass" | "set" | "hit" | "block" | "dig" | "other"},   touches you marked
-   "touched_by": {"<frame>": 7}}                                               who touched it, when you said
+   "touched_by": {"<frame>": 7}, "touched_box": {"<frame>": [x0, y0, x1, y1]}}  who touched it, when you said
 """
 from __future__ import annotations
 
@@ -98,6 +101,7 @@ class Review:
         self.contacts: dict[int, str] = {int(k): {"attack": "hit"}.get(x, x)       # "attack" was the old name
                                          for k, x in v.get("contacts", {}).items()}
         self.touched_by: dict[int, int] = {int(k): int(x) for k, x in v.get("touched_by", {}).items()}
+        self.touched_box: dict[int, list] = {int(k): x for k, x in v.get("touched_box", {}).items()}
         self._checks = None                      # label_checks flags, rebuilt after an edit
         self.labels: dict[int, object] = {int(k): x for k, x in v.get("labels", {}).items()}
         self.boxes: dict[int, list] = {int(k): x for k, x in v.get("boxes", {}).items()}
@@ -396,16 +400,22 @@ class Review:
         if kind is None:
             self.contacts.pop(f, None)
             self.touched_by.pop(f, None)
+            self.touched_box.pop(f, None)
         else:
             self.contacts[f] = kind
 
-    def set_toucher(self, f: int, number: int | None):
-        """Who touched the ball at frame f (a player number), or not known (None)."""
+    def set_toucher(self, f: int, number: int | None, box: list | None = None):
+        """Who touched the ball at frame f (a player number, and their pose box when they were
+        detected: it ties the touch to that person in the pose data), or not known (None)."""
         self._push([f])
         if number is None:
             self.touched_by.pop(f, None)
         else:
             self.touched_by[f] = int(number)
+        if box is None:
+            self.touched_box.pop(f, None)
+        else:
+            self.touched_box[f] = [round(float(v), 1) for v in box]
 
     def checks(self) -> dict[int, str]:
         """Frames to re-check in your labels (core.common.label_checks), cached until an edit."""
@@ -426,7 +436,7 @@ class Review:
     def _push(self, frames):
         self._checks = None
         self.undo_stack.append(([(f, self.labels.get(f), self.boxes.get(f), self.src.get(f), self.others_edit.get(f),
-                                  self.contacts.get(f), self.touched_by.get(f)) for f in frames],
+                                  self.contacts.get(f), self.touched_by.get(f), self.touched_box.get(f)) for f in frames],
                                 [list(r) for r in self.reviewed], list(self.clicks), list(self.other_clicks)))
         if len(self.undo_stack) > 200:
             self.undo_stack.pop(0)
@@ -561,9 +571,9 @@ class Review:
             return False
         saved, reviewed, clicks, other_clicks = self.undo_stack.pop()
         self._checks = None
-        for f, lab, box, src, oth, con, who in saved:
+        for f, lab, box, src, oth, con, who, wbox in saved:
             for d, v in ((self.labels, lab), (self.boxes, box), (self.src, src), (self.others_edit, oth),
-                         (self.contacts, con), (self.touched_by, who)):
+                         (self.contacts, con), (self.touched_by, who), (self.touched_box, wbox)):
                 if v is None:
                     d.pop(f, None)
                 else:
@@ -610,6 +620,7 @@ class Review:
                 "others": {str(f): self.others_edit[f] for f in sorted(self.others_edit)},
                 "contacts": {str(f): self.contacts[f] for f in sorted(self.contacts)},
                 "touched_by": {str(f): self.touched_by[f] for f in sorted(self.touched_by)},
+                "touched_box": {str(f): self.touched_box[f] for f in sorted(self.touched_box)},
                 "proposals": {"pipeline": P.get("pipeline"), "file": str(paths.proposals(Path(video).stem))}}
 
 
@@ -842,10 +853,24 @@ class Follower:
 
 # ── drawing ──────────────────────────────────────────────────────────────────
 
-def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, playing: bool, mouse, msg: str):
-    """img: canvas = info bar (TOP_H) + picture + timeline (TIMELINE_H)."""
+def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, playing: bool, mouse, msg: str,
+         people=None, pick=None):
+    """img: canvas = info bar (TOP_H) + picture + timeline (TIMELINE_H). people: the players at
+    this frame (core.people.touchers.Players.at), drawn on touch frames; pick: the suggested toucher."""
     H, W = img.shape[:2]
     T = TOP_H
+    for p in people or []:                                    # numbered players: cyan; the suggestion: yellow
+        x0, y0, x1, y1 = (int(v * scale) for v in p["box"])
+        sug = pick is not None and p["id"] == pick["id"]
+        mine = f in R.touched_box and R.touched_box[f] == [round(float(v), 1) for v in p["box"]]
+        if p["number"] is None and not sug:
+            cv2.rectangle(img, (x0, T + y0), (x1, T + y1), (110, 110, 110), 1, cv2.LINE_AA)
+            continue
+        col_ = (0, 230, 255) if sug else ((60, 220, 60) if mine else (255, 200, 0))
+        cv2.rectangle(img, (x0, T + y0), (x1, T + y1), col_, 2 if (sug or mine) else 1, cv2.LINE_AA)
+        if p["number"] is not None:
+            cv2.putText(img, f"#{p['number']}", (x0, T + max(y0 - 4, 12)), cv2.FONT_HERSHEY_SIMPLEX, 0.5,
+                        col_, 1, cv2.LINE_AA)
     lab = R.label(f)
     src = R.src.get(f, "proposal")
     col = {"fixed": (60, 220, 60), "interp": (150, 230, 150), "auto": (255, 220, 0), "proposal": (255, 220, 0)}[src]
@@ -940,6 +965,10 @@ def review(video: str, test: bool = False):
     R = Review(P, V, json.load(open(dp))["frames"] if dp.exists() else None)
     if test or Path(video).resolve().parent.name == paths.HOLDOUT.name:   # holdout/ clips are always test clips
         R.role = "test"
+    from core.people.touchers import Players
+    players = Players.load(stem, paths.clip_dir(stem) / "pose.json", log=lambda m: print(f"[review] {m}"))
+    if players is None:
+        print(f"[review] {stem}: no poses yet (tools.pose): who touched it is typed as a number")
     scale = min(MAX_W / P["width"], (MAX_H - TIMELINE_H - TOP_H) / P["height"], 1.0)
     src = FrameSource(video, scale)
 
@@ -952,7 +981,8 @@ def review(video: str, test: bool = False):
         seg_i = 0
     f = P["segments"][seg_i]["f0"]
     playing, speed_i = False, SPEEDS.index(1.0)
-    state = {"mouse": None, "click": None, "extra": False, "contact": False, "snap": True, "who": None, "who_txt": ""}
+    state = {"mouse": None, "click": None, "extra": False, "contact": False, "snap": True, "who": None, "who_txt": "",
+             "who_sug": None}
     yolo = {}
 
     def snap_by_crop(img, xy, ball, scale):
@@ -1032,9 +1062,25 @@ def review(video: str, test: bool = False):
             log(msg)
             logged["msg"] = msg
         show_msg = msg if time.time() - msg_t < 2.5 else ""
-        cv2.imshow(WIN, draw(cv2, canvas, R, f, scale, seg_i, SPEEDS[speed_i], playing, state["mouse"], show_msg))
+        people = players.at(f) if players and (f in R.contacts or state["who"] == f) else None
+        cv2.imshow(WIN, draw(cv2, canvas, R, f, scale, seg_i, SPEEDS[speed_i], playing, state["mouse"], show_msg,
+                             people, state["who_sug"] if state["who"] == f else None))
         key = cv2.waitKey(5) & 0xFF
 
+        if state["click"] is not None and state["who"] is not None and players:
+            x, y, shift, alt = state["click"]                  # who touched it: the player you click
+            state["click"] = None
+            g = state["who"]
+            p = players.under(g, (x / scale, (y - TOP_H) / scale)) if TOP_H <= y < TOP_H + img.shape[0] else None
+            if p is None:
+                msg, msg_t = f"who touched it at {g}? click inside a player's box", time.time()
+            elif p["number"] is None:
+                msg, msg_t = (f"who touched it at {g}? that player has no number yet (step 3, tools.label_players);"
+                              f" type their number + Enter, or click another"), time.time()
+            else:
+                R.set_toucher(g, p["number"], p["box"]); save()
+                state["who"], state["who_txt"], state["who_sug"] = None, "", None
+                msg, msg_t = f"touch at frame {g}: {R.contacts.get(g)} by #{p['number']}", time.time()
         if state["click"] is not None:
             x, y, shift, alt = state["click"]
             state["click"] = None
@@ -1087,10 +1133,17 @@ def review(video: str, test: bool = False):
                 state["who_txt"] = state["who_txt"][:-1]
                 msg, msg_t = f"who touched it at {g}? #{state['who_txt']}", time.time()
                 continue
-            txt, state["who"], state["who_txt"] = state["who_txt"], None, ""
+            txt, sug = state["who_txt"], state["who_sug"]
+            state["who"], state["who_txt"], state["who_sug"] = None, "", None
             if key in (13, 10) and txt and 1 <= int(txt) <= 99:
-                R.set_toucher(g, int(txt)); save()
-                msg, msg_t = f"touch at frame {g}: {R.contacts.get(g)} by #{int(txt)}", time.time()
+                p = players.with_number(g, int(txt)) if players else None
+                R.set_toucher(g, int(txt), p["box"] if p else None); save()
+                msg, msg_t = (f"touch at frame {g}: {R.contacts.get(g)} by #{int(txt)}"
+                              + ("" if p or not players else "  (not in the player boxes here: kept as typed)")), time.time()
+                continue
+            if key in (13, 10) and not txt and sug is not None:     # Enter: the suggested player
+                R.set_toucher(g, sug["number"], sug["box"]); save()
+                msg, msg_t = f"touch at frame {g}: {R.contacts.get(g)} by #{sug['number']}", time.time()
                 continue
             msg, msg_t = f"touch at frame {g}: {R.contacts.get(g)} (who: not given)", time.time()
             if key in (13, 10):
@@ -1102,7 +1155,13 @@ def review(video: str, test: bool = False):
                 msg, msg_t = f"touch at frame {f}: {Review.CONTACT_TYPES[k]}", time.time()
                 if Review.CONTACT_TYPES[k] != "dead":
                     state["who"], state["who_txt"] = f, ""
-                    msg = f"touch at frame {f}: {Review.CONTACT_TYPES[k]} - who touched it? number + Enter (any other key: skip)"
+                    lab = R.label(f)
+                    xy = lab if isinstance(lab, list) else R.proposal(f)
+                    sug = players.suggest(f, xy) if players and isinstance(xy, list) else None
+                    state["who_sug"] = sug
+                    msg = (f"touch at frame {f}: {Review.CONTACT_TYPES[k]} - who touched it? "
+                           + (f"#{sug['number']} (yellow): Enter accepts; " if sug else "")
+                           + ("click a player, or " if players else "") + "number + Enter; any other key: skip")
             else:
                 msg, msg_t = "no touch marked (type keys: 1 serve 2 pass 3 set 4 hit 5 block 6 dig 0 other 9 rally over)", time.time()
             continue
