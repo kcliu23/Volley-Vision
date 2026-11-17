@@ -48,6 +48,8 @@ from core.scene3d.params3d import (  # noqa: F401
     PLAYER_COST,
     PLAYER_SOFT_M,
     REACH_M,
+    SERVE_AUTO_X_M,
+    SERVE_BEHIND_M,
     SIGMA_PX,
     SIZE_REL,
     SPIN_MODE,
@@ -88,6 +90,7 @@ class Obs:
     touchers: object = None              # touchers(frame, ball_uv) -> core.people.players.touch_evidence list
     near: object = None                  # near(t, xyz) -> metres outside every player's reach, or
                                          # None where there is no player data (core.people.players.reach)
+    sides: list = field(default_factory=list)   # [(frame, rules.Choice)]: the rally rules' sides
 
     def segment(self, i: int, j: int) -> Segment:
         f0, f1 = self.frames[i], self.frames[j - 1]
@@ -428,18 +431,90 @@ def spin_flags(n: int) -> list | None:
     return None
 
 
-def _anchors_fit(o: Obs, cam, segs, links, bounds, bounces=()) -> list:
+def _anchors_fit(o: Obs, cam, segs, links, bounds, bounces=(), rules: bool = True) -> list:
     """_anchors with the ball's distance from a first fit without anchors (size, gravity and the
     joins together): a single ball box at a touch is unreliable, hands cover the ball (test20
     942: the box drops from 43 to 30 px, the size read 11.7 m for a ball at ~8 m)."""
-    if not o.touchers and not o.who:
+    use_rules = rules and rules_on() and o.net_h is not None
+    if not o.touchers and not o.who and not use_rules:
         return []
     fit0 = fit_rally(segs, links, cam, net_h=o.net_h, spin=spin_flags(len(segs)))
 
     def depth(k, tc):
         X = 0.5 * (fit0.at(k - 1, np.array([tc]))[0] + fit0.at(k, np.array([tc]))[0])
         return float(cam.depth(X[None])[0])
-    return _anchors(o, bounds, bounces, depth)
+    anchors = _anchors(o, bounds, bounces, depth) if (o.touchers or o.who) else []
+    return _with_rules(o, fit0, segs, bounds, bounces, anchors) if use_rules else anchors
+
+
+FLOOR_TOUCH_Z = 0.25          # a join this low is the ball on the floor, not a touch
+EXTRA_MERGE_MAX = 3 * TOUCH_COST   # merging a 4th touch may cost the picture this much at most
+
+
+def rules_on() -> bool:
+    """The rally rules decide the sides (core.scene3d.rules); VV_RULES=0 turns them off."""
+    import os
+    return os.environ.get("VV_RULES", "1") != "0"
+
+
+def _with_rules(o: Obs, fit0, segs, bounds, bounces, anchors) -> list:
+    """The players' anchors, checked against volleyball's rules for the whole rally: a touch whose
+    side the rules are sure of gets that side (an anchor without a spot when no player was seen
+    there), and a player's anchor on the other side is dropped. Sides the rules aren't sure of
+    keep what the players said. Your who-touched-it always stands."""
+    from core.scene3d.rules import Touch, decide
+    t_start = np.array([o.t[bounds[0]]])
+    X0, S0 = fit0.at(0, t_start)[0], fit0.std(0, t_start)[0]
+    nodes = [(0, float(t_start[0]))]
+    import os
+    court = os.environ.get("VV_RULES_COURT", "0") == "1"      # serve spot + antennas: no gain measured
+    serve = court and abs(X0[0]) >= SERVE_AUTO_X_M and X0[2] > 1.5   # the rally starts with a serve
+    touches = [Touch(float(X0[0]), float(S0[0]), float(X0[2]), first=True, serve=bool(serve))]
+    by_touch = {}
+    for A in anchors:
+        by_touch.setdefault(A.get("touch"), A)
+    for k in range(1, len(bounds) - 1):
+        b = bounds[k]
+        if b in bounces:                                 # the ball hit the floor: the rally is over
+            break
+        tc = 0.5 * (o.t[b - 1] + o.t[b])
+        tt = np.array([tc])
+        X = 0.5 * (fit0.at(k - 1, tt)[0] + fit0.at(k, tt)[0])
+        if X[2] < FLOOR_TOUCH_Z:                         # the ball on the floor: the rally is over
+            break
+        sd = 0.5 * (fit0.std(k - 1, tt)[0] + fit0.std(k, tt)[0])
+        A = by_touch.get(k)
+        touches.append(Touch(float(X[0]), float(sd[0]), float(X[2]),
+                             player=A["side"] if A else None, named=bool(A and "side_sigma" in A)))
+        nodes.append((k, tc))
+    zmax = [float(fit0.at(k, segs[k].t)[:, 2].max()) for k, _ in nodes[:-1]]
+    choices = decide(touches, zmax, o.net_h)
+    o.sides = [(int(o.frames[bounds[k]]), c) for (k, _), c in zip(nodes, choices)]
+    if not choices:
+        return anchors
+    out = [A for A in anchors if "side_sigma" in A]      # yours stand
+    c0 = choices[0]
+    if serve and c0.sure:                                # the serve: behind the end line (FIVB 12)
+        out.append({"k": 0, "t": nodes[0][1], "side": c0.side, "spot": None, "behind": SERVE_BEHIND_M,
+                    "touch": 0, "rule": True})
+    for i in range(len(nodes) - 1):                      # a change of side: over the net, inside
+        a, b = choices[i], choices[i + 1]                # the antennas (FIVB 10.1.1)
+        if court and a.sure and b.sure and a.side != b.side and not a.block and not b.block:
+            out.append({"kind": "cross", "k": nodes[i][0]})
+    for (k, tc), c in list(zip(nodes, choices))[1:]:
+        mine = [A for A in anchors if A.get("touch") == k and "side_sigma" not in A]
+        if any(A.get("touch") == k and "side_sigma" in A for A in anchors):
+            continue
+        if not c.sure:
+            out.extend(mine)
+            continue
+        agree = [A for A in mine if A["side"] == c.side]
+        if agree:
+            out.extend(agree)
+        else:
+            out.extend({"k": kk, "t": tc, "side": c.side, "spot": None, "touch": k, "rule": True}
+                       for kk in (k - 1, k))
+    return out
 
 
 def _anchors(o: Obs, bounds, bounces=(), depth=None) -> list:
@@ -468,7 +543,7 @@ def _anchors(o: Obs, bounds, bounces=(), depth=None) -> list:
             side = got.get("side", -1 if n <= 6 else 1)
             for kk in (k - 1, k):
                 out.append({"k": kk, "t": tc, "side": side, "spot": got.get("spot"), "reach": NAMED_REACH_M,
-                            "side_sigma": NAMED_SIDE_SIGMA_M})
+                            "side_sigma": NAMED_SIDE_SIGMA_M, "touch": k})
             continue
         if not o.touchers:
             continue
@@ -490,7 +565,7 @@ def _anchors(o: Obs, bounds, bounces=(), depth=None) -> list:
         spots = [e["spot"] for e in ev if e["spot"] is not None]
         spot = spots[0] if len(ev) == 1 and spots else None
         for kk in (k - 1, k):
-            out.append({"k": kk, "t": tc, "side": side, "spot": spot})
+            out.append({"k": kk, "t": tc, "side": side, "spot": spot, "touch": k})
     return out
 
 
@@ -549,6 +624,49 @@ def _best_bounce(o: Obs, cam, i: int, j: int) -> tuple[int, float] | None:
         if best is None or m < best[1]:
             best = (b, m)
     return best
+
+
+from core.scene3d.rules import BLOCK_BELOW_TAPE_M, BLOCK_NEAR_M  # noqa: E402
+
+
+def _extra_touch(o: Obs, cam, fit, links, bounds, bounces) -> int | None:
+    """The link to merge when one team touches the ball 4+ times in a row (else None): the touch in
+    that run whose merge costs the picture least, if that's under EXTRA_MERGE_MAX. A block (at the
+    net, up at the tape, right after the other team) doesn't count; a touch at floor height ends
+    the rally (the count stops)."""
+    tt = fit.info.get("touch_t") or [L.t for L in links]
+    team, run, worst = None, [], None
+    for j, L in enumerate(links):
+        if L.kind != "touch":
+            team, run = None, []
+            continue
+        t_ = np.array([tt[j]])
+        X = 0.5 * (fit.at(L.k, t_)[0] + fit.at(L.k + 1, t_)[0])
+        if X[2] < FLOOR_TOUCH_Z:                         # the ball on the floor: the rally is over
+            break
+        side = 1 if X[0] > 0 else -1
+        if (o.net_h is not None and side != team and abs(X[0]) < BLOCK_NEAR_M
+                and X[2] > o.net_h - BLOCK_BELOW_TAPE_M):  # a block: doesn't count
+            team, run = side, []
+            continue
+        if side == team:
+            run.append(j)
+            if len(run) >= 4 and worst is None:
+                worst = list(run)
+        else:
+            team, run = side, [j]
+    if worst is None:
+        return None
+    best = None
+    for j in worst:
+        a, b, c = bounds[j], bounds[j + 1], bounds[j + 2]
+        if o.t[c - 1] - o.t[a] > MAX_FLIGHT_S:
+            continue
+        d = (_drag_piece_score(o, a, c, cam)[0] - _drag_piece_score(o, a, b, cam)[0]
+             - _drag_piece_score(o, b, c, cam)[0])
+        if best is None or d < best[0]:
+            best = (d, j)
+    return best[1] if best and best[0] <= EXTRA_MERGE_MAX else None
 
 
 def _solve_once(o: Obs, cam, hints, log):
@@ -644,6 +762,29 @@ def _solve_once(o: Obs, cam, hints, log):
             ok = ~o.edge[bounds[k]:bounds[k + 1]]
             if float(np.median(e[ok] if ok.sum() >= 3 else e)) > max(8.0, 3 * o.sigma):
                 bad.append(k)
+    # volleyball's 3-touch rule (FIVB 9.1): a team touching the ball 4+ times in a row means one of
+    # those "touches" isn't one (a flight split in two). Merge back the one the picture needs least;
+    # if every merge costs a lot, a side is wrong instead, and nothing is merged.
+    for _ in range(0 if o.fixed is not None or not rules_on() else len(bounds)):
+        j = _extra_touch(o, cam, fit, links, bounds, bounces)
+        if j is None:
+            break
+        log(f"4 touches on one side: touch at {o.frames[bounds[j + 1]]} merged into its flights")
+        bounds = bounds[:j + 1] + bounds[j + 2:]
+        segs = [o.segment(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
+        links = _links(o, bounds, bounces)
+        anchors = _anchors_fit(o, cam, segs, links, bounds, bounces)
+        fit = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors, spin=spin_flags(len(segs)))
+        bad = _bad_flights(o, cam, segs, bounds, fit)
+    # the rules must not break the picture: a rally whose fit has more badly fitting flights with
+    # the rules' anchors than without them keeps the players' anchors only
+    if bad and rules_on():
+        anch_p = _anchors_fit(o, cam, segs, links, bounds, bounces, rules=False)
+        fit_p = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anch_p, spin=spin_flags(len(segs)))
+        bad_p = _bad_flights(o, cam, segs, bounds, fit_p)
+        if len(bad_p) < len(bad):
+            log(f"rally rules dropped here ({len(bad)} -> {len(bad_p)} badly fitting flights)")
+            fit, anchors, bad = fit_p, anch_p, bad_p
     pieces, resid = [], []
     for k, s in enumerate(segs):
         f0 = int(o.frames[bounds[k]])

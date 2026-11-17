@@ -36,9 +36,11 @@ from core.scene3d.params3d import (  # noqa: E402
     ANCHOR_REACH_M,
     ANCHOR_SIGMA_M,
     ANCHOR_UNDER_M,
+    ANTENNA_Y_M,
     FREE_MIN_PX,
     FREE_X,
     NET_REACH_BELOW_M,
+    SERVE_SIDE_M,
     SOLID_SIGMA_M,
     SPIN_MAX_A,
     SPIN_SIGMA_A,
@@ -357,7 +359,24 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
                     if abs(yc) <= NET_HALF_W:
                         worst = max(worst, max(0.0, top - zc))
                 add(np.array([worst / solid_sigma]), flight(k))
+        for A in anchors or []:                            # rally rules: crossings inside the antennas
+            if A.get("kind") != "cross":
+                continue
+            k = A["k"]
+            X = pos(k, th, np.linspace(segs[k].t[0], segs[k].t[-1], max(4, int((segs[k].t[-1] - segs[k].t[0]) * 120) + 2)))
+            x = X[:, 0]
+            worst = 0.0
+            for i in np.where(np.sign(x[:-1]) * np.sign(x[1:]) < 0)[0]:
+                a = x[i] / (x[i] - x[i + 1])
+                yc = X[i, 1] + a * (X[i + 1, 1] - X[i, 1])
+                zc = X[i, 2] + a * (X[i + 1, 2] - X[i, 2])
+                worst = max(worst, abs(yc) - ANTENNA_Y_M)
+                if net_h is not None:                    # over the tape, wherever it crosses
+                    worst = max(worst, net_h + BALL_D / 2 - zc)
+            add(np.array([max(0.0, worst) / ANCHOR_SIGMA_M]), flight(k))
         for A in anchors or []:                            # touches made by a seen player
+            if A.get("kind") == "cross":
+                continue
             x = pos(A["k"], th, [A["t"]])[0]
             side = A.get("side")
             # hands reach over the net only up at the tape (blocks, attacks); a touch lower down
@@ -373,7 +392,11 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
             sp = A.get("spot")
             r_spot = max(0.0, float(np.hypot(x[0] - sp[0], x[1] - sp[1])) - A.get("reach", ANCHOR_REACH_M)) / ANCHOR_SIGMA_M \
                 if sp is not None else 0.0
-            add(np.array([r_side, r_spot]), flight(A["k"]))
+            r_back = r_wide = 0.0
+            if A.get("behind") is not None and side in (-1, 1):   # a serve: behind the end line
+                r_back = max(0.0, A["behind"] - side * x[0]) / ANCHOR_SIGMA_M
+                r_wide = max(0.0, abs(x[1]) - SERVE_SIDE_M) / ANCHOR_SIGMA_M
+            add(np.array([r_side, r_spot, r_back, r_wide]), flight(A["k"]))
         for j, L in enumerate(links):
             if not 0 <= L.k < K - 1:
                 continue

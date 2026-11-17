@@ -56,6 +56,12 @@ SOLID_SIGMA_M = 0.03   # [guess] how hard the floor and net push back
 ANCHOR_OVER_M = 0.3    # [guess] a player's touch can be this far past the net (hands over it)
 ANCHOR_UNDER_M = -0.105 # [physics] ... but only up at the tape: a touch lower than NET_REACH_BELOW_M
 NET_REACH_BELOW_M = 0.3  # [guess]  under the net top has the whole ball on the player's side (radius)
+ANTENNA_Y_M = 4.5      # [rules] antennas at the side lines: a ball changing side mid-rally crosses
+                       #   inside them (FIVB 2.4, 10.1.1)
+SERVE_BEHIND_M = 8.0   # [rules] a serve is hit behind the end line (9 m; a jump serve's hit can be
+                       #   ~1 m inside it in the air) ...
+SERVE_SIDE_M = 5.5     # ... and within the 9 m wide service zone (+1 m: the ball beside the server)
+SERVE_AUTO_X_M = 7.0   # [guess] a rally whose first point is this far from the net starts with a serve
 ANCHOR_REACH_M = 1.0   # [guess] ... and this far (horizontally) from where they stood
 SPIN_SIGMA_A = 1.5     # [guess] m/s^2: spin lift is pulled toward none with this softness (backspin
                        #   on test95 1013-1060 needs ~2: about 20% of gravity)
