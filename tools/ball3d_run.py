@@ -101,43 +101,60 @@ def _named_player(poses, plabels, cam, fps):
 
 
 TOUCH_GAP = 8          # frames between two flights that still make one touch (the ball held on the hands)
+FLOOR_Z = 0.3          # m: a join this low is the ball on the floor (a bounce), not a touch
 
 
-def write_touches(path, flights, frames, uv, T, fps, cam, poses, plabels, stem):
+def write_touches(path, flights, frames, uv, T, fps, cam, poses, plabels, stem, serves=None, who=None, who_box=None):
     """output/<clip>/touches.json: every touch in the 3D (where one flight hands over to the next),
     with who touched it (core.people.touchers: the same rule review suggests with) and the side.
 
-      {"touches": [{"frame", "time_s", "xyz", "side": -1 near / +1 far,
+      {"touches": [{"frame", "kind": serve | touch, "time_s", "xyz", "side": -1 near / +1 far,
                     "toucher": {"number" | null, "track", "box", "d", "feet"} | null}]}"""
     from core.people.touchers import Players
     P = Players(poses, plabels) if poses else None
+    from core.scene3d.params3d import SERVE_AUTO_X_M
     out = []
-    for a, b in zip(flights[:-1], flights[1:]):
-        if b["chain"] != a["chain"] or b["f0"] - a["f1"] > TOUCH_GAP:   # a touch joins two flights (your marked
-            continue                                                   # contact frames sit in between)
-        t = (a["f1"] + b["f0"] + 1) // 2
-        X = frames.get(t, {}).get("xyz")
+    events = []                                           # (frame, kind)
+    for i, b in enumerate(flights):
+        a = flights[i - 1] if i else None
+        if a is not None and b["chain"] == a["chain"] and b["f0"] - a["f1"] <= TOUCH_GAP:
+            Xa, Xb = frames.get(a["f1"], {}).get("xyz"), frames.get(b["f0"], {}).get("xyz")
+            X = [round((u + v) / 2, 2) for u, v in zip(Xa, Xb)] if Xa and Xb else (Xa or Xb)
+            if X is not None and X[2] < FLOOR_Z:          # the ball on the floor: a bounce, not a touch
+                continue
+            events.append(((a["f1"] + b["f0"] + 1) // 2, "touch", X))   # a touch joins two flights (your
+            continue                                                    # marked contact frames sit between)
+        X0 = frames.get(b["f0"], {}).get("xyz")           # a rally's first flight: from a serve when it
+        if (X0 is not None and X0[2] > 1.0 and (abs(X0[0]) >= SERVE_AUTO_X_M     # starts far behind the net,
+                                                or any(abs(g - b["f0"]) <= 6 for g in serves or []))):  # or you marked one
+            events.append((b["f0"], "serve", X0))
+    for t, kind, X in events:
         xy = None
         for g in sorted(range(t - 3, t + 4), key=lambda g: abs(g - t)):   # the ball in the picture, nearest frame
             if 0 <= g < len(uv) and np.isfinite(uv[g]).all():
                 xy = [float(uv[g][0]), float(uv[g][1])]
                 break
-        who = None
-        if P is not None and xy is not None:
+        mine = [g for g in (who or {}) if abs(g - t) <= TOUCH_GAP // 2 + 2]
+        toucher = None
+        if mine:                                          # you said who touched it (--use-labels): that's it
+            g = min(mine, key=lambda g: abs(g - t))
+            toucher = {"number": who[g], "track": None, "box": (who_box or {}).get(g), "d": None,
+                       "feet": None, "labelled": True}
+        elif P is not None and xy is not None:
             r = P.rank(t, xy, cam, X)
             if r:
                 p = r[0]
-                who = {"number": p["number"], "track": p["id"], "box": [round(float(v), 1) for v in p["box"]],
-                       "d": p["d"], "feet": p.get("feet")}
+                toucher = {"number": p["number"], "track": p["id"], "box": [round(float(v), 1) for v in p["box"]],
+                           "d": p["d"], "feet": p.get("feet")}
         side = None
-        if who and isinstance(who["number"], int):
-            side = -1 if who["number"] <= 6 else 1
-        elif who and who.get("feet"):
-            side = -1 if who["feet"][0] < 0 else 1
+        if toucher and isinstance(toucher["number"], int):
+            side = -1 if toucher["number"] <= 6 else 1
+        elif toucher and toucher.get("feet"):
+            side = -1 if toucher["feet"][0] < 0 else 1
         elif X is not None:
             side = -1 if X[0] < 0 else 1
-        out.append({"frame": int(t), "time_s": round(float(T[t] / fps if T is not None else t / fps), 3),
-                    "xyz": X, "side": side, "toucher": who})
+        out.append({"frame": int(t), "kind": kind, "time_s": round(float(T[t] / fps if T is not None else t / fps), 3),
+                    "xyz": X, "side": side, "toucher": toucher})
     json.dump({"schema": "vv-touches/1", "clip": stem, "touches": out}, open(path, "w"), indent=1)
     named = sum(1 for x in out if x["toucher"] and x["toucher"]["number"] is not None)
     seen = sum(1 for x in out if x["toucher"])
@@ -232,14 +249,18 @@ def main():
     # your "who touched it" (tools.review): the 3D puts those touches at that player, on their side
     who, named = None, None
     vp = Path(paths.verified(stem))
+    serves, who_box = None, None
     if vp.exists() and a.use_labels:
-        who = {int(k): int(v) for k, v in (json.load(open(vp)).get("touched_by") or {}).items()} or None
+        Vj = json.load(open(vp))
+        who = {int(k): int(v) for k, v in (Vj.get("touched_by") or {}).items()} or None
+        serves = [int(k) for k, v in (Vj.get("contacts") or {}).items() if v == "serve"] or None
+        who_box = {int(k): v for k, v in (Vj.get("touched_box") or {}).items()} or None
     if who:
         named = _named_player(poses, plabels, cam, fps)
         print(f"[ball3d] {stem}: your 'who touched it' on {len(who)} touches: each one is put at that player")
     TL.lap("players and poses")
     pieces = solve_clip(uv, w, size, edge, box, fps, cam, C["contacts"], players=players, T=T, net_h=net_h,
-                        poses=poses, ball_px=bpx, player_labels=plabels, fixed_touches=fixed, keep=keep, who=who, named=named,
+                        poses=poses, ball_px=bpx, player_labels=plabels, fixed_touches=fixed, keep=keep, who=who, named=named, serves=serves,
                         log=lambda m: print(f"[ball3d] {stem}: " + m))
 
     flights_out, frames_out = [], {}
@@ -291,7 +312,8 @@ def main():
         ncs = f"at {nc['height_m']:.2f} m (clears by {nc['clears_net_by_m']:+.2f})" if nc else ""
         print(f"  {fl['f0']:5d}-{fl['f1']:<5d} {'yes' if fl['free_flight'] else 'NO':>5s} {fl['median_px']:6.1f} "
               f"{fl['apex_m']:7.2f} {fl['speed_start_mps']:9.1f} {fl['min_height_m']:8.2f} {fl['depth_std_m']:5.2f} {fl['spin_lift_mps2']:+5.1f}  {ncs}")
-    write_touches(Path(a.output) / stem / f"touches{sfx}.json", flights_out, frames_out, uv, T, fps, cam, poses, plabels, stem)
+    write_touches(Path(a.output) / stem / f"touches{sfx}.json", flights_out, frames_out, uv, T, fps, cam, poses, plabels, stem, serves,
+                  who, who_box)
     plot(out.with_suffix(".png"), flights_out, frames_out, cam, net_h, stem)
     TL.lap("output files and picture")
     TL.report("3D time")

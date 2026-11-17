@@ -53,7 +53,7 @@ Results land in `output/<clip>/`:
 | File | What it is |
 |---|---|
 | `ball3d_view.html` | Interactive 3D view of every rally; open it in a browser |
-| `ball3d.mp4` | The video with the ball's track, height and player numbers (with `--video`) |
+| `ball3d.mp4` | The video with the ball's 3D track and height (with `--video`) |
 | `tracked.mp4` | The video with the 2D ball track and touches (with `--video`) |
 | `ball3d.json` | The ball in metres for every frame, plus per-flight speed, apex and net crossing |
 | `track.json`, `contacts.json` | The 2D track and the touches |
@@ -63,7 +63,8 @@ A 22-second clip takes a few minutes on an Apple-silicon Mac; most of it is pose
 ## Labeling your own clips
 
 Labels improve accuracy and train the models. One command walks a clip through every step:
-court, ball and touches, people, player numbers, then a list of frames worth re-checking.
+court, people, player numbers, ball and touches, then the 3D built from your labels (the same
+viewer and video as the automatic run) and a list of frames worth re-checking.
 
 ```bash
 python -m tools.annotate videos/match.mov

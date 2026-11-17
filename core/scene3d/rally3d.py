@@ -91,6 +91,7 @@ class Obs:
     near: object = None                  # near(t, xyz) -> metres outside every player's reach, or
                                          # None where there is no player data (core.people.players.reach)
     sides: list = field(default_factory=list)   # [(frame, rules.Choice)]: the rally rules' sides
+    serves: object = None                # your serve marks (frames): this rally starts with a serve
 
     def segment(self, i: int, j: int) -> Segment:
         f0, f1 = self.frames[i], self.frames[j - 1]
@@ -418,18 +419,34 @@ def _ball_depth(o: Obs, i: int) -> float | None:
     return float(o.cam.f * BALL_D / np.median(sz))
 
 
-def spin_flags(n: int) -> list | None:
-    """Which of a rally's n flights get a spin number (params3d.SPIN_MODE, or VV_SPIN): off, all,
-    or pinned (a touch at both ends: the joins fix the flight's ends, so a bend between them is
-    spin, not a wrong depth)."""
+def spin_mode() -> str:
     import os
-    mode = os.environ.get("VV_SPIN", SPIN_MODE)
-    if mode == "all":
-        return [True] * n
-    if mode == "pinned":
-        return [0 < k < n - 1 for k in range(n)]
+    return os.environ.get("VV_SPIN", SPIN_MODE)
+
+
+def spin_flags(n: int) -> list | None:
+    """No spin in the main fits: gravity and drag explain a flight first (spin trades off with depth
+    from one camera: on spin-free synthetic rallies it bent flights with a wrong depth). Spin is
+    tried only on flights that don't fit cleanly without it (_with_spin)."""
     return None
 
+
+def _with_spin(o: Obs, cam, segs, links, bounds, anchors, fit, bad, log):
+    """The flights that don't fit cleanly (bad), refitted with a spin number (params3d.SPIN_MODE:
+    pinned = only flights with a touch at both ends; all; off). Kept only when it fixes some."""
+    mode = spin_mode()
+    if not bad or mode == "off":
+        return fit, bad
+    n = len(segs)
+    flags = [k in bad and (mode == "all" or 0 < k < n - 1) for k in range(n)]
+    if not any(flags):
+        return fit, bad
+    fit_s = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors, spin=flags)
+    bad_s = _bad_flights(o, cam, segs, bounds, fit_s)
+    if len(bad_s) < len(bad):
+        log(f"spin fixed {len(bad) - len(bad_s)} of {len(bad)} badly fitting flights")
+        return fit_s, bad_s
+    return fit, bad
 
 def _anchors_fit(o: Obs, cam, segs, links, bounds, bounces=(), rules: bool = True) -> list:
     """_anchors with the ball's distance from a first fit without anchors (size, gravity and the
@@ -467,8 +484,12 @@ def _with_rules(o: Obs, fit0, segs, bounds, bounces, anchors) -> list:
     X0, S0 = fit0.at(0, t_start)[0], fit0.std(0, t_start)[0]
     nodes = [(0, float(t_start[0]))]
     import os
-    court = os.environ.get("VV_RULES_COURT", "0") == "1"      # serve spot + antennas: no gain measured
-    serve = court and abs(X0[0]) >= SERVE_AUTO_X_M and X0[2] > 1.5   # the rally starts with a serve
+    court = os.environ.get("VV_RULES_COURT", "1") == "1"      # serve behind the end line + crossings
+    # the rally starts with a serve: you marked one there, or (automatic) the first flight starts far
+    # back and high (the 3D may put it too close to the net: that's what the serve anchor fixes)
+    f_start = int(o.frames[bounds[0]])
+    serve = court and (bool(o.serves and any(abs(g - f_start) <= 6 for g in o.serves))
+                       or (abs(X0[0]) >= SERVE_AUTO_X_M and X0[2] > 1.5))
     touches = [Touch(float(X0[0]), float(S0[0]), float(X0[2]), first=True, serve=bool(serve))]
     by_touch = {}
     for A in anchors:
@@ -785,6 +806,7 @@ def _solve_once(o: Obs, cam, hints, log):
         if len(bad_p) < len(bad):
             log(f"rally rules dropped here ({len(bad)} -> {len(bad_p)} badly fitting flights)")
             fit, anchors, bad = fit_p, anch_p, bad_p
+    fit, bad = _with_spin(o, cam, segs, links, bounds, anchors, fit, bad, log)
     pieces, resid = [], []
     for k, s in enumerate(segs):
         f0 = int(o.frames[bounds[k]])
@@ -797,7 +819,7 @@ def _solve_once(o: Obs, cam, hints, log):
 
 def solve_clip(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_s: float = 1.5,
                players=None, T=None, net_h=None, poses=None, ball_px: float = 25.0, player_labels=None,
-               fixed_touches=None, keep=None, who=None, named=None):
+               fixed_touches=None, keep=None, who=None, named=None, serves=None):
     """A whole clip: split into rallies (stretches with no ball for > rally_gap_s), solve() each
     with the tracker's contacts as hints. T: true frame times (core.common.frametime); players: from
     core.people.players.build; poses: output/<clip>/pose.json frames (tools.pose), to anchor touches to
@@ -832,8 +854,10 @@ def solve_clip(uv, w, size, edge, box, fps, cam, contacts, log=print, rally_gap_
         o.cam = cam
         if fixed_touches is not None:
             o.fixed = [f for f in fixed_touches if fr[0] < f < fr[-1]]
+        if serves:
+            o.serves = [int(g) for g in serves if fr[0] - 6 <= int(g) <= fr[-1]]
         if who:
-            o.who = {int(g): int(n) for g, n in who.items() if fr[0] - 3 <= int(g) <= fr[-1] + 3}
+            o.who = {int(g): int(n) for g, n in who.items() if fr[0] - 6 <= int(g) <= fr[-1] + 3}
             o.named = named
         if poses:
             from core.people.players import touch_evidence

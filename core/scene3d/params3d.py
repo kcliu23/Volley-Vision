@@ -61,7 +61,7 @@ ANTENNA_Y_M = 4.5      # [rules] antennas at the side lines: a ball changing sid
 SERVE_BEHIND_M = 8.0   # [rules] a serve is hit behind the end line (9 m; a jump serve's hit can be
                        #   ~1 m inside it in the air) ...
 SERVE_SIDE_M = 5.5     # ... and within the 9 m wide service zone (+1 m: the ball beside the server)
-SERVE_AUTO_X_M = 7.0   # [guess] a rally whose first point is this far from the net starts with a serve
+SERVE_AUTO_X_M = 5.5   # [guess] a rally's first flight starting this far from the net (and high) is a serve
 ANCHOR_REACH_M = 1.0   # [guess] ... and this far (horizontally) from where they stood
 SPIN_SIGMA_A = 1.5     # [guess] m/s^2: spin lift is pulled toward none with this softness (backspin
                        #   on test95 1013-1060 needs ~2: about 20% of gravity)
