@@ -8,15 +8,18 @@ did is saved; run it again to carry on). A step that is already done says so and
 skipping.
 
     1  court        tools.calibrate_court   the camera from the court lines (net height checked)
-    2  ball, touch  tools.review            the ball in every frame + touch marks (m, type, and
-                                            optionally who touched it); b jumps to frames to re-check
-    3  people       tools.pose              boxes + body points (far back court zoomed: servers);
+    2  people       tools.pose              boxes + body points (far back court zoomed: servers);
                                             runs again if the saved run is older than the zoom
-    4  players      tools.label_players     numbers (1-6 near, 7-12 far; a to take the guesses)
+                                            (makes the ball proposals first if there are none)
+    3  players      tools.label_players     numbers (1-6 near, 7-12 far; a to take the guesses)
+    4  ball, touch  tools.review            the ball in every frame + touch marks (m, type, and
+                                            who touched it: the numbers from step 3); b jumps to
+                                            frames to re-check
     5  3D + check   tools.ball3d_run, tools.check_labels
                                             builds the 3D, then lists every frame to re-check
 
-Holdout clips (holdout*) are marked as test clips in step 2: never trained on.
+Players come before touches, so "who touched it" uses the numbers you just gave.
+Holdout clips (holdout*) are marked as test clips in step 4: never trained on.
 """
 from __future__ import annotations
 
@@ -103,29 +106,32 @@ def main():
     if r == "go":
         _run(["tools.calibrate_court", a.video] + (["--net", a.net] if a.net else []))
 
-    done, what = _review_state(stem)
-    r = _ask(f"2 ball + touches: {what}", False)       # always worth a look: b shows what to re-check
-    if r == "q":
-        return
-    if r == "go":
-        if not Path(paths.proposals(stem)).exists():
-            print(f"   no proposals for {stem} yet: making them first (tools.autolabel)")
-            _run(["tools.autolabel", a.video])
-        _run(["tools.review", a.video] + (["--test"] if test else []))
-
     done, what = _pose_state(stem, a.output)
-    r = _ask(f"3 people: {what}", done)
+    r = _ask(f"2 people: {what}", done)
     if r == "q":
         return
     if r == "go":
+        if not Path(paths.proposals(stem)).exists():       # the 2D touches tell pose where to look closely
+            print(f"   no ball proposals for {stem} yet: making them first (tools.autolabel)")
+            _run(["tools.autolabel", a.video])
         _run(["tools.pose", a.video, "--redo", "--output", a.output])
 
     done, what = _players_state(stem)
-    r = _ask(f"4 players: {what}", False)               # after a new pose run: number the new people
+    r = _ask(f"3 players: {what}", False)               # after a new pose run: number the new people
     if r == "q":
         return
     if r == "go":
         _run(["tools.label_players", a.video, "--output", a.output])
+
+    done, what = _review_state(stem)
+    r = _ask(f"4 ball + touches: {what}", False)       # always worth a look: b shows what to re-check
+    if r == "q":
+        return
+    if r == "go":
+        if not Path(paths.proposals(stem)).exists():
+            print(f"   no ball proposals for {stem} yet: making them first (tools.autolabel)")
+            _run(["tools.autolabel", a.video])
+        _run(["tools.review", a.video] + (["--test"] if test else []))
 
     r = _ask("5 3D + what to re-check", False)
     if r == "q":
