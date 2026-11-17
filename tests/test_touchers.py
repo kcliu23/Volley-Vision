@@ -87,3 +87,12 @@ def test_toucher_box_follows_the_player():
     assert R.touched_box[12] == [102.0, 0.0, 152.0, 200.0] and R.touched_box[10] == [100.0, 0.0, 150.0, 200.0]
     R.set_toucher(12, 4, [300, 0, 350, 200])               # re-named on frame 12: every frame follows
     assert R.touched_box[12] == [300.0, 0.0, 350.0, 200.0] and R.touched_box[10] == [298.0, 0.0, 348.0, 200.0]
+
+
+def test_a_missed_player_is_bridged_but_not_a_teleport():
+    fr = {str(f): [{"id": 1, "box": [100 + f, 100, 160 + f, 300], "kp": None}] for f in range(0, 31) if not 10 <= f <= 20}
+    fr["40"] = [{"id": 1, "box": [900, 100, 960, 300], "kp": None}]          # 9 frames later, 700 px away
+    P = Players(fr, Labels({1: 3}))
+    p = P.at(15)
+    assert len(p) == 1 and p[0]["bridged"] and p[0]["number"] == 3 and abs(p[0]["box"][0] - 115) < 1e-6
+    assert P.at(35) == []                                    # 30 -> 40 is a jump: not bridged
