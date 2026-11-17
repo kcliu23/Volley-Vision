@@ -161,6 +161,20 @@ def write_touches(path, flights, frames, uv, T, fps, cam, poses, plabels, stem, 
     print(f"[ball3d] {stem}: {len(out)} touches, toucher found for {seen} ({named} with a number)  →  {path}")
 
 
+def write_rallies(d: Path, sfx: str, stem: str):
+    """output/<clip>/rallies.json: each rally (serve -> the ball's first floor contact), who won it,
+    and the running score (core.scene3d.rallies)."""
+    from core.scene3d.rallies import find_rallies, score
+    B = json.load(open(d / f"ball3d{sfx}.json"))
+    T = json.load(open(d / f"touches{sfx}.json"))["touches"]
+    rows = score(find_rallies(B, T))
+    json.dump({"schema": "vv-rallies/1", "clip": stem, "rallies": rows}, open(d / f"rallies{sfx}.json", "w"), indent=1)
+    team = {-1: "near", 1: "far", None: "?"}
+    for i, r in enumerate(rows):
+        print(f"[ball3d] {stem}: rally {i + 1}  frames {r['f0']}-{r['f1']}  {r['end']:4s}  won by {team[r['winner']]:4s}"
+              f"  ({r['why']})  score near {r['near']} - far {r['far']}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("video")
@@ -314,6 +328,7 @@ def main():
               f"{fl['apex_m']:7.2f} {fl['speed_start_mps']:9.1f} {fl['min_height_m']:8.2f} {fl['depth_std_m']:5.2f} {fl['spin_lift_mps2']:+5.1f}  {ncs}")
     write_touches(Path(a.output) / stem / f"touches{sfx}.json", flights_out, frames_out, uv, T, fps, cam, poses, plabels, stem, serves,
                   who, who_box)
+    write_rallies(Path(a.output) / stem, sfx, stem)
     plot(out.with_suffix(".png"), flights_out, frames_out, cam, net_h, stem)
     TL.lap("output files and picture")
     TL.report("3D time")

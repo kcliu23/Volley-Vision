@@ -75,8 +75,12 @@ def main():
     B = json.load(open(clip / f"ball3d{sfx}.json"))
     fps = B["fps"]
     ball3d = {int(k): np.array(v["xyz"]) for k, v in B["frames"].items() if v.get("free")}
-    track2d = {}
-    if paths.track(stem, a.output).exists():
+    track2d = {}                             # where the 3D has no ball: the 2D ball (yours with --labels)
+    if a.labels and paths.verified(stem).exists():
+        for k, v in (json.load(open(paths.verified(stem))).get("labels") or {}).items():
+            if isinstance(v, list):                      # "none" / "hidden" / "skip": no ball drawn
+                track2d[int(k)] = tuple(v[:2])
+    elif paths.track(stem, a.output).exists():
         for row in json.load(open(paths.track(stem, a.output)))["frames"]:
             if row.get("pos") is not None:
                 track2d[int(row["f"])] = tuple(row["pos"])

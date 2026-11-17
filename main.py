@@ -1,7 +1,8 @@
 """VolleyVision: one clip, the whole pipeline.
 
     python -m main videos/match.mov                  # 2D ball -> people (pose) -> 3D ball -> viewer
-    python -m main videos/match.mov --video          # + both videos (tracked.mp4, ball3d.mp4)
+    python -m main videos/match.mov --video          # + the videos (tracked.mp4, ball3d.mp4, and
+                                                     #   rallies.mp4: dead time cut, with the score)
     python -m main videos/match.mov --redo           # redo the poses too (otherwise kept from last time)
     python -m main videos/match.mov --2d-only        # just the 2D ball track
 
@@ -73,6 +74,7 @@ def main():
     step("tools.ball3d_viewer", a.video, "--output", a.output)
     if a.render_video:
         step("tools.ball3d_video", a.video, "--output", a.output, "--players", "none")
+        step("tools.rally_video", a.video, "--output", a.output)
     print(f"\n[volleyvision] {stem}: done → {paths.clip_dir(stem, a.output)}/ball3d_view.html")
     report(stem, t0)
 
