@@ -15,8 +15,10 @@ skipping.
     4  ball, touch  tools.review            the ball in every frame + touch marks (m, type, and
                                             who touched it: the numbers from step 3); b jumps to
                                             frames to re-check
-    5  3D + check   tools.ball3d_run, tools.check_labels
-                                            builds the 3D, then lists every frame to re-check
+    5  3D + check   tools.ball3d_run --use-labels, tools.ball3d_viewer/_video, tools.check_labels
+                                            the 3D from your labels + its viewer and video
+                                            (output/<clip>/ball3d_labels_view.html, ball3d_labels.mp4),
+                                            then every frame to re-check
 
 Players come before touches, so "who touched it" uses the numbers you just gave.
 Holdout clips (holdout*) are marked as test clips in step 4: never trained on.
@@ -133,12 +135,16 @@ def main():
             _run(["tools.autolabel", a.video])
         _run(["tools.review", a.video] + (["--test"] if test else []))
 
-    r = _ask("5 3D + what to re-check", False)
+    r = _ask("5 3D + video + what to re-check", False)
     if r == "q":
         return
     if r == "go":
-        _run(["tools.ball3d_run", a.video, "--output", a.output])
+        _run(["tools.ball3d_run", a.video, "--output", a.output, "--use-labels"])
+        _run(["tools.ball3d_viewer", a.video, "--output", a.output, "--labels"])
+        _run(["tools.ball3d_video", a.video, "--output", a.output, "--labels"])
         _run(["tools.check_labels", stem, "--output", a.output])
+        d = paths.clip_dir(stem, a.output)
+        print(f"   look: {d / 'ball3d_labels.mp4'}  and  {d / 'ball3d_labels_view.html'}")
     print(f"\n[annotate] {stem}: done. Run again any time: steps already done can be skipped.")
 
 

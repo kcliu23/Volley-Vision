@@ -46,11 +46,14 @@ def main():
     ap.add_argument("video")
     ap.add_argument("--output", default=str(paths.OUTPUT))
     ap.add_argument("--debug", action="store_true", help="also the floor shadow, a mini top view and frame numbers")
+    ap.add_argument("--labels", action="store_true", help="the 3D built from your labels (ball3d_run --use-labels): "
+                    "ball3d_labels.json -> ball3d_labels.mp4, with your player numbers")
     a = ap.parse_args()
+    sfx = "_labels" if a.labels else ""
     stem = Path(a.video).stem
     clip = Path(a.output) / stem
     cam = Camera.load(Path("data/cameras") / f"{stem}.json")
-    B = json.load(open(clip / "ball3d.json"))
+    B = json.load(open(clip / f"ball3d{sfx}.json"))
     fps = B["fps"]
     ball3d = {int(k): np.array(v["xyz"]) for k, v in B["frames"].items() if v.get("free")}
     track2d = {}
@@ -61,7 +64,8 @@ def main():
 
     heads = head_points(clip / "pose.json")
     people: dict[int, list] = {}
-    for P in load_people(stem, a.output, cam, fps, log=lambda m: print(f"[ball3d_video] {stem}: " + m)) or []:
+    for P in load_people(stem, a.output, cam, fps, log=lambda m: print(f"[ball3d_video] {stem}: " + m),
+                         use_labels=a.labels) or []:
         for i, f in enumerate(P.frames):
             g = P.ground[i]
             on_floor = bool(np.isfinite(g[0]))
@@ -82,8 +86,8 @@ def main():
     W, H = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     scale = H / 1080
     L = Labels(H)
-    tmp = os.path.join(tempfile.gettempdir(), f"{stem}_ball3d.mp4")
-    out = clip / "ball3d.mp4"
+    tmp = os.path.join(tempfile.gettempdir(), f"{stem}_ball3d{sfx}.mp4")
+    out = clip / f"ball3d{sfx}.mp4"
     vw = cv2.VideoWriter(tmp, cv2.VideoWriter_fourcc(*"mp4v"), out_fps, (W, H))
     mini = MiniTop(cv2, cam) if a.debug else None
 

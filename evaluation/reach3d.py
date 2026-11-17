@@ -71,11 +71,11 @@ def _seen(ids: dict, f: int, ball_uv) -> bool:
     return False
 
 
-def gaps(stem: str, output: str):
+def gaps(stem: str, output: str, name: str = "ball3d.json"):
     V = json.load(open(paths.verified(stem)))
     ids = json.load(open(Path("data/player_ids") / f"{stem}.json"))
     cam = Camera.load(Path("data/cameras") / f"{stem}.json")
-    B = json.load(open(Path(output) / stem / "ball3d.json"))
+    B = json.load(open(Path(output) / stem / name))
     fr = {int(k): np.array(v["xyz"]) for k, v in B["frames"].items()}
     play = in_play(V)                                    # None: no serve marks: every touch counts
     fps = float(B.get("fps") or 60.0)

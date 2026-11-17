@@ -100,6 +100,9 @@ def _named_player(poses, plabels, cam, fps):
     return named
 
 
+TOUCH_GAP = 8          # frames between two flights that still make one touch (the ball held on the hands)
+
+
 def write_touches(path, flights, frames, uv, T, fps, cam, poses, plabels, stem):
     """output/<clip>/touches.json: every touch in the 3D (where one flight hands over to the next),
     with who touched it (core.people.touchers: the same rule review suggests with) and the side.
@@ -110,9 +113,9 @@ def write_touches(path, flights, frames, uv, T, fps, cam, poses, plabels, stem):
     P = Players(poses, plabels) if poses else None
     out = []
     for a, b in zip(flights[:-1], flights[1:]):
-        if b["chain"] != a["chain"] or b["f0"] != a["f1"] + 1:
-            continue
-        t = b["f0"]
+        if b["chain"] != a["chain"] or b["f0"] - a["f1"] > TOUCH_GAP:   # a touch joins two flights (your marked
+            continue                                                   # contact frames sit in between)
+        t = (a["f1"] + b["f0"] + 1) // 2
         X = frames.get(t, {}).get("xyz")
         xy = None
         for g in sorted(range(t - 3, t + 4), key=lambda g: abs(g - t)):   # the ball in the picture, nearest frame
@@ -153,7 +156,14 @@ def main():
                     help="your clicked ball positions (tools.review) replace the tracker's where you placed one")
     ap.add_argument("--use-my-touches", action="store_true",
                     help="your touch marks (tools.review) are the touches; only the ball in play is fitted")
+    ap.add_argument("--use-labels", action="store_true",
+                    help="everything you labeled: your ball (--labels), touch marks (--use-my-touches), player "
+                         "numbers and who touched it. Writes ball3d_labels.json / touches_labels.json / "
+                         "ball3d_labels.png (the automatic results, without --use-labels, stay as they are)")
     a = ap.parse_args()
+    if a.use_labels:
+        a.labels = a.use_my_touches = True
+    sfx = "_labels" if a.use_labels else ""            # automatic by default: none of your labels
     stem = Path(a.video).stem
     from core.common.timing import Laps
     TL = Laps(f"[ball3d] {stem}:")
@@ -189,7 +199,8 @@ def main():
     from core.people.players import load_people
     from core.scene3d.rally3d import solve_clip
     TL.lap("inputs, frame times, ball sizes")
-    players = load_people(stem, a.output, cam, fps, log=lambda m: print(f"[ball3d] {stem}: " + m))
+    players = load_people(stem, a.output, cam, fps, log=lambda m: print(f"[ball3d] {stem}: " + m),
+                          use_labels=a.use_labels)
     if players:
         print(f"[ball3d] {stem}: {len(players)} player tracks: a touch away from all of them costs more")
     poses, plabels = None, None
@@ -198,7 +209,8 @@ def main():
         poses = json.load(open(pj2))["frames"]
         print(f"[ball3d] {stem}: poses found: touches are anchored to the player who made them")
         from core.people.player_labels import PlayerLabels
-        plabels = PlayerLabels.load(stem, pj2, log=lambda m: print(f"[ball3d] {stem}: " + m))
+        if a.use_labels:
+            plabels = PlayerLabels.load(stem, pj2, log=lambda m: print(f"[ball3d] {stem}: " + m))
         if plabels is not None:
             print(f"[ball3d] {stem}: your player numbers: each toucher's side of the net is known")
     bpx = float(np.nanmedian(size)) if np.isfinite(size).any() else 25.0
@@ -220,7 +232,7 @@ def main():
     # your "who touched it" (tools.review): the 3D puts those touches at that player, on their side
     who, named = None, None
     vp = Path(paths.verified(stem))
-    if vp.exists():
+    if vp.exists() and a.use_labels:
         who = {int(k): int(v) for k, v in (json.load(open(vp)).get("touched_by") or {}).items()} or None
     if who:
         named = _named_player(poses, plabels, cam, fps)
@@ -267,7 +279,7 @@ def main():
             frames_out[g] = {"xyz": [round(float(v), 2) for v in x], "std": [round(float(v), 2) for v in d],
                              "flight": len(flights_out) - 1, "free": bool(free)}
 
-    out = Path(a.output) / stem / "ball3d.json"
+    out = Path(a.output) / stem / f"ball3d{sfx}.json"
     TL.lap("3D fit (all rallies)")
     json.dump({"schema": "vv-ball3d/1", "video": a.video, "fps": fps, "source": "labels" if a.labels else "track",
                "camera": str(Path("data/cameras") / f"{stem}.json"), "flights": flights_out,
@@ -279,7 +291,7 @@ def main():
         ncs = f"at {nc['height_m']:.2f} m (clears by {nc['clears_net_by_m']:+.2f})" if nc else ""
         print(f"  {fl['f0']:5d}-{fl['f1']:<5d} {'yes' if fl['free_flight'] else 'NO':>5s} {fl['median_px']:6.1f} "
               f"{fl['apex_m']:7.2f} {fl['speed_start_mps']:9.1f} {fl['min_height_m']:8.2f} {fl['depth_std_m']:5.2f} {fl['spin_lift_mps2']:+5.1f}  {ncs}")
-    write_touches(Path(a.output) / stem / "touches.json", flights_out, frames_out, uv, T, fps, cam, poses, plabels, stem)
+    write_touches(Path(a.output) / stem / f"touches{sfx}.json", flights_out, frames_out, uv, T, fps, cam, poses, plabels, stem)
     plot(out.with_suffix(".png"), flights_out, frames_out, cam, net_h, stem)
     TL.lap("output files and picture")
     TL.report("3D time")

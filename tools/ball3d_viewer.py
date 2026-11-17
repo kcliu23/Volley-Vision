@@ -23,10 +23,10 @@ TEMPLATE = Path(__file__).with_name("ball3d_viewer.html")
 UNSURE_M, UNSURE_N = 1.0, 8        # flights with more uncertainty / fewer 2D points than this are drawn as unsure
 
 
-def build(stem: str, output: str = str(paths.OUTPUT)) -> Path:
+def build(stem: str, output: str = str(paths.OUTPUT), sfx: str = "") -> Path:
     cam = Camera.load(Path("data/cameras") / f"{stem}.json")
     cj = json.load(open(Path("data/cameras") / f"{stem}.json"))
-    B = json.load(open(Path(output) / stem / "ball3d.json"))
+    B = json.load(open(Path(output) / stem / f"ball3d{sfx}.json"))
     fl = [f for f in B["flights"]]
     keep = {i for i, f in enumerate(fl) if f["free_flight"]}
     frames = [[int(k)] + [round(v, 2) for v in fr["xyz"]] + [fr["flight"]]
@@ -48,7 +48,7 @@ def build(stem: str, output: str = str(paths.OUTPUT)) -> Path:
     }
     html = TEMPLATE.read_text().replace("/*__DATA__*/null", json.dumps(data, separators=(",", ":")))
     html = html.replace("__CLIP__", stem)
-    out = Path(output) / stem / "ball3d_view.html"
+    out = Path(output) / stem / f"ball3d{sfx}_view.html"
     head = ('<!doctype html><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">\n')
     out.write_text(head + html)                    # a standalone page to open in a browser
@@ -59,8 +59,10 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("video")
     ap.add_argument("--output", default=str(paths.OUTPUT))
+    ap.add_argument("--labels", action="store_true", help="the 3D built from your labels: ball3d_labels.json "
+                    "-> ball3d_labels_view.html")
     a = ap.parse_args()
-    out = build(Path(a.video).stem, a.output)
+    out = build(Path(a.video).stem, a.output, "_labels" if a.labels else "")
     print(f"[ball3d] viewer  →  {out}  (open it in a browser)")
 
 

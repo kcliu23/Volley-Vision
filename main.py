@@ -3,7 +3,8 @@
     python -m main videos/match.mov                  # 2D ball -> people (pose) -> 3D ball -> viewer
     python -m main videos/match.mov --video          # + both videos (tracked.mp4, ball3d.mp4)
     python -m main videos/match.mov --redo           # redo the poses too (otherwise kept from last time)
-    python -m main holdout/holdout1.mov --labels     # 3D from your checked labels, not the tracker's
+    python -m main holdout/holdout1.mov --use-labels # 3D from everything you labeled (ball, touches,
+                                                     #   numbers, who touched it): *_labels files
     python -m main videos/match.mov --2d-only        # just the 2D ball track
 
 Needs the court calibration first (python -m tools.calibrate_court <video>); without it, only the
@@ -45,7 +46,9 @@ def main():
     ap.add_argument("--video", dest="render_video", action="store_true",
                     help="also render the videos: tracked.mp4 (2D) and ball3d.mp4 (3D)")
     ap.add_argument("--redo", action="store_true", help="run pose again even if output/<clip>/pose.json exists")
-    ap.add_argument("--labels", action="store_true", help="3D from your checked labels instead of the tracker's output")
+    ap.add_argument("--use-labels", action="store_true",
+                    help="3D from everything you labeled (ball, touches, player numbers, who touched it), written as "
+                         "ball3d_labels.* next to the automatic results. Without it: fully automatic, no labels used")
     ap.add_argument("--no-players", action="store_true", help="skip pose (faster; no player check on touches)")
     ap.add_argument("--2d-only", dest="only_2d", action="store_true", help="only the 2D ball track")
     a, rest = ap.parse_known_args()
@@ -68,11 +71,13 @@ def main():
     print(f"[volleyvision] {stem}: frame timing: {summary(frame_times(a.video, paths.clip_dir(stem, a.output)))}")
     if not a.no_players and (a.redo or not (paths.clip_dir(stem, a.output) / "pose.json").exists()):
         step("tools.pose", a.video, "--output", a.output, *(["--redo"] if a.redo else []))
-    step("tools.ball3d_run", a.video, "--output", a.output, *(["--labels"] if a.labels else []))
-    step("tools.ball3d_viewer", a.video, "--output", a.output)
+    L = ["--labels"] if a.use_labels else []
+    step("tools.ball3d_run", a.video, "--output", a.output, *(["--use-labels"] if a.use_labels else []))
+    step("tools.ball3d_viewer", a.video, "--output", a.output, *L)
     if a.render_video:
-        step("tools.ball3d_video", a.video, "--output", a.output)
-    print(f"\n[volleyvision] {stem}: done → {paths.clip_dir(stem, a.output)}/ball3d_view.html")
+        step("tools.ball3d_video", a.video, "--output", a.output, *L)
+    name = "ball3d_labels_view.html" if a.use_labels else "ball3d_view.html"
+    print(f"\n[volleyvision] {stem}: done → {paths.clip_dir(stem, a.output)}/{name}")
     report(stem, t0)
 
 

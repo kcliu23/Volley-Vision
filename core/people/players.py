@@ -168,9 +168,9 @@ def people_from_pose(pose_frames: dict, n: int, labels=None) -> dict:
     return {"schema": "vv-players/1", "source": "pose", "frames": frames}
 
 
-def load_people(stem: str, output, cam, fps: float, log=print) -> list[Player] | None:
-    """Players for a clip: from pose.json (with your numbers where you labeled the clip), else from
-    an older players.json, else None."""
+def load_people(stem: str, output, cam, fps: float, log=print, use_labels: bool = True) -> list[Player] | None:
+    """Players for a clip: from pose.json (with your numbers where you labeled the clip, when
+    use_labels), else from an older players.json, else None."""
     import json
     from pathlib import Path
 
@@ -179,7 +179,7 @@ def load_people(stem: str, output, cam, fps: float, log=print) -> list[Player] |
     if (d / "pose.json").exists():
         pose = json.load(open(d / "pose.json"))["frames"]
         n = max(int(k) for k in pose) + 1 if pose else 0
-        labels = PlayerLabels.load(stem, d / "pose.json", log=log)
+        labels = PlayerLabels.load(stem, d / "pose.json", log=log) if use_labels else None
         log(f"players from the pose tracking{' with your numbers' if labels else ''}")
         return build(people_from_pose(pose, n, labels), cam, fps)
     if (d / "players.json").exists():

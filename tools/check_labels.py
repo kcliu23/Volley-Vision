@@ -104,10 +104,12 @@ def report(stem: str, output: str) -> list[tuple[int, str, str]]:
     if ip.exists():
         for f, why in player_flags(json.load(open(ip)), cam).items():
             rows.append((f, why, "label_players"))
-    bp = Path(output) / stem / "ball3d.json"
+    bp = Path(output) / stem / "ball3d_labels.json"          # the 3D from your labels (annotate step 5) ...
+    if not bp.exists():
+        bp = bp.with_name("ball3d.json")                     # ... else the automatic one
     if bp.exists() and ip.exists() and cam is not None and V:
         from evaluation.reach3d import FAR_M, gaps
-        g, _ = gaps(stem, output)
+        g, _ = gaps(stem, output, bp.name)
         for f, kind, d, n, _z in g:
             if d > FAR_M:
                 rows.append((f, f"3D: ball {d:.2f} m from the nearest numbered player (#{n}) at this {kind}",
