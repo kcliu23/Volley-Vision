@@ -428,10 +428,19 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
     S = S.tocsr()
     groups = group_columns(S)
 
-    def jac(th):
-        return approx_derivative(resid, th, method="2-point", sparsity=(S, groups)).toarray()
+    # The Jacobian stays sparse: scipy then solves each step with lsmr instead of a dense SVD, whose
+    # cost grows with rows x unknowns^2 (long rallies with many touches). Nov 18: holdout1 154 -> 38 s,
+    # holdout2 2850 -> 321 s; same touches, same flights, same reach3d score. Flights that two
+    # depths fit equally well (holdout1 855-942) can land on the other one. VV_LSQ=dense: the old way.
+    import os
+    sparse = os.environ.get("VV_LSQ", "sparse") != "dense"
 
-    r = least_squares(resid, theta0, jac=jac, loss="linear", x_scale="jac", max_nfev=200 * len(theta0))
+    def jac(th):
+        J = approx_derivative(resid, th, method="2-point", sparsity=(S, groups))
+        return J if sparse else J.toarray()
+
+    kw = {"tr_solver": "lsmr", "tr_options": {"regularize": False, "atol": 1e-10, "btol": 1e-10}} if sparse else {}
+    r = least_squares(resid, theta0, jac=jac, loss="linear", x_scale="jac", max_nfev=200 * len(theta0), **kw)
     th = r.x
     # per-segment reprojection rms and covariance
     seg_rms, all_e = [], []
@@ -442,7 +451,7 @@ def fit_rally(segs: list[Segment], links: list[Link], cam, sigma_px: float = 3.0
         all_e.extend(e.tolist())
     covs = [None] * K
     try:
-        J = r.jac
+        J = r.jac.toarray() if hasattr(r.jac, "toarray") else r.jac
         res = r.fun
         dof = max(len(res) - len(th), 1)
         s2 = max(float(np.sum(res ** 2)) / dof, 1.0)
