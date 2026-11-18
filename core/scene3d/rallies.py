@@ -16,6 +16,8 @@ HALF_L, HALF_W = 9.0, 4.5      # m: the court (x across the net, y along it)
 LINE = 0.10                    # m: a ball touching the line is in (FIVB 8.3); our 3D has some slack too
 FLOOR_Z = 0.30                 # m: the ball's centre this low is on the floor
 MAX_GAP_S = 4.0                # s: the ball unseen longer than this between two pieces: a new rally
+MIN_RALLY_S = 1.0              # s: shorter, with no serve: the ball bouncing between points (a full game:
+                               #   59 found -> 33 with this, of 34 real)
 NET_UNSURE_M = 1.5             # m: a landing this close to the net: its side from the last flight (over or not)
 CARRY_FROM_Z = 1.5             # m: a rally's last arc ending this low and falling is carried to the floor ...
 CARRY_MAX_S = 0.6              # s: ... if it gets there within this
@@ -136,6 +138,8 @@ def find_rallies(B: dict, touches: list) -> list[Rally]:
             end, winner, why = "lost", None, "no floor contact seen"
         out.append(Rally(start, end_f, serve["side"] if serve else None, end,
                          [round(v, 2) for v in land] if land is not None else None, last_side, winner, why))
+    # a "rally" shorter than this with no serve is the ball bouncing or rolling between points
+    out = [r for r in out if (r.f1 - r.f0) / fps >= MIN_RALLY_S or r.serve_side is not None]
     # the winner serves next: confirms the landing, or decides when the landing wasn't seen
     for a, b in zip(out[:-1], out[1:]):
         if b.serve_side is None:
