@@ -7,8 +7,9 @@
     players          the same number on two people in one frame; a number that changes side of
                      the net and stays there (a swap?); numbered people that look nothing alike
                      (needs the re-ID model, core.people.reid_model: skipped without it)
-    3D               a touch where the 3D ball is more than 3 m from every numbered player
-                     (evaluation.reach3d), or from the player you said touched it
+    3D               a touch where the 3D ball is more than 3 m from the player you said touched
+                     it, or, if you didn't say, from everyone the pose saw on court, numbered or
+                     not (evaluation.reach3d, mix): an unnumbered far server isn't flagged
 
 Nothing is changed: it prints frames and reasons, and the tool to fix each in.
 """
@@ -109,10 +110,11 @@ def report(stem: str, output: str) -> list[tuple[int, str, str]]:
         bp = bp.with_name("ball3d.json")                     # ... else the automatic one
     if bp.exists() and ip.exists() and cam is not None and V:
         from evaluation.reach3d import FAR_M, gaps
-        g, _ = gaps(stem, output, bp.name)
+        g, _ = gaps(stem, output, bp.name, mix=True)
         for f, kind, d, n, _z in g:
             if d > FAR_M:
-                rows.append((f, f"3D: ball {d:.2f} m from the nearest numbered player (#{n}) at this {kind}",
+                who = "anyone on court" if n == -1 else f"player #{n} (you said they touched it)"
+                rows.append((f, f"3D: ball {d:.2f} m from {who} at this {kind}",
                              "review (ball / touch) or label_players"))
     return sorted(rows)
 

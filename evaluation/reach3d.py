@@ -87,7 +87,7 @@ def anyone_feet(pose: dict, cam, f: int, fps: float) -> np.ndarray:
     numbered or not): lowest box bottom over the half second up to the touch."""
     low = {}
     for g in range(f - int(TAKEOFF_S * fps), f + 3):
-        for b in pose.get(str(g), []):
+        for b in (pose or {}).get(str(g), []):
             x0, y0, x1, y1 = b["box"]
             k = b.get("id")
             if k not in low or y1 > low[k][1]:
@@ -98,10 +98,12 @@ def anyone_feet(pose: dict, cam, f: int, fps: float) -> np.ndarray:
     return p[np.isfinite(p[:, 0]) & (np.abs(p[:, 0]) < ON_COURT_M[0]) & (np.abs(p[:, 1]) < ON_COURT_M[1])]
 
 
-def gaps(stem: str, output: str, name: str = "ball3d.json", anyone: bool = False):
+def gaps(stem: str, output: str, name: str = "ball3d.json", anyone: bool = False, mix: bool = False):
     """Per judged touch: (frame, type, gap m, player number, ball height m), and how many were
     skipped. anyone: the gap is to the nearest person the pose saw on court (<output>/<clip>/pose.json,
-    numbered or not; number -1), so far players nobody numbered count too."""
+    numbered or not; number -1), so far players nobody numbered count too. mix: to the player you
+    said touched it (tools.review) when you said, else as anyone (an unnamed far server isn't a
+    false alarm, a wrong number you typed still is)."""
     V = json.load(open(paths.verified(stem)))
     ids = json.load(open(Path("data/player_ids") / f"{stem}.json"))
     cam = Camera.load(Path("data/cameras") / f"{stem}.json")
@@ -114,7 +116,10 @@ def gaps(stem: str, output: str, name: str = "ball3d.json", anyone: bool = False
     C = json.load(open(Path(output) / stem / "contacts.json"))
     uv, _ = positions(stem, tr, False, C)
     out, skipped = [], 0
-    pose = json.load(open(Path(output) / stem / "pose.json"))["frames"] if anyone else None
+    pose_p = Path(output) / stem / "pose.json"
+    pose = json.load(open(pose_p))["frames"] if (anyone or mix) and pose_p.exists() else None
+    if mix and pose is None:
+        mix = False                                      # no poses: numbered players only, as before
     who_at = {int(k): int(v) for k, v in (V.get("touched_by") or {}).items()}
     for t0, t1, kind in touches_all(V):
         if play is not None and not (t0 in play or t1 in play or kind == "serve"):
@@ -128,7 +133,7 @@ def gaps(stem: str, output: str, name: str = "ball3d.json", anyone: bool = False
             continue
         X = fr[min(near, key=lambda g: abs(g - f))]
         who = [w for g, w in who_at.items() if t0 - 1 <= g <= t1 + 1]
-        if anyone:
+        if anyone or (mix and not who):
             P = anyone_feet(pose, cam, f, fps)
             if not len(P):
                 skipped += 1
