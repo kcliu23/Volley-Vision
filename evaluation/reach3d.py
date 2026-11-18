@@ -16,6 +16,13 @@ in the picture (a far server behind the baseline is often not detected at all) a
 numbered player is someone else; those touches are skipped (counted).
 
     python -m evaluation.reach3d holdout1 ... --output outA --name now [--output outB --name new]
+    python -m evaluation.reach3d holdout1 ... --by-side
+
+--by-side splits the touches by where the 3D ball is: the camera's half, the far half within
+NET_ZONE_M of the net, and the far back court. Far players are small and mostly unnumbered (and
+pose before the far court zoom barely found them), so far back court gaps mostly measure to the
+wrong player (Nov 18, 10 holdouts: camera half 49 touches, 0% over 3 m; far back court 37, 54%,
+8 of them far serves 0.6-2.9 m behind the end line, where the unnumbered server stands).
 """
 from __future__ import annotations
 
@@ -31,6 +38,7 @@ from evaluation.inplay import in_play
 
 FAR_M = 3.0             # farther than this from every player: the 3D is grossly off
 TAKEOFF_S = 0.5
+NET_ZONE_M = 2.5        # --by-side: the far half this close to the net is its own group
 
 
 def touches_all(V: dict):
@@ -114,21 +122,41 @@ def main():
     ap.add_argument("--output", action="append")
     ap.add_argument("--name", action="append")
     ap.add_argument("--detail", action="store_true", help="list the far touches")
+    ap.add_argument("--by-side", action="store_true", help="also split by the ball's half of the court")
     a = ap.parse_args()
     outs = a.output or [str(paths.OUTPUT)]
     names = a.name or outs
     print(f"{'version':14s} {'touches':>7s} {'median gap':>10s} {'p90':>6s} {'over 3 m':>9s} {'toucher unseen':>14s}")
+
+    def row(label, G, sk):
+        G = np.array(G, dtype=float)
+        G = G[np.isfinite(G)]                       # a toucher with no feet seen (e.g. the server) can't be judged
+        if not len(G):
+            print(f"{label:14s} {0:7d} {'-':>10s} {'-':>6s} {'-':>9s} {sk:14d}")
+            return
+        print(f"{label:14s} {len(G):7d} {np.median(G):9.2f}m {np.percentile(G, 90):5.2f}m {np.mean(G > FAR_M):8.1%} {sk:14d}")
+
     for out, name in zip(outs, names):
-        G, sk, far = [], 0, []
+        G, sk, far, side = [], 0, [], []
         for s in a.stems:
             if not (Path(out) / s / "ball3d.json").exists():
                 continue
             g, k = gaps(s, out)
             G += [x[2] for x in g]; sk += k
             far += [(s,) + x for x in g if x[2] > FAR_M]
-        G = np.array(G)
-        G = G[np.isfinite(G)]                       # a toucher with no feet seen (e.g. the server) can't be judged
-        print(f"{name:14s} {len(G):7d} {np.median(G):9.2f}m {np.percentile(G, 90):5.2f}m {np.mean(G > FAR_M):8.1%} {sk:14d}")
+            if a.by_side:
+                cam = Camera.load(Path("data/cameras") / f"{s}.json")
+                fr = json.load(open(Path(out) / s / "ball3d.json"))["frames"]
+                near_sign = np.sign(cam.position[0]) or -1.0
+                for x in g:
+                    k_ = min(fr, key=lambda q: abs(int(q) - x[0]))
+                    side.append(near_sign * fr[k_]["xyz"][0])   # > 0: the camera's half
+        row(name, G, sk)
+        if a.by_side:
+            G_, S_ = np.array(G, dtype=float), np.array(side)
+            for label, m in (("  camera half", S_ > 0), ("  far, net", (S_ <= 0) & (S_ > -NET_ZONE_M)),
+                             ("  far, back", S_ <= -NET_ZONE_M)):
+                row(label, G_[m], 0)
         if a.detail:
             for s, f, kind, d, n, z in sorted(far, key=lambda q: -q[4]):
                 print(f"{'':14s} {s} frame {f} {kind}: ball {d:.2f} m from the nearest player (#{n}), {z:.2f} m up")
