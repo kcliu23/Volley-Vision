@@ -1,5 +1,5 @@
-"""Volleyball's rules deciding touch sides (core.scene3d.rules)."""
-from core.scene3d.rules import Touch, decide
+"""Volleyball's rules deciding touch sides (core.rules)."""
+from core.rules.sides import Touch, decide
 
 NET = 2.43
 
@@ -45,7 +45,7 @@ def test_named_player_decides():
 
 
 # --- the serve rules: touches they forbid (rules.serve_faults) ---------------------------------
-from core.scene3d.rules import serve_faults  # noqa: E402
+from core.rules.serve import serve_faults  # noqa: E402
 
 
 def test_serve_split_on_the_servers_side_is_a_fault():
@@ -84,3 +84,38 @@ def test_far_back_high_touch_late_in_the_rally_is_not_a_serve():
 def test_after_the_reception_anything_goes():
     # two touches on the receiving side after the serve: not the serve rules' business
     assert serve_faults((-9.0, 2.4), [(6.0, 0.8), (1.0, 2.2)], NET) == []
+
+
+# --- rules on a plain touch list, no 3D (core.rules.sequence) ----------------------------------
+from core.rules.sequence import Contact, faults  # noqa: E402
+
+
+def C(side, player=None, **kw):
+    return Contact(0, side, player, **kw)
+
+
+def rules_of(cs):
+    return [(f.index, f.rule) for f in faults(cs)]
+
+
+def test_seq_legal_rally():
+    cs = [C(-1, 1, serve=True), C(1, 7), C(1, 8), C(1, 9), C(-1, 2, block=True), C(1, 10), C(1, 7), C(1, 8)]
+    assert rules_of(cs) == []          # the block doesn't count: 3 more after it
+
+
+def test_seq_four_touches():
+    assert rules_of([C(-1, 1), C(1, 7), C(1, 8), C(1, 9), C(1, 10)]) == [(4, "four_touches")]
+
+
+def test_seq_double_touch_but_not_after_own_block():
+    assert rules_of([C(1, 7), C(1, 7)]) == [(1, "double_touch")]
+    assert rules_of([C(-1, 1), C(1, 7, block=True), C(1, 7)]) == []
+
+
+def test_seq_serve_rules():
+    assert rules_of([C(-1, 1, serve=True), C(-1, 2)]) == [(1, "serve_own")]
+    assert rules_of([C(-1, 1, serve=True), C(1, 7, block=True)]) == [(1, "serve_block")]
+
+
+def test_seq_unknown_side_skips_counting():
+    assert rules_of([C(1), C(1), C(None), C(1), C(1)]) == []

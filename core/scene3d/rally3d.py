@@ -471,7 +471,7 @@ SERVE_MERGE_MAX = 6 * TOUCH_COST   # [guess] merging a touch the serve rules for
 
 
 def rules_on() -> bool:
-    """The rally rules decide the sides (core.scene3d.rules); VV_RULES=0 turns them off."""
+    """The rally rules decide the sides (core.rules.sides); VV_RULES=0 turns them off."""
     import os
     return os.environ.get("VV_RULES", "1") != "0"
 
@@ -487,7 +487,7 @@ def _with_rules(o: Obs, fit0, segs, bounds, bounces, anchors) -> list:
     side the rules are sure of gets that side (an anchor without a spot when no player was seen
     there), and a player's anchor on the other side is dropped. Sides the rules aren't sure of
     keep what the players said. Your who-touched-it always stands."""
-    from core.scene3d.rules import Touch, decide
+    from core.rules.sides import Touch, decide
     t_start = np.array([o.t[bounds[0]]])
     X0, S0 = fit0.at(0, t_start)[0], fit0.std(0, t_start)[0]
     nodes = [(0, float(t_start[0]))]
@@ -655,7 +655,7 @@ def _best_bounce(o: Obs, cam, i: int, j: int) -> tuple[int, float] | None:
     return best
 
 
-from core.scene3d.rules import BLOCK_BELOW_TAPE_M, BLOCK_NEAR_M  # noqa: E402
+from core.rules.fivb import BLOCK_BELOW_TAPE_M, BLOCK_NEAR_M  # noqa: E402
 
 
 def _extra_touch(o: Obs, cam, fit, links, bounds, bounces) -> int | None:
@@ -699,10 +699,10 @@ def _extra_touch(o: Obs, cam, fit, links, bounds, bounces) -> int | None:
 
 
 def _serve_fault(o: Obs, cam, fit, links, bounds, bounces) -> int | None:
-    """The link to merge when the serve rules (core.scene3d.rules.serve_faults) forbid a touch: of
+    """The link to merge when the serve rules (core.rules.serve.serve_faults) forbid a touch: of
     the forbidden ones, the one whose merge costs the picture least, if that's under
     SERVE_MERGE_MAX (else the 3D has a side wrong, and nothing is merged)."""
-    from core.scene3d.rules import serve_faults
+    from core.rules.serve import serve_faults
     tt = fit.info.get("touch_t") or [L.t for L in links]
     t0 = np.array([o.t[bounds[0]]])
     X0 = fit.at(0, t0)[0]
