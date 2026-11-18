@@ -79,7 +79,29 @@ def _seen(ids: dict, f: int, ball_uv) -> bool:
     return False
 
 
-def gaps(stem: str, output: str, name: str = "ball3d.json"):
+ON_COURT_M = (12.5, 5.5)   # --anyone: |x|, |y| of the court + service areas (no bench, no crowd)
+
+
+def anyone_feet(pose: dict, cam, f: int, fps: float) -> np.ndarray:
+    """Floor spots (x, y) of everyone the pose model saw on court around touch frame f (any id,
+    numbered or not): lowest box bottom over the half second up to the touch."""
+    low = {}
+    for g in range(f - int(TAKEOFF_S * fps), f + 3):
+        for b in pose.get(str(g), []):
+            x0, y0, x1, y1 = b["box"]
+            k = b.get("id")
+            if k not in low or y1 > low[k][1]:
+                low[k] = ((x0 + x1) / 2, y1)
+    if not low:
+        return np.zeros((0, 2))
+    p = cam.floor_point(list(low.values()), 0.0)[:, :2]
+    return p[np.isfinite(p[:, 0]) & (np.abs(p[:, 0]) < ON_COURT_M[0]) & (np.abs(p[:, 1]) < ON_COURT_M[1])]
+
+
+def gaps(stem: str, output: str, name: str = "ball3d.json", anyone: bool = False):
+    """Per judged touch: (frame, type, gap m, player number, ball height m), and how many were
+    skipped. anyone: the gap is to the nearest person the pose saw on court (<output>/<clip>/pose.json,
+    numbered or not; number -1), so far players nobody numbered count too."""
     V = json.load(open(paths.verified(stem)))
     ids = json.load(open(Path("data/player_ids") / f"{stem}.json"))
     cam = Camera.load(Path("data/cameras") / f"{stem}.json")
@@ -92,6 +114,7 @@ def gaps(stem: str, output: str, name: str = "ball3d.json"):
     C = json.load(open(Path(output) / stem / "contacts.json"))
     uv, _ = positions(stem, tr, False, C)
     out, skipped = [], 0
+    pose = json.load(open(Path(output) / stem / "pose.json"))["frames"] if anyone else None
     who_at = {int(k): int(v) for k, v in (V.get("touched_by") or {}).items()}
     for t0, t1, kind in touches_all(V):
         if play is not None and not (t0 in play or t1 in play or kind == "serve"):
@@ -105,7 +128,14 @@ def gaps(stem: str, output: str, name: str = "ball3d.json"):
             continue
         X = fr[min(near, key=lambda g: abs(g - f))]
         who = [w for g, w in who_at.items() if t0 - 1 <= g <= t1 + 1]
-        if who:                                          # you said who touched it: measure to them
+        if anyone:
+            P = anyone_feet(pose, cam, f, fps)
+            if not len(P):
+                skipped += 1
+                continue
+            out.append((f, kind, float(np.hypot(*(P - X[:2]).T).min()), -1, float(X[2])))
+            continue
+        if who:                                        # you said who touched it: measure to them
             if who[0] not in feet:                       # ... but they have no box here
                 skipped += 1
                 continue
@@ -123,6 +153,8 @@ def main():
     ap.add_argument("--name", action="append")
     ap.add_argument("--detail", action="store_true", help="list the far touches")
     ap.add_argument("--by-side", action="store_true", help="also split by the ball's half of the court")
+    ap.add_argument("--anyone", action="store_true",
+                    help="gap to the nearest person the pose saw on court, numbered or not (needs no player numbers)")
     a = ap.parse_args()
     outs = a.output or [str(paths.OUTPUT)]
     names = a.name or outs
@@ -141,7 +173,7 @@ def main():
         for s in a.stems:
             if not (Path(out) / s / "ball3d.json").exists():
                 continue
-            g, k = gaps(s, out)
+            g, k = gaps(s, out, anyone=a.anyone)
             G += [x[2] for x in g]; sk += k
             far += [(s,) + x for x in g if x[2] > FAR_M]
             if a.by_side:
@@ -159,7 +191,8 @@ def main():
                 row(label, G_[m], 0)
         if a.detail:
             for s, f, kind, d, n, z in sorted(far, key=lambda q: -q[4]):
-                print(f"{'':14s} {s} frame {f} {kind}: ball {d:.2f} m from the nearest player (#{n}), {z:.2f} m up")
+                who = "person" if n == -1 else f"player (#{n})"
+                print(f"{'':14s} {s} frame {f} {kind}: ball {d:.2f} m from the nearest {who}, {z:.2f} m up")
 
 
 if __name__ == "__main__":
