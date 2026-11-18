@@ -466,12 +466,20 @@ def _anchors_fit(o: Obs, cam, segs, links, bounds, bounces=(), rules: bool = Tru
 
 FLOOR_TOUCH_Z = 0.25          # a join this low is the ball on the floor, not a touch
 EXTRA_MERGE_MAX = 3 * TOUCH_COST   # merging a 4th touch may cost the picture this much at most
+SERVE_MERGE_MAX = 6 * TOUCH_COST   # [guess] merging a touch the serve rules forbid: more, since a float
+                                   #   serve wobbles off the drag model (holdout1's split serve: ~60)
 
 
 def rules_on() -> bool:
     """The rally rules decide the sides (core.scene3d.rules); VV_RULES=0 turns them off."""
     import os
     return os.environ.get("VV_RULES", "1") != "0"
+
+
+def serve_rule_on() -> bool:
+    """The serve rules merge forbidden touches (rules.serve_faults); VV_SERVE_RULE=0 turns them off."""
+    import os
+    return os.environ.get("VV_SERVE_RULE", "1") != "0"
 
 
 def _with_rules(o: Obs, fit0, segs, bounds, bounces, anchors) -> list:
@@ -690,6 +698,33 @@ def _extra_touch(o: Obs, cam, fit, links, bounds, bounces) -> int | None:
     return best[1] if best and best[0] <= EXTRA_MERGE_MAX else None
 
 
+def _serve_fault(o: Obs, cam, fit, links, bounds, bounces) -> int | None:
+    """The link to merge when the serve rules (core.scene3d.rules.serve_faults) forbid a touch: of
+    the forbidden ones, the one whose merge costs the picture least, if that's under
+    SERVE_MERGE_MAX (else the 3D has a side wrong, and nothing is merged)."""
+    from core.scene3d.rules import serve_faults
+    tt = fit.info.get("touch_t") or [L.t for L in links]
+    t0 = np.array([o.t[bounds[0]]])
+    X0 = fit.at(0, t0)[0]
+    joins = []
+    for j, L in enumerate(links):
+        if L.kind != "touch":                            # a floor bounce: the rally is over
+            break
+        t_ = np.array([tt[j]])
+        X = 0.5 * (fit.at(L.k, t_)[0] + fit.at(L.k + 1, t_)[0])
+        joins.append((float(X[0]), float(X[2])))
+    best = None
+    for j in serve_faults((float(X0[0]), float(X0[2])), joins, o.net_h):
+        a, b, c = bounds[j], bounds[j + 1], bounds[j + 2]
+        if o.t[c - 1] - o.t[a] > MAX_FLIGHT_S:
+            continue
+        d = (_drag_piece_score(o, a, c, cam)[0] - _drag_piece_score(o, a, b, cam)[0]
+             - _drag_piece_score(o, b, c, cam)[0])
+        if best is None or d < best[0]:
+            best = (d, j)
+    return best[1] if best and best[0] <= SERVE_MERGE_MAX else None
+
+
 def _solve_once(o: Obs, cam, hints, log):
     bounces = set()
     if o.fixed is not None:
@@ -791,6 +826,18 @@ def _solve_once(o: Obs, cam, hints, log):
         if j is None:
             break
         log(f"4 touches on one side: touch at {o.frames[bounds[j + 1]]} merged into its flights")
+        bounds = bounds[:j + 1] + bounds[j + 2:]
+        segs = [o.segment(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
+        links = _links(o, bounds, bounces)
+        anchors = _anchors_fit(o, cam, segs, links, bounds, bounces)
+        fit = fit_rally(segs, links, cam, net_h=o.net_h, anchors=anchors, spin=spin_flags(len(segs)))
+        bad = _bad_flights(o, cam, segs, bounds, fit)
+    # the serve: nobody touches it before it crosses, and it isn't blocked (rules.serve_faults)
+    for _ in range(0 if o.fixed is not None or not rules_on() or not serve_rule_on() else len(bounds)):
+        j = _serve_fault(o, cam, fit, links, bounds, bounces)
+        if j is None:
+            break
+        log(f"serve rules: touch at {o.frames[bounds[j + 1]]} merged into its flights")
         bounds = bounds[:j + 1] + bounds[j + 2:]
         segs = [o.segment(a, b) for a, b in zip(bounds[:-1], bounds[1:])]
         links = _links(o, bounds, bounces)

@@ -42,3 +42,45 @@ def test_block_at_the_net_after_an_attack():
 def test_named_player_decides():
     ch = decide([T(6, first=True), T(0.3, z=0.8, player=-1, named=True)], [4], NET)
     assert ch[1].side == -1
+
+
+# --- the serve rules: touches they forbid (rules.serve_faults) ---------------------------------
+from core.scene3d.rules import serve_faults  # noqa: E402
+
+
+def test_serve_split_on_the_servers_side_is_a_fault():
+    # far serve; the fit split it mid-air on the far side (x 3.6, 3.6 m up), then the pass
+    assert serve_faults((11.0, 2.7), [(3.6, 3.6), (-6.0, 0.9)], NET) == [0]
+
+
+def test_toss_then_hit_far_back_is_the_serve():
+    # the rally starts at the toss; the hit (far back) is the server's, not a fault
+    assert serve_faults((11.5, 3.0), [(10.8, 2.8), (-6.0, 0.9), (-2.0, 2.3)], NET) == []
+
+
+def test_serve_cannot_be_blocked():
+    # the first touch on the receiving side at the net, up at the tape
+    assert serve_faults((10.0, 2.5), [(-0.2, 3.3), (-6.0, 0.9)], NET) == [0]
+
+
+def test_reception_at_the_net_below_the_tape_is_fine():
+    assert serve_faults((10.0, 2.5), [(-0.5, 1.2)], NET) == []
+
+
+def test_not_a_serve_no_serve_rules():
+    # the rally starts near the net (not a serve): nothing forbidden
+    assert serve_faults((2.0, 2.5), [(3.6, 3.6)], NET) == []
+
+
+def test_serve_after_the_ball_was_held_low():
+    # the rally starts with the server holding the ball (low), then the hit far back
+    assert serve_faults((11.0, 1.3), [(10.1, 2.4), (5.3, 3.5), (-6.0, 0.9)], NET) == [1]
+
+
+def test_far_back_high_touch_late_in_the_rally_is_not_a_serve():
+    assert serve_faults((2.0, 1.0), [(-1.0, 2.0), (3.0, 1.0), (8.0, 2.0), (4.0, 2.0)], NET) == []
+
+
+def test_after_the_reception_anything_goes():
+    # two touches on the receiving side after the serve: not the serve rules' business
+    assert serve_faults((-9.0, 2.4), [(6.0, 0.8), (1.0, 2.2)], NET) == []
