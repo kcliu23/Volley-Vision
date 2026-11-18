@@ -16,6 +16,8 @@ HALF_L, HALF_W = 9.0, 4.5      # m: the court (x across the net, y along it)
 LINE = 0.10                    # m: a ball touching the line is in (FIVB 8.3); our 3D has some slack too
 FLOOR_Z = 0.30                 # m: the ball's centre this low is on the floor
 MAX_GAP_S = 4.0                # s: the ball unseen longer than this between two pieces: a new rally
+SERVE_ZONE_M = 5.0             # m: behind an end line, up to this far back: where a server stands
+SERVE_LOOK_S = 6.0             # s: looked at before each rally for the server
 MIN_RALLY_S = 1.0              # s: shorter, with no serve: the ball bouncing between points (a full game:
                                #   59 found -> 33 with this, of 34 real)
 NET_UNSURE_M = 1.5             # m: a landing this close to the net: its side from the last flight (over or not)
@@ -63,8 +65,50 @@ def _carry_to_floor(fr: dict, f1: int, fps: float, n: int = 8, g: float = 9.81):
     return [float(x0 + vx * tl), float(y0 + vy * tl)]
 
 
-def find_rallies(B: dict, touches: list) -> list[Rally]:
-    """B: ball3d.json; touches: touches.json["touches"]."""
+def server_sides(rallies: list, poses: dict, cam, fps: float) -> list:
+    """Which team served each rally, from the players (not the ball: a far serve is a few blurred
+    pixels, often not tracked). Before a serve, the server stands behind their end line: one more
+    person behind it than usual (a referee or a spectator may always be there). Per rally: +1 far,
+    -1 near, None unknown. When neither end shows an extra person and the camera stands close
+    behind the near end line (the near server is out of the picture), it's near."""
+    import numpy as np
+    frames = {int(k): v for k, v in poses.items() if v}
+    if not frames:
+        return [None] * len(rallies)
+
+    def behind(f):
+        n = {-1: 0, 1: 0}
+        for p in frames.get(f, []):
+            b = p["box"]
+            g = cam.floor_point([((b[0] + b[2]) / 2, b[3])], 0.0)[0]
+            if np.isfinite(g[0]) and HALF_L <= abs(g[0]) <= HALF_L + SERVE_ZONE_M and abs(g[1]) <= HALF_W + 1.5:
+                n[1 if g[0] > 0 else -1] += 1
+        return n
+    every = sorted(frames)[::30]
+    usual = {s: float(np.median([behind(f)[s] for f in every])) for s in (-1, 1)}
+    near_hidden = abs(float(cam.position[0])) - HALF_L < 3.0
+    out, prev_end = [], 0
+    for r in rallies:
+        lo = max(prev_end + int(0.5 * fps), r.f0 - int(SERVE_LOOK_S * fps))
+        c = [behind(f) for f in range(lo, r.f0 + 10, 5) if f in frames]
+        side = None
+        if c:
+            extra = {s: float(np.percentile([x[s] for x in c], 75)) - usual[s] for s in (-1, 1)}
+            if extra[1] >= 1 and extra[1] >= extra[-1]:
+                side = 1
+            elif extra[-1] >= 1:
+                side = -1
+            elif near_hidden:
+                side = -1
+        out.append(side)
+        prev_end = r.f1
+    return out
+
+
+def find_rallies(B: dict, touches: list, servers=None) -> list[Rally]:
+    """B: ball3d.json; touches: touches.json["touches"]; servers: optional (poses, cam) to find the
+    serving team from the players (server_sides), which then decides each rally's winner (the
+    winner serves next) ahead of where the ball landed."""
     fr = {int(k): v["xyz"] for k, v in B["frames"].items()}
     fps = float(B.get("fps") or 60.0)
     chains: dict = {}
@@ -140,6 +184,19 @@ def find_rallies(B: dict, touches: list) -> list[Rally]:
                          [round(v, 2) for v in land] if land is not None else None, last_side, winner, why))
     # a "rally" shorter than this with no serve is the ball bouncing or rolling between points
     out = [r for r in out if (r.f1 - r.f0) / fps >= MIN_RALLY_S or r.serve_side is not None]
+    if servers is not None:
+        poses, cam = servers
+        for r, side in zip(out, server_sides(out, poses, cam, fps)):
+            if side is not None:
+                r.serve_side = side
+        for a, b in zip(out[:-1], out[1:]):              # the winner serves next: from the players, that's
+            if b.serve_side is not None:                 # the surest clue there is (the landing is a 3D guess)
+                if a.winner is not None and a.winner != b.serve_side:
+                    a.why = f"{'near' if b.serve_side < 0 else 'far'} serves next (where it landed says otherwise: {a.why})"
+                else:
+                    a.why = f"{'near' if b.serve_side < 0 else 'far'} serves next" + (f"; {a.why}" if a.winner is not None else "")
+                a.winner = b.serve_side
+        return out
     # the winner serves next: confirms the landing, or decides when the landing wasn't seen
     for a, b in zip(out[:-1], out[1:]):
         if b.serve_side is None:

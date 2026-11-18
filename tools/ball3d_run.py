@@ -161,13 +161,18 @@ def write_touches(path, flights, frames, uv, T, fps, cam, poses, plabels, stem, 
     print(f"[ball3d] {stem}: {len(out)} touches, toucher found for {seen} ({named} with a number)  →  {path}")
 
 
-def write_rallies(d: Path, sfx: str, stem: str):
+def write_rallies(d: Path, sfx: str, stem: str):  # also: python -m tools.rallies <video> (no 3D rerun)
     """output/<clip>/rallies.json: each rally (serve -> the ball's first floor contact), who won it,
     and the running score (core.scene3d.rallies)."""
     from core.scene3d.rallies import find_rallies, score
     B = json.load(open(d / f"ball3d{sfx}.json"))
     T = json.load(open(d / f"touches{sfx}.json"))["touches"]
-    rows = score(find_rallies(B, T))
+    servers = None
+    cp = Path("data/cameras") / f"{stem}.json"
+    if (d / "pose.json").exists() and cp.exists():         # the serving team from the players
+        from core.geometry.camera import Camera
+        servers = (json.load(open(d / "pose.json"))["frames"], Camera.load(cp))
+    rows = score(find_rallies(B, T, servers))
     json.dump({"schema": "vv-rallies/1", "clip": stem, "rallies": rows}, open(d / f"rallies{sfx}.json", "w"), indent=1)
     team = {-1: "near", 1: "far", None: "?"}
     for i, r in enumerate(rows):
