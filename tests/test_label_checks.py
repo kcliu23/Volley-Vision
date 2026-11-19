@@ -57,3 +57,25 @@ def test_toucher_saved_removed_with_the_touch_and_undone():
     R.undo()
     assert R.touched_by == {10: 7} and R.contacts == {10: "set"}
     assert Review(R.P, R.to_json("v.mov")).touched_by == {10: 7}
+
+
+def test_unseen_touch_toggle_saves_and_undoes():
+    R = _review()
+    R.set_contact(10, "serve")
+    assert R.toggle_unseen(10) is True
+    J = R.to_json("v.mov")
+    assert J["unseen"] == [10]
+    assert Review(R.P, J).unseen == {10}
+    R.undo()
+    assert 10 not in R.unseen
+    assert R.toggle_unseen(11) is None             # no touch there
+    R.set_contact(12, "dead")
+    assert R.toggle_unseen(12) is None             # a rally-over mark isn't a touch
+    R.toggle_unseen(10); R.set_contact(10, None)
+    assert R.to_json("v.mov")["unseen"] == []
+
+
+def test_unseen_touch_not_scored():
+    from evaluation.touches3d import your_touches
+    V = {"contacts": {"5": "serve", "20": "pass", "40": "set", "41": "set"}, "unseen": [40]}
+    assert your_touches(V) == [(20, 20, "pass")]

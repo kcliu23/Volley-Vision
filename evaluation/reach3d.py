@@ -121,8 +121,12 @@ def gaps(stem: str, output: str, name: str = "ball3d.json", anyone: bool = False
     if mix and pose is None:
         mix = False                                      # no poses: numbered players only, as before
     who_at = {int(k): int(v) for k, v in (V.get("touched_by") or {}).items()}
+    unseen = set(V.get("unseen") or [])                 # not seen (tools.review v): frame is a guess
     for t0, t1, kind in touches_all(V):
         if play is not None and not (t0 in play or t1 in play or kind == "serve"):
+            continue
+        if any(g in unseen for g in range(t0, t1 + 1)):
+            skipped += 1
             continue
         f = (t0 + t1) // 2
         near = [g for g in range(f - 2, f + 3) if g in fr]

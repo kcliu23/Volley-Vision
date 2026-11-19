@@ -58,6 +58,11 @@ it resumes where you left off.
                         pose box, so the touch is tied to that person in the pose data)
                         9 rally over: the ball is dead (not a touch). Serve -> rally over marks
                         which frames are IN PLAY: the scores report those on their own
+                 v      on a marked touch: NOT SEEN (toggle). The touch happened but you didn't
+                        see it: hidden behind a player, or a serve hit off-screen / before the
+                        video starts (mark 1 serve at the first frame you see the ball, then v).
+                        Mark it at your best-guess frame; grey tick. Not scored for timing or
+                        reach, and a not-seen serve isn't used as "the serve starts far back"
                  M      jump to the next marked touch
   other          u      undo                   t      toggle train / test clip
                  ?      help                   q/Esc  save and quit
@@ -68,7 +73,8 @@ at the top); green = accepted, yellow = your edits. Ball labels: data/verified/<
    "src": {"<frame>": "auto" | "fixed" | "interp"}, "role": "train" | "test", "reviewed": [[f0, f1], ...],
    "others": {"<frame>": [[x, y, w, h], ...]},   other balls you confirmed (only these are exported)
    "contacts": {"<frame>": "serve" | "pass" | "set" | "hit" | "block" | "dig" | "other"},   touches you marked
-   "touched_by": {"<frame>": 7}, "touched_box": {"<frame>": [x0, y0, x1, y1]}}  who touched it, when you said
+   "touched_by": {"<frame>": 7}, "touched_box": {"<frame>": [x0, y0, x1, y1]},  who touched it, when you said
+   "unseen": [<frame>, ...]}   touches marked but not seen (v): frame is a best guess
 """
 from __future__ import annotations
 
@@ -104,6 +110,7 @@ class Review:
                                          for k, x in v.get("contacts", {}).items()}
         self.touched_by: dict[int, int] = {int(k): int(x) for k, x in v.get("touched_by", {}).items()}
         self.touched_box: dict[int, list] = {int(k): x for k, x in v.get("touched_box", {}).items()}
+        self.unseen: set[int] = {int(k) for k in v.get("unseen", [])}   # touches marked but not seen (v)
         self.box_at = None                       # (frame, number, box) -> that player's box at frame (or None)
         self._checks = None                      # label_checks flags, rebuilt after an edit
         self.labels: dict[int, object] = {int(k): x for k, x in v.get("labels", {}).items()}
@@ -404,6 +411,7 @@ class Review:
             self.contacts.pop(f, None)
             self.touched_by.pop(f, None)
             self.touched_box.pop(f, None)
+            self.unseen.discard(f)
         else:
             self.contacts[f] = kind
 
@@ -419,6 +427,18 @@ class Review:
             b += 1
         return list(range(a, b + 1))
 
+    def toggle_unseen(self, f: int) -> bool | None:
+        """v: the touch at f (all its frames) marked not seen, or back to seen. Returns the new state,
+        or None (no touch at f, or a rally-over mark)."""
+        run = self.touch_run(f)
+        if not run or self.contacts[f] == "dead":
+            return None
+        self._push(run)
+        on = not any(g in self.unseen for g in run)
+        for g in run:
+            (self.unseen.add if on else self.unseen.discard)(g)
+        return on
+
     def extend_touch(self, f: int) -> list[int] | None:
         """m on a frame right next to a marked touch: f joins that touch (same type, same toucher),
         no questions. Returns the touch's frames, or None (no touch next to f)."""
@@ -429,6 +449,8 @@ class Review:
             run = self.touch_run(g)
             self._push([f])
             self.contacts[f] = kind
+            if any(h in self.unseen for h in run):
+                self.unseen.add(f)
             who = next((self.touched_by[h] for h in run if h in self.touched_by), None)
             if who is not None:
                 self.touched_by[f] = who
@@ -484,7 +506,8 @@ class Review:
     def _push(self, frames):
         self._checks = None
         self.undo_stack.append(([(f, self.labels.get(f), self.boxes.get(f), self.src.get(f), self.others_edit.get(f),
-                                  self.contacts.get(f), self.touched_by.get(f), self.touched_box.get(f)) for f in frames],
+                                  self.contacts.get(f), self.touched_by.get(f), self.touched_box.get(f),
+                                  f in self.unseen) for f in frames],
                                 [list(r) for r in self.reviewed], list(self.clicks), list(self.other_clicks)))
         if len(self.undo_stack) > 200:
             self.undo_stack.pop(0)
@@ -619,7 +642,8 @@ class Review:
             return False
         saved, reviewed, clicks, other_clicks = self.undo_stack.pop()
         self._checks = None
-        for f, lab, box, src, oth, con, who, wbox in saved:
+        for f, lab, box, src, oth, con, who, wbox, uns in saved:
+            (self.unseen.add if uns else self.unseen.discard)(f)
             for d, v in ((self.labels, lab), (self.boxes, box), (self.src, src), (self.others_edit, oth),
                          (self.contacts, con), (self.touched_by, who), (self.touched_box, wbox)):
                 if v is None:
@@ -669,6 +693,7 @@ class Review:
                 "contacts": {str(f): self.contacts[f] for f in sorted(self.contacts)},
                 "touched_by": {str(f): self.touched_by[f] for f in sorted(self.touched_by)},
                 "touched_box": {str(f): self.touched_box[f] for f in sorted(self.touched_box)},
+                "unseen": sorted(f for f in self.unseen if f in self.contacts),
                 "proposals": {"pipeline": P.get("pipeline"), "file": str(paths.proposals(Path(video).stem))}}
 
 
@@ -970,7 +995,8 @@ def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, pl
                "proposal": "proposal"}[src]
     shown = {"tracknet": "WASB only"}               # old name in the proposal files: finder point, no YOLO box
     note = msg or (("check: " + ", ".join(shown.get(x, x) for x in d) + "   ") if d and not R.is_edited(f) else "") + lab_txt \
-        + (f"   TOUCH: {R.contacts[f]}" + (f" by #{R.touched_by[f]}" if f in R.touched_by else "") if f in R.contacts else "")
+        + (f"   TOUCH: {R.contacts[f]}" + (" (NOT SEEN)" if f in R.unseen else "")
+           + (f" by #{R.touched_by[f]}" if f in R.touched_by else "") if f in R.contacts else "")
     cv2.putText(img, note, (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
                 (255, 255, 255) if msg else ((90, 90, 255) if d and not R.is_edited(f) else (180, 180, 180)),
                 1, cv2.LINE_AA)
@@ -989,7 +1015,7 @@ def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, pl
         elif R.is_edited(g):
             cv2.line(img, (xs(g), y0 + 32), (xs(g), y0 + 42), (0, 220, 255), 1)
     for g, _kind in R.contacts.items():                      # marked touches: white ticks above the timeline
-        cv2.line(img, (xs(g), y0 + 1), (xs(g), y0 + 8), (255, 255, 255), 2)
+        cv2.line(img, (xs(g), y0 + 1), (xs(g), y0 + 8), (130, 130, 130) if g in R.unseen else (255, 255, 255), 2)
     for g in R.checks():                                     # to re-check in your labels (b): purple
         cv2.line(img, (xs(g), y0 + 22), (xs(g), y0 + 42), (249, 121, 232), 2)
     cv2.line(img, (xs(f), y0), (xs(f), H), (255, 255, 255), 2)
@@ -1244,6 +1270,15 @@ def review(video: str, test: bool = False):
             else:
                 state["contact"] = True
                 msg, msg_t = "touch type? 1 serve 2 pass 3 set 4 hit 5 block 6 dig 0 other 9 rally over", time.time()
+            continue
+        if k == "v":
+            playing = False
+            on = R.toggle_unseen(f)
+            if on is None:
+                msg, msg_t = "v: no touch here (mark it with m first, then v: not seen)", time.time()
+            else:
+                save()
+                msg, msg_t = (f"touch at {f}: {R.contacts[f]}" + (" NOT SEEN (best-guess frame)" if on else " seen")), time.time()
             continue
         if k == "b":
             g = R.next_check(f); playing = False

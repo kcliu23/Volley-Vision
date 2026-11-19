@@ -34,7 +34,7 @@ FLOOR_M = 0.35           # a join this low is a bounce on the floor
 
 def your_touches(V: dict) -> list[tuple[int, int, str]]:
     """Your marks as touches: runs of consecutive frames with a mark, (first, last, type);
-    serves and rally ends left out."""
+    serves, rally ends and touches you didn't see (v) left out."""
     c = sorted((int(k), v) for k, v in (V.get("contacts") or {}).items() if v not in ("dead",))
     out = []
     for f, v in c:
@@ -42,7 +42,8 @@ def your_touches(V: dict) -> list[tuple[int, int, str]]:
             out[-1] = (out[-1][0], f, out[-1][2])
         else:
             out.append((f, f, v))
-    return [t for t in out if t[2] != "serve"]
+    unseen = set(V.get("unseen") or [])                 # marked not seen (tools.review v): frame is a guess
+    return [t for t in out if t[2] != "serve" and not any(g in unseen for g in range(t[0], t[1] + 1))]
 
 
 def fit_touches(B: dict) -> list[tuple[int, float]]:

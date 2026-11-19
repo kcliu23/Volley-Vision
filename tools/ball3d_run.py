@@ -272,7 +272,8 @@ def main():
     if vp.exists() and a.use_labels:
         Vj = json.load(open(vp))
         who = {int(k): int(v) for k, v in (Vj.get("touched_by") or {}).items()} or None
-        serves = [int(k) for k, v in (Vj.get("contacts") or {}).items() if v == "serve"] or None
+        unseen = set(Vj.get("unseen") or [])           # a serve not seen (hit off-screen): no "starts far back"
+        serves = [int(k) for k, v in (Vj.get("contacts") or {}).items() if v == "serve" and int(k) not in unseen] or None
         who_box = {int(k): v for k, v in (Vj.get("touched_box") or {}).items()} or None
     if who:
         named = _named_player(poses, plabels, cam, fps)
