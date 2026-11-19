@@ -15,6 +15,9 @@ Touches (contacts: frame -> type):
     mixed     consecutive marked frames with different types
     no serve  a rally (ends with "rally over") with no serve mark before it
     no end    a serve with no "rally over" before the next serve
+    turn      in play, the ball turns sharply (or comes out of a hidden stretch going another way)
+              with no touch marked near: a touch you missed, or one behind a player (m + type, then
+              v: not seen), or the floor (9)
 """
 from __future__ import annotations
 
@@ -25,6 +28,13 @@ JUMP_MIN_PX = 25.0      # [guess] ... and at least this long
 ARC_PX = 10.0           # [guess] farther than this from the curve through 4 points on each side
 TOUCH_NEAR = 4          # frames around a touch: the ball bends there, no arc check
 GUESS_RUN = 8           # [guess] this many filled-in frames in a row at a touch
+TURN_K = 4              # frames on each side for the ball's direction (turn)
+TURN_MIN = 1.0          # [guess] change of velocity / the faster speed: at your marked touches the
+                        #   median is 0.9 per frame, 90/102 touches pass 1.0 within 3 frames; elsewhere
+                        #   in play 99% stay under 1.05 (holdouts, Nov 19)
+TURN_MIN_PX = 4.0       # px/frame: slower (a high ball near its top, far court) is label jitter
+TURN_FREE = 8           # frames: no touch / rally mark this close
+TURN_HIDDEN_MAX = 30    # frames: a hidden stretch longer than this isn't judged
 
 
 def _xy(labels: dict, f: int):
@@ -127,9 +137,74 @@ def touch_flags(contacts: dict) -> dict[int, str]:
     return out
 
 
+def _play(contacts: dict) -> list[tuple[int, int]]:
+    """Serve -> rally over spans from the marks (evaluation.inplay without the clip length)."""
+    c = sorted((int(k), v) for k, v in contacts.items())
+    out, start = [], None
+    for f, v in c:
+        if v == "serve" and start is None:
+            start = f
+        elif v == "dead" and start is not None:
+            out.append((start, f))
+            start = None
+    if start is not None:
+        out.append((start, 10 ** 9))
+    return out
+
+
+def turn_flags(labels: dict, contacts: dict) -> dict[int, str]:
+    labels = {int(k): v for k, v in labels.items()}
+    pts = {f: np.array(v, float) for f, v in labels.items() if isinstance(v, list)}
+    marks = sorted(int(k) for k in contacts)
+    spans = _play(contacts)
+    free = lambda f: all(abs(f - m) > TURN_FREE for m in marks)
+    inplay = lambda f: any(a <= f <= b for a, b in spans)
+
+    def vel(frames):
+        p = [g for g in frames if g in pts]
+        if len(p) < 2 or p[-1] == p[0]:
+            return None
+        return (pts[p[-1]] - pts[p[0]]) / (p[-1] - p[0])
+
+    def turn(vb, va):
+        if vb is None or va is None:
+            return 0.0
+        fast = max(np.linalg.norm(vb), np.linalg.norm(va))
+        if fast < TURN_MIN_PX or fast > 200:                # slow: jitter; huge: a jump (own flag)
+            return 0.0
+        return float(np.linalg.norm(va - vb) / fast)
+
+    out: dict[int, str] = {}
+    best: dict[int, float] = {}
+    for f in sorted(pts):                                   # visible: the sharpest frame of each turn
+        if not inplay(f) or not free(f):
+            continue
+        t = turn(vel(range(f - TURN_K, f + 1)), vel(range(f, f + TURN_K + 1)))
+        if t > TURN_MIN:
+            best[f] = t
+    for f in sorted(best):
+        if best[f] >= max(best.get(g, 0.0) for g in range(f - TURN_K, f + TURN_K + 1)):
+            out[f] = "turn: the ball turns sharply here, no touch marked: a touch? (m + type; v if hidden) or the floor (9)"
+    hidden = sorted(f for f, v in labels.items() if v == "hidden")
+    runs = []
+    for f in hidden:
+        if runs and f - runs[-1][1] <= 1:
+            runs[-1][1] = f
+        else:
+            runs.append([f, f])
+    for a, b in runs:                                       # hidden: direction before vs after
+        if b - a > TURN_HIDDEN_MAX or not inplay(a) or not all(free(g) for g in (a, b)):
+            continue
+        t = turn(vel(range(a - TURN_K - 2, a)), vel(range(b + 1, b + TURN_K + 3)))
+        if t > TURN_MIN:
+            out.setdefault(a, f"turn: the ball comes out of hidden {a}-{b} going another way, no touch marked: "
+                              f"a touch behind a player? (m + type, then v) or the floor (9)")
+    return out
+
+
 def all_flags(verified: dict) -> dict[int, str]:
     contacts = verified.get("contacts") or {}
     flags = ball_flags(verified.get("labels") or {}, contacts, verified.get("src"))
-    for f, why in touch_flags(contacts).items():
+    for f, why in list(touch_flags(contacts).items()) + list(turn_flags(verified.get("labels") or {}, contacts).items()):
         flags[f] = why if f not in flags else flags[f] + "; " + why
     return dict(sorted(flags.items()))

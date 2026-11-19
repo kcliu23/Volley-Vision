@@ -93,3 +93,22 @@ def test_rally_guesses():
     assert R.accept_guess(30) is None
     R.undo(); R.undo()
     assert R.open_guesses() == [5, 30]
+
+
+def _seg(f0, f1, p0, v):
+    return {str(f): [p0[0] + v[0] * (f - f0), p0[1] + v[1] * (f - f0)] for f in range(f0, f1)}
+
+
+def test_turn_flag_unmarked_touch_and_hidden():
+    from core.common.label_checks import turn_flags
+    L = _seg(0, 50, (100, 100), (10, 5)) | _seg(50, 100, (600, 350), (10, -8))     # turns at 50
+    C = {"0": "serve", "99": "dead"}
+    assert list(turn_flags(L, C)) == [50]
+    assert turn_flags(L, C | {"52": "pass"}) == {}                                   # marked: fine
+    H = dict(L)
+    for f in range(47, 54):
+        H[str(f)] = "hidden"
+    assert list(turn_flags(H, C)) == [47]                                            # out of hidden going up
+    straight = _seg(0, 100, (100, 100), (10, 5))
+    assert turn_flags(straight, C) == {}
+    assert turn_flags(L, {}) == {}                                                   # not in play: no flag
