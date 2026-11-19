@@ -19,10 +19,15 @@ import pytest
 import tools.label_players as T
 
 CLIP, VIDEO = "holdout1", "holdout/holdout1.mov"
-if not all(Path(p).exists() for p in (VIDEO, f"output/{CLIP}/pose.json")):
+# the tracker ids below (45 at 774) are from the pose run before the far court zoom (Nov 18 it was
+# rerun into output/: ids changed); that run is kept as pose.before_farzoom.json
+POSE_FILE = Path(f"output/{CLIP}/pose.before_farzoom.json")
+if not POSE_FILE.exists():
+    POSE_FILE = Path(f"output/{CLIP}/pose.json")
+if not all(Path(p).exists() for p in (VIDEO, POSE_FILE)):
     pytest.skip("needs the local holdout1 clip and its pose.json", allow_module_level=True)
 pytestmark = [pytest.mark.data, pytest.mark.slow]
-POSE = json.load(open(f"output/{CLIP}/pose.json"))["frames"]
+POSE = json.load(open(POSE_FILE))["frames"]
 W, H = 2622, 1206
 SCALE = min(T.MAX_W / W, (T.MAX_H - T.TOP_H) / H, 1.0)
 
@@ -35,6 +40,8 @@ def point(f, tid):
 def run(steps):
     d = Path(tempfile.mkdtemp())
     T.OUT_DIR = d
+    (d / "out" / CLIP).mkdir(parents=True)                  # label_players reads <output>/<clip>/pose.json
+    (d / "out" / CLIP / "pose.json").symlink_to(POSE_FILE.resolve())
     cb = {}
     cv2.namedWindow = lambda *a, **k: None
     cv2.setMouseCallback = lambda w, f: cb.setdefault("f", f)
@@ -59,7 +66,7 @@ def run(steps):
             return -1
         return v
     cv2.waitKeyEx = wait
-    sys.argv = ["x", VIDEO]
+    sys.argv = ["x", VIDEO, "--output", str(d / "out")]
     T.main()
     out = json.load(open(d / f"{CLIP}.json"))
     shutil.rmtree(d)
