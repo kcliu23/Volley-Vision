@@ -18,8 +18,21 @@ FLOOR_Z = 0.30                 # m: the ball's centre this low is on the floor
 MAX_GAP_S = 4.0                # s: the ball unseen longer than this between two pieces: a new rally
 SERVE_ZONE_M = 5.0             # m: behind an end line, up to this far back: where a server stands
 SERVE_LOOK_S = 6.0             # s: looked at before each rally for the server
-MIN_RALLY_S = 1.0              # s: shorter, with no serve: the ball bouncing between points (a full game:
-                               #   59 found -> 33 with this, of 34 real)
+MIN_RALLY_S = 1.0              # s: shorter, with no serve: the ball bouncing between points
+PLAY_APEX_M = 2.0              # m: a flight this high starts a rally (lower: the ball bounced or held before the serve)
+SERVE_BEFORE_S = 3.0           # s: a serve touch up to this before that flight is the rally's start
+LAND_FROM_M = 1.5              # m: a floor contact is one when the ball came down from this high ...
+LAND_LOOK_S = 1.0              # s: ... within this before it ...
+UP_AFTER_M = 2.0               # m: ... and doesn't go back up this high ...
+UP_AFTER_S = 1.0               # s: ... within this after it (a dig near the floor does; so does 3D noise)
+START_RUN_S = 2.0              # s: ... and the 3D carries on from it this long (a lone flight is noise)
+START_GAP_S = 1.0              # s: ... with no hole longer than this
+BACK_GAP_S = 2.5               # s: high flights this close before a rally's start belong to it
+END_GAP_S = 1.5                # s: the ball gone this long and back only low: the rally ended before the hole
+DEAD_LOW_M = 1.5               # m: the ball below this ...
+DEAD_LOW_S = 1.5               # s: ... for this long is dead (rolling, held), not in play
+REST_S = 3.0                   # s: the next rally starts no sooner than this after one ends (the ball
+                               #   thrown back to the server is not a rally)
 NET_UNSURE_M = 1.5             # m: a landing this close to the net: its side from the last flight (over or not)
 CARRY_FROM_Z = 1.5             # m: a rally's last arc ending this low and falling is carried to the floor ...
 CARRY_MAX_S = 0.6              # s: ... if it gets there within this
@@ -105,45 +118,93 @@ def server_sides(rallies: list, poses: dict, cam, fps: float) -> list:
     return out
 
 
+def _rally_spans(fr: dict, flights: list, touches: list, fps: float) -> list:
+    """(start, landing frame or None, last frame, flights) per rally, from the 3D alone.
+
+    A rally starts with the first real flight (up to PLAY_APEX_M or higher) after the last one ended:
+    before the serve the ball is bounced or held low, and that is not play. (A serve touch, if there
+    is one, marks the start exactly.) It ends at the first floor contact that is one: the ball comes
+    down from LAND_FROM_M and doesn't go back up past UP_AFTER_M (a dig near the floor does, and so
+    does a frame or two of 3D noise at the start of a flight), or when the ball is gone for MAX_GAP_S.
+    """
+    keys = sorted(fr)
+    if not keys:
+        return []
+    import bisect
+
+    def zmax(a, b):
+        i, j = bisect.bisect_left(keys, a), bisect.bisect_right(keys, b)
+        return max((fr[keys[k]][2] for k in range(i, j)), default=-1.0)
+    apex = [zmax(F["f0"], F["f1"]) for F in flights]
+    serves = sorted(t["frame"] for t in touches if t.get("kind") == "serve")
+    look, after = int(LAND_LOOK_S * fps), int(UP_AFTER_S * fps)
+    gap, end_gap, low_for = int(MAX_GAP_S * fps), int(END_GAP_S * fps), int(DEAD_LOW_S * fps)
+
+    def goes_on(f, run=START_RUN_S):                      # the 3D carries on from f this long
+        k, last = bisect.bisect_left(keys, f), f
+        while k < len(keys) and keys[k] - last <= int(START_GAP_S * fps):
+            last = keys[k]
+            if last - f >= int(run * fps):
+                return True
+            k += 1
+        return False
+    def seen_after(g):                                    # how far to look after a low point: UP_AFTER_S,
+        n = bisect.bisect_right(keys, g + after) - bisect.bisect_right(keys, g)   # or past a hole in the
+        return after if n >= after // 3 else int(BACK_GAP_S * fps)               # 3D (it may come back up)
+    out, free_from, i = [], -10 ** 9, 0
+    while i < len(flights):
+        served = any(flights[i]["f0"] - 6 <= f <= flights[i]["f1"] for f in serves)
+        if flights[i]["f0"] < free_from or not ((served and goes_on(flights[i]["f0"], START_RUN_S / 2))
+                                                 or (apex[i] >= PLAY_APEX_M and goes_on(flights[i]["f0"]))):
+            i += 1
+            continue
+        j = b = i                                         # the serve and the pass, when the 3D lost the
+        while (j > 0 and flights[j - 1]["f0"] >= free_from          # ball for a moment right after them
+               and flights[j]["f0"] - flights[j - 1]["f1"] <= int(BACK_GAP_S * fps)):
+            j -= 1
+            b = j if apex[j] >= PLAY_APEX_M else b
+        F = flights[b]
+        sv = [f for f in serves if max(free_from, F["f0"] - int(SERVE_BEFORE_S * fps)) <= f <= F["f1"]]
+        start = sv[-1] if sv else F["f0"]
+        k = bisect.bisect_left(keys, start)
+        land_f, last, high = None, keys[k] if k < len(keys) else start, start
+        while k < len(keys):
+            g = keys[k]
+            if g - last > gap or (g - last > end_gap and zmax(g, g + int(2 * fps)) < PLAY_APEX_M):
+                break                                     # gone for good, or back only low (picked up)
+            if g - last > end_gap:
+                high = g                                  # back after a hole, and up: still in play
+            if g - high > low_for:
+                last = high                               # low for this long: the ball is dead; it came
+                break                                     # down right after the last time it was up
+            last = g
+            if fr[g][2] >= DEAD_LOW_M:
+                high = g
+            if fr[g][2] <= FLOOR_Z and zmax(g - look, g) >= LAND_FROM_M and zmax(g + 1, g + seen_after(g)) < UP_AFTER_M:
+                run = [h for h in keys[k:bisect.bisect_right(keys, g + int(0.2 * fps))] if fr[h][2] <= FLOOR_Z]
+                land_f = min(run, key=lambda h: fr[h][2])
+                break
+            k += 1
+        end = land_f if land_f is not None else last
+        out.append((start, land_f, end, [G for G in flights if G["f1"] >= start and G["f0"] <= end]))
+        free_from = end + int(REST_S * fps)
+        while i < len(flights) and flights[i]["f0"] < free_from:
+            i += 1
+    return out
+
+
 def find_rallies(B: dict, touches: list, servers=None) -> list[Rally]:
     """B: ball3d.json; touches: touches.json["touches"]; servers: optional (poses, cam) to find the
     serving team from the players (server_sides), which then decides each rally's winner (the
     winner serves next) ahead of where the ball landed."""
     fr = {int(k): v["xyz"] for k, v in B["frames"].items()}
     fps = float(B.get("fps") or 60.0)
-    chains: dict = {}
-    for F in B["flights"]:
-        chains.setdefault(F["chain"], []).append(F)
-    # the 3D splits where the ball is lost for a moment; a rally only ends at the floor, a new serve,
-    # or a long gap: pieces in between belong to the rally before them
-    groups: list = []
-    for c in sorted(chains, key=lambda c: min(F["f0"] for F in chains[c])):
-        fl = sorted(chains[c], key=lambda F: F["f0"])
-        has_serve = any(t.get("kind") == "serve" and fl[0]["f0"] - 6 <= t["frame"] <= fl[-1]["f1"] for t in touches)
-        if groups and not has_serve and not groups[-1]["landed"] and fl[0]["f0"] - groups[-1]["fl"][-1]["f1"] <= MAX_GAP_S * fps:
-            groups[-1]["fl"] += fl
-        else:
-            groups.append({"fl": fl})
-        groups[-1]["landed"] = any(fr.get(g, (0, 0, 9))[2] <= FLOOR_Z for F in groups[-1]["fl"]
-                                   for g in range(F["f0"], F["f1"] + 1))
+    flights = sorted(B["flights"], key=lambda F: F["f0"])
     out = []
-    for G in groups:
-        fl = G["fl"]
-        f0, f1 = fl[0]["f0"], fl[-1]["f1"]
-        tc = [t for t in touches if f0 - 6 <= t["frame"] <= f1]
-        serve = next((t for t in tc if t.get("kind") == "serve"), None)
-        start = serve["frame"] if serve else f0
-        # the first floor contact after the serve: the lowest point of a flight that reaches the floor
-        land_f, land = None, None
-        for F in fl:
-            if F["f1"] <= start:
-                continue
-            low = [g for g in range(max(F["f0"], start), F["f1"] + 1) if g in fr and fr[g][2] <= FLOOR_Z]
-            if low:
-                g = min(low, key=lambda g: fr[g][2])
-                land_f, land = g, fr[g][:2]
-                break
-        extrap = False
+    for start, land_f, f1, fl in _rally_spans(fr, flights, touches, fps):
+        tc = [t for t in touches if start - 6 <= t["frame"] <= f1]
+        serve = next((t for t in tc if t.get("kind") == "serve" and t["frame"] <= start + 6), None)
+        land, extrap = (fr[land_f][:2] if land_f is not None else None), False
         if land is None:                                  # the 3D stops just before the floor: carry the
             land, extrap = _carry_to_floor(fr, f1, fps), True   # last arc down to it (physics)
             if land is not None:
