@@ -79,3 +79,17 @@ def test_unseen_touch_not_scored():
     from evaluation.touches3d import your_touches
     V = {"contacts": {"5": "serve", "20": "pass", "40": "set", "41": "set"}, "unseen": [40]}
     assert your_touches(V) == [(20, 20, "pass")]
+
+
+def test_rally_guesses():
+    R = _review()
+    R.load_guesses([{"f0": 5, "f1": 30}])
+    assert R.open_guesses() == [5, 30]
+    assert R.next_guess(10) == 30 and R.next_guess(40) == 5        # wraps around
+    assert R.accept_guess(5) == "serve" and R.contacts[5] == "serve"
+    assert R.open_guesses() == [30]
+    R.set_contact(40, "dead")                                      # your own rally over nearby: guess done
+    assert R.open_guesses() == []
+    assert R.accept_guess(30) is None
+    R.undo(); R.undo()
+    assert R.open_guesses() == [5, 30]

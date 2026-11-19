@@ -64,6 +64,10 @@ it resumes where you left off.
                         Mark it at your best-guess frame; grey tick. Not scored for timing or
                         reach, and a not-seen serve isn't used as "the serve starts far back"
                  M      jump to the next marked touch
+  rally guesses  p      jump to the next GUESSED serve / rally over (cyan ticks; from the 3D rally
+                        finder, output/<clip>/rallies.json) that you haven't marked yet
+                 P      accept the guess at this frame as it is (a serve guess often starts at the
+                        server's toss: step to the hit with a / d and mark it with m 1 instead)
   other          u      undo                   t      toggle train / test clip
                  ?      help                   q/Esc  save and quit
 
@@ -111,6 +115,7 @@ class Review:
         self.touched_by: dict[int, int] = {int(k): int(x) for k, x in v.get("touched_by", {}).items()}
         self.touched_box: dict[int, list] = {int(k): x for k, x in v.get("touched_box", {}).items()}
         self.unseen: set[int] = {int(k) for k in v.get("unseen", [])}   # touches marked but not seen (v)
+        self.guesses: dict[int, str] = {}        # frame -> "serve" | "dead": the 3D rally finder's (p / P)
         self.box_at = None                       # (frame, number, box) -> that player's box at frame (or None)
         self._checks = None                      # label_checks flags, rebuilt after an edit
         self.labels: dict[int, object] = {int(k): x for k, x in v.get("labels", {}).items()}
@@ -498,6 +503,33 @@ class Review:
         C = sorted(self.checks())
         later = [g for g in C if g > f]
         return later[0] if later else (C[0] if C else None)
+
+    GUESS_NEAR = 90                          # frames: a guess this close to your own mark of that kind is done
+
+    def load_guesses(self, rallies: list[dict]):
+        """The rally finder's rallies (rallies.json) as guesses: each start a serve, each end a rally over."""
+        self.guesses = {}
+        for r in rallies:
+            self.guesses[int(r["f0"])] = "serve"
+            self.guesses[int(r["f1"])] = "dead"
+
+    def open_guesses(self) -> list[int]:
+        """Guesses you haven't marked yet (no mark of that kind within GUESS_NEAR frames)."""
+        mine = {k: [g for g, x in self.contacts.items() if x == k] for k in ("serve", "dead")}
+        return sorted(g for g, k in self.guesses.items()
+                      if not any(abs(g - h) <= self.GUESS_NEAR for h in mine[k]))
+
+    def next_guess(self, f: int) -> int | None:
+        G = self.open_guesses()
+        later = [g for g in G if g > f]
+        return later[0] if later else (G[0] if G else None)
+
+    def accept_guess(self, f: int) -> str | None:
+        """P: the guess at f becomes your mark. Returns its kind, or None (no open guess here)."""
+        if f not in self.guesses or f not in self.open_guesses() or f in self.contacts:
+            return None
+        self.set_contact(f, self.guesses[f])
+        return self.guesses[f]
 
     def next_contact(self, f: int) -> int | None:
         later = [g for g in sorted(self.contacts) if g > f]
@@ -995,6 +1027,7 @@ def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, pl
                "proposal": "proposal"}[src]
     shown = {"tracknet": "WASB only"}               # old name in the proposal files: finder point, no YOLO box
     note = msg or (("check: " + ", ".join(shown.get(x, x) for x in d) + "   ") if d and not R.is_edited(f) else "") + lab_txt \
+        + (f"   GUESS: {'serve' if R.guesses[f] == 'serve' else 'rally over'} (P accepts)" if f in R.guesses and f in R.open_guesses() else "") \
         + (f"   TOUCH: {R.contacts[f]}" + (" (NOT SEEN)" if f in R.unseen else "")
            + (f" by #{R.touched_by[f]}" if f in R.touched_by else "") if f in R.contacts else "")
     cv2.putText(img, note, (10, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.6,
@@ -1016,6 +1049,8 @@ def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, pl
             cv2.line(img, (xs(g), y0 + 32), (xs(g), y0 + 42), (0, 220, 255), 1)
     for g, _kind in R.contacts.items():                      # marked touches: white ticks above the timeline
         cv2.line(img, (xs(g), y0 + 1), (xs(g), y0 + 8), (130, 130, 130) if g in R.unseen else (255, 255, 255), 2)
+    for g in R.open_guesses():                               # rally finder's guesses (p / P): cyan
+        cv2.line(img, (xs(g), y0 + 1), (xs(g), y0 + 14), (255, 220, 0), 2)
     for g in R.checks():                                     # to re-check in your labels (b): purple
         cv2.line(img, (xs(g), y0 + 22), (xs(g), y0 + 42), (249, 121, 232), 2)
     cv2.line(img, (xs(f), y0), (xs(f), H), (255, 255, 255), 2)
@@ -1054,6 +1089,10 @@ def review(video: str, test: bool = False):
                 p = max(c, key=lambda x: x[0])[1] if c else None
             return p["box"] if p else None
         R.box_at = box_at
+    rp = paths.clip_dir(stem) / "rallies.json"           # the 3D rally finder's guesses (p / P)
+    if rp.exists():
+        R.load_guesses(json.load(open(rp)).get("rallies", []))
+        print(f"[review] {stem}: {len(R.open_guesses())} guessed serves / rally overs to check (p jumps, P accepts)")
     cam3d, ball3d = None, {}                  # a 3D from an earlier run: the suggestion also checks depth
     b3 = paths.clip_dir(stem) / "ball3d.json"
     cp = Path("data/cameras") / f"{stem}.json"
@@ -1270,6 +1309,24 @@ def review(video: str, test: bool = False):
             else:
                 state["contact"] = True
                 msg, msg_t = "touch type? 1 serve 2 pass 3 set 4 hit 5 block 6 dig 0 other 9 rally over", time.time()
+            continue
+        if k == "p":
+            g = R.next_guess(f); playing = False
+            if g is None:
+                msg, msg_t = "no guessed serves / rally overs left (or no rallies.json: run the 3D)", time.time()
+            else:
+                f = g; seg_i = R.segment_of(f)
+                kind = "serve" if R.guesses[g] == "serve" else "rally over"
+                msg, msg_t = (f"guess: {kind} at {g} ({len(R.open_guesses())} left). P accepts as is; "
+                              f"or step a / d and mark m {'1' if kind == 'serve' else '9'}"), time.time() + 3
+            continue
+        if k == "P":
+            kind = R.accept_guess(f); playing = False
+            if kind is None:
+                msg, msg_t = "P: no open guess at this frame (p jumps to one)", time.time()
+            else:
+                save()
+                msg, msg_t = f"{'serve' if kind == 'serve' else 'rally over'} marked at {f} (u undoes)", time.time()
             continue
         if k == "v":
             playing = False
