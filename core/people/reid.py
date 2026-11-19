@@ -92,7 +92,10 @@ def _looks(T, video, per_track: int = 10):
         ok, img = cap.read()
         if not ok:
             break
-        W = want.get(f, [])
+        H_, W_ = img.shape[:2]                             # boxes clipped to the picture; empty ones
+        W = [(tid, (x1, y1, x2, y2)) for tid, (x1, y1, x2, y2) in    # (a far-zoom box at the edge) skipped:
+             ((tid, (max(0, b[0]), max(0, b[1]), min(W_, b[2]), min(H_, b[3]))) for tid, b in want.get(f, []))
+             if x2 - x1 >= 2 and y2 - y1 >= 2]                         # the re-ID model rejects the batch
         if W and embed is not None:
             for (tid, _), e in zip(W, embed(img, np.array([b for _, b in W], float))):
                 embs[tid].append(e)
