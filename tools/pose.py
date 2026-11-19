@@ -94,6 +94,22 @@ PLAY_PAD_S = 3.0         # ... and this much is kept around each stretch (the se
 
 
 def in_play(stem: str, root) -> set[int] | None:
+    """Frames that may be play: rally pass A (core.rally.pass_a: the ball above the net tape) when
+    the clip is calibrated, else where the ball is seen at all (ball_seen). On full_rally_test both
+    keep every in-play frame you marked; pass A keeps 46% of the video, ball_seen 82%
+    (evaluation.pass_a_eval, Nov 19). None without a track."""
+    cp = Path("data/cameras") / f"{stem}.json"
+    tp = paths.track(stem, root)
+    if not cp.exists() or not Path(tp).exists():
+        return ball_seen(stem, root)
+    from core.geometry.camera import Camera
+    from core.rally.pass_a import track_positions, windows
+    T = json.load(open(tp))
+    W = windows(track_positions(T), float(T.get("fps") or 60.0), Camera.load(cp))
+    return {f for a, b in W for f in range(a, b + 1)}
+
+
+def ball_seen(stem: str, root) -> set[int] | None:
     """Frames that may be play: where the 2D track (track.json) has the ball, in stretches of at
     least PLAY_MIN_S with gaps under PLAY_GAP_S, plus PLAY_PAD_S around each. Generous on purpose
     (a ball held between rallies counts too): what's skipped is only where no ball is seen at all,
