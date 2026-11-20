@@ -19,7 +19,7 @@ from core.common import paths
 from core.rally import pass_b
 from core.rally.pass_a import track_positions
 from evaluation.inplay import in_play
-from evaluation.rallies_eval import checked_span, judge, truth_rallies
+from evaluation.rallies_eval import END_TOL_S, START_TOL_F, checked_span, edge_hits, judge, truth_rallies
 
 
 def load(stem: str, output: str) -> dict | None:
@@ -59,13 +59,15 @@ def rule_rallies(stem: str, dirs: list[str]) -> list[tuple[int, int]] | None:
     return None
 
 
+def _pass(ok, n):
+    return f"{ok}/{n}" if n else "-"
+
+
 def _line(name, J):
-    st = np.abs(J["starts"] + [0] * J["accepted_start"])
-    en = np.abs(J["ends"] + [0] * J["accepted_end"])
     return (f"{name:7s} found {J['found']}/{J['n_true']} fake {len(J['fake'])}  play kept "
             f"{J['play_kept'] / max(J['play'], 1):.1%}  dead cut {J['dead_cut'] / max(J['dead'], 1):.1%}  "
-            f"start <=0.5 s {np.mean(st <= 30) if len(st) else float('nan'):.0%}  "
-            f"end <=0.5 s {np.mean(en <= 30) if len(en) else float('nan'):.0%}")
+            f"start <={START_TOL_F} frames {_pass(J['start_ok'], J['start_n'])}  "
+            f"end <={END_TOL_S:g} s {_pass(J['end_ok'], J['end_n'])}")
 
 
 def main():
@@ -87,6 +89,7 @@ def main():
         acc = np.mean((p[c["keep"]] >= 0.5) == c["y"][c["keep"]])
         v1 = pass_b.to_rallies(p, c["fps"], c["n"])
         J1 = judge(c["truth"], v1, c["span"], c["rej"])
+        J1.update(edge_hits(J1, c["fps"]))
         tot["v1"].append(J1)
         print(f"{c['stem']:16s} windows {int(c['keep'].sum()):5d} ({c['y'][c['keep']].mean():.0%} in play), "
               f"v1 window accuracy {acc:.1%}")
@@ -94,9 +97,11 @@ def main():
         R = rule_rallies(c["stem"], [a.output] + a.rules)
         if R is not None:
             J0 = judge(c["truth"], R, c["span"], c["rej"])
+            J0.update(edge_hits(J0, c["fps"]))
             tot["rule"].append(J0)
             print("   " + _line("rule", J0))
             J2 = judge(c["truth"], pass_b.snap_edges(v1, R, c["fps"]), c["span"], c["rej"])
+            J2.update(edge_hits(J2, c["fps"]))
             tot["v1+rule"].append(J2)
             print("   " + _line("v1+rule", J2))
     for k, Js in tot.items():
@@ -104,7 +109,7 @@ def main():
             continue
         S = {key: (sum((J[key] for J in Js), []) if isinstance(Js[0][key], list) else sum(J[key] for J in Js))
              for key in ("starts", "ends", "accepted_start", "accepted_end", "found", "n_true", "fake",
-                         "play_kept", "play", "dead_cut", "dead")}
+                         "play_kept", "play", "dead_cut", "dead", "start_ok", "start_n", "end_ok", "end_n")}
         print(f"\nALL {_line(k, S)}  ({len(Js)} clips)")
 
 

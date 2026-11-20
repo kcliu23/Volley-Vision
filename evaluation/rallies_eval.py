@@ -10,6 +10,8 @@ Per clip and in total:
   rallies   your rallies (serve -> rally over) matched one-to-one to the detected ones by overlap:
             found / missed / fake (a detected rally overlapping none of yours; "you rejected" = X).
   edges     start = detected start - your serve, end = detected end - your rally over, in frames.
+            Pass marks: a start within START_TOL_F frames (the serve hit is one clear frame), an end
+            within END_TOL_S (the landing can be hidden or out of the picture: the end is blurrier).
             Marks placed with P (accept the guess as is) are exactly the guess: they'd score the
             rule against itself, so they are counted apart ("accepted as is") and left out of
             the median.
@@ -27,6 +29,15 @@ import numpy as np
 from core.common import paths
 
 PAD_S = 3.0               # s: the checked span reaches this far past your first / last mark
+START_TOL_F = 3           # frames: a start this close to your serve mark counts as right (your call, Nov 21)
+END_TOL_S = 0.5           # s: an end this close to your rally-over mark counts as right (your call, Nov 21)
+
+
+def edge_hits(J: dict, fps: float) -> dict:
+    """How many of judge()'s starts / ends pass (START_TOL_F frames / END_TOL_S); P-accepted left out."""
+    end_tol = END_TOL_S * fps
+    return {"start_ok": sum(abs(x) <= START_TOL_F for x in J["starts"]), "start_n": len(J["starts"]),
+            "end_ok": sum(abs(x) <= end_tol for x in J["ends"]), "end_n": len(J["ends"])}
 
 
 def runs(frames: list[int]) -> list[int]:
@@ -109,12 +120,12 @@ def _pct(x, n):
     return f"{x / n:.0%}" if n else "-"
 
 
-def _edges(name, v, acc):
+def _edges(name, v, acc, ok, tol):
     v = np.array(v)
     if not len(v):
         return f"{name}: -" + (f" ({acc} accepted as is)" if acc else "")
-    return (f"{name}: median {np.median(v):+.0f} frames, within 3 frames {np.mean(np.abs(v) <= 3):.0%}, "
-            f"within 0.5 s {np.mean(np.abs(v) <= 30):.0%} (n={len(v)}, {acc} accepted as is left out)")
+    return (f"{name}: within {tol} {ok}/{len(v)} ({ok / len(v):.0%}), median {np.median(v):+.0f} frames "
+            f"({acc} accepted as is left out)")
 
 
 def main():
@@ -142,6 +153,7 @@ def main():
             print(f"{s:16s} (no closed rally marked)")
             continue
         J = judge(truth, [(r["f0"], r["f1"]) for r in R], span, rejected)
+        J.update(edge_hits(J, V.get("fps", 30)))
         later = sum(1 for r in R if r["f0"] > span[1])
         print(f"{s:16s} {span[0]:>6d}-{span[1]:<6d} {J['n_true']:5d} {J['found']:5d} {len(J['missed']):6d} "
               f"{len(J['fake']):5d} {_pct(J['play_kept'], J['play']):>9s} {_pct(J['dead_cut'], J['dead']):>8s}"
@@ -161,8 +173,9 @@ def main():
     print(f"\nall: {tot['n_true']} rallies of yours, {tot['found']} found, {len(tot['missed'])} missed, "
           f"{len(tot['fake'])} fake ({tot['fake_rejected']} of them you rejected with X)")
     print(f"in play kept {_pct(tot['play_kept'], tot['play'])}, dead time cut {_pct(tot['dead_cut'], tot['dead'])}")
-    print(_edges("start - your serve", tot["starts"], tot["accepted_start"]))
-    print(_edges("end - your rally over", tot["ends"], tot["accepted_end"]))
+    print(_edges("start - your serve", tot["starts"], tot["accepted_start"], tot["start_ok"],
+                 f"{START_TOL_F} frames"))
+    print(_edges("end - your rally over", tot["ends"], tot["accepted_end"], tot["end_ok"], f"{END_TOL_S:g} s"))
 
 
 if __name__ == "__main__":

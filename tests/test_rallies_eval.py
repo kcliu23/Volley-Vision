@@ -28,3 +28,10 @@ def test_judge_one_to_one_and_accepted_guesses_apart():
 def test_judge_missed():
     J = judge([(100, 300)], [], span=(0, 400))
     assert J["missed"] == [(100, 300)] and J["play_kept"] == 0 and J["dead_cut"] == J["dead"]
+
+
+def test_edge_hits_start_strict_end_loose():
+    from evaluation.rallies_eval import edge_hits
+    J = {"starts": [2, -4, 30], "ends": [20, -31, 5]}
+    H = edge_hits(J, 60.0)                       # start: 3 frames; end: 0.5 s = 30 frames
+    assert (H["start_ok"], H["start_n"], H["end_ok"], H["end_n"]) == (1, 3, 2, 3)
