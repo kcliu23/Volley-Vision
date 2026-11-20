@@ -18,7 +18,8 @@ from pathlib import Path
 from core.common import paths
 from core.common.labels import Labels
 
-PRE_S, POST_S = 1.0, 1.5
+PRE_S = 2.5    # s before the rally start: the server bouncing + the toss (your call, Nov 21: 2-3 s)
+POST_S = 1.5
 
 
 def main():
