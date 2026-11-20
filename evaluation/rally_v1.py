@@ -2,6 +2,7 @@
 
     python -m evaluation.rally_v1 full_rally_test holdout1 ... test20 [--output output] [--rules <dir> ...]
 
+v1+rule: v1's rallies with their edges snapped to the rule's (core.rally.pass_b.snap_edges).
 Each clip is predicted by trees trained on the OTHER clips only, inside the part you've checked
 (evaluation.rallies_eval.checked_span). Both are scored with evaluation.rallies_eval.judge.
 --rules: more folders to look for <clip>/rallies.json (the rule's output) when output/ has none.
@@ -61,7 +62,7 @@ def rule_rallies(stem: str, dirs: list[str]) -> list[tuple[int, int]] | None:
 def _line(name, J):
     st = np.abs(J["starts"] + [0] * J["accepted_start"])
     en = np.abs(J["ends"] + [0] * J["accepted_end"])
-    return (f"{name:5s} found {J['found']}/{J['n_true']} fake {len(J['fake'])}  play kept "
+    return (f"{name:7s} found {J['found']}/{J['n_true']} fake {len(J['fake'])}  play kept "
             f"{J['play_kept'] / max(J['play'], 1):.1%}  dead cut {J['dead_cut'] / max(J['dead'], 1):.1%}  "
             f"start <=0.5 s {np.mean(st <= 30) if len(st) else float('nan'):.0%}  "
             f"end <=0.5 s {np.mean(en <= 30) if len(en) else float('nan'):.0%}")
@@ -75,7 +76,7 @@ def main():
     ap.add_argument("--rules", nargs="*", default=[])
     a = ap.parse_args()
     C = [c for c in (load(s, a.output) for s in a.stems) if c is not None]
-    tot = {"v1": [], "rule": []}
+    tot = {"v1": [], "rule": [], "v1+rule": []}
     for c in C:
         tr = [o for o in C if o is not c]
         Xtr = np.vstack([o["X"][o["keep"]] for o in tr])
@@ -84,7 +85,8 @@ def main():
                                            min_samples_leaf=20, random_state=0).fit(Xtr, ytr)
         p = m.predict_proba(c["X"])[:, 1]
         acc = np.mean((p[c["keep"]] >= 0.5) == c["y"][c["keep"]])
-        J1 = judge(c["truth"], pass_b.to_rallies(p, c["fps"], c["n"]), c["span"], c["rej"])
+        v1 = pass_b.to_rallies(p, c["fps"], c["n"])
+        J1 = judge(c["truth"], v1, c["span"], c["rej"])
         tot["v1"].append(J1)
         print(f"{c['stem']:16s} windows {int(c['keep'].sum()):5d} ({c['y'][c['keep']].mean():.0%} in play), "
               f"v1 window accuracy {acc:.1%}")
@@ -94,6 +96,9 @@ def main():
             J0 = judge(c["truth"], R, c["span"], c["rej"])
             tot["rule"].append(J0)
             print("   " + _line("rule", J0))
+            J2 = judge(c["truth"], pass_b.snap_edges(v1, R, c["fps"]), c["span"], c["rej"])
+            tot["v1+rule"].append(J2)
+            print("   " + _line("v1+rule", J2))
     for k, Js in tot.items():
         if not Js:
             continue

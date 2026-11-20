@@ -26,6 +26,7 @@ WINDOW_S = 0.5           # s: one row per window
 CONTEXT_S = (1.0, 3.0)   # s: each feature also averaged over +- these (centred)
 JOIN_GAP_S = 1.0         # [guess] in-play runs this close are one rally (a ball out of the picture)
 MIN_RALLY_S = 2.0        # [guess] shorter runs aren't rallies (the shortest marked: 157 frames)
+SNAP_S = 2.0             # [guess] a rule edge this close to a v1 edge replaces it (picked once, not tuned)
 
 BALL = ["seen", "high", "over_tape", "speed", "turns"]
 PEOPLE = ["people", "move_med", "move_p90"]
@@ -137,3 +138,19 @@ def to_rallies(p: np.ndarray, fps: float, n: int, thr: float = 0.5) -> list[tupl
             joined.append([a, b])
     out = [(a * w, min(n - 1, (b + 1) * w - 1)) for a, b in joined]
     return [(a, b) for a, b in out if (b - a + 1) / fps >= MIN_RALLY_S]
+
+
+def snap_edges(v1: list[tuple[int, int]], rule: list[tuple[int, int]], fps: float) -> list[tuple[int, int]]:
+    """v1 decides WHERE play is, the rule (3D serve touch, floor contact) decides the exact edges:
+    each v1 rally's start / end moves to the overlapping rule rallies' first start / last end when
+    that is within SNAP_S (design section 2: "edges snapped to the serve touch / ball landing")."""
+    snap = int(round(SNAP_S * fps))
+    out = []
+    for a, b in v1:
+        ov = [r for r in rule if min(b, r[1]) > max(a, r[0])]
+        if ov:
+            r0, r1 = min(r[0] for r in ov), max(r[1] for r in ov)
+            a = r0 if abs(r0 - a) <= snap else a
+            b = r1 if abs(r1 - b) <= snap else b
+        out.append((a, b))
+    return out

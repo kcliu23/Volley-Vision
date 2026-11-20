@@ -24,3 +24,11 @@ def test_features_shape_and_unknown_people():
     assert X.shape == (10, len(names)) and len(names) == 3 * (len(pass_b.BALL) + len(pass_b.PEOPLE))
     assert X[3, names.index("seen")] == 1.0 and X[0, names.index("seen")] == 0.0
     assert np.isnan(X[:, names.index("people")]).all()                    # no pose: unknown, not zero
+
+
+def test_snap_edges():
+    v1 = [(100, 500), (1000, 1200)]
+    rule = [(130, 470), (2000, 2100)]
+    # start 100 -> 130 (0.5 s away), end 500 -> 470; the second has no rule rally: kept as is
+    assert pass_b.snap_edges(v1, rule, fps=60) == [(130, 470), (1000, 1200)]
+    assert pass_b.snap_edges([(100, 500)], [(400, 900)], fps=60) == [(100, 500)]   # rule edges > 2 s away
