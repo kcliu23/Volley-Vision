@@ -90,3 +90,5 @@ _to_delete/
 
 # Private developer notes (details, accuracy history, decisions): kept locally, not published
 notes/
+data/verified/full_rally_test.json
+data/player_ids/full_rally_test.json
