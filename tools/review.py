@@ -68,6 +68,7 @@ it resumes where you left off.
                         finder, output/<clip>/rallies.json) that you haven't marked yet
                  P      accept the guess at this frame as it is (a serve guess often starts at the
                         server's toss: step to the hit with a / d and mark it with m 1 instead)
+                 X      reject the guess at this frame: neither a serve nor a rally over (u undoes)
   other          u      undo                   t      toggle train / test clip
                  ?      help                   q/Esc  save and quit
 
@@ -78,7 +79,8 @@ at the top); green = accepted, yellow = your edits. Ball labels: data/verified/<
    "others": {"<frame>": [[x, y, w, h], ...]},   other balls you confirmed (only these are exported)
    "contacts": {"<frame>": "serve" | "pass" | "set" | "hit" | "block" | "dig" | "other"},   touches you marked
    "touched_by": {"<frame>": 7}, "touched_box": {"<frame>": [x0, y0, x1, y1]},  who touched it, when you said
-   "unseen": [<frame>, ...]}   touches marked but not seen (v): frame is a best guess
+   "unseen": [<frame>, ...],   touches marked but not seen (v): frame is a best guess
+   "not_rally": {"<frame>": "serve" | "dead"}}   rally guesses you rejected (X)
 """
 from __future__ import annotations
 
@@ -116,6 +118,7 @@ class Review:
         self.touched_box: dict[int, list] = {int(k): x for k, x in v.get("touched_box", {}).items()}
         self.unseen: set[int] = {int(k) for k in v.get("unseen", [])}   # touches marked but not seen (v)
         self.guesses: dict[int, str] = {}        # frame -> "serve" | "dead": the 3D rally finder's (p / P)
+        self.not_rally: dict[int, str] = {int(k): x for k, x in v.get("not_rally", {}).items()}  # guesses you rejected (X)
         self.box_at = None                       # (frame, number, box) -> that player's box at frame (or None)
         self._checks = None                      # label_checks flags, rebuilt after an edit
         self.labels: dict[int, object] = {int(k): x for k, x in v.get("labels", {}).items()}
@@ -514,8 +517,9 @@ class Review:
             self.guesses[int(r["f1"])] = "dead"
 
     def open_guesses(self) -> list[int]:
-        """Guesses you haven't marked yet (no mark of that kind within GUESS_NEAR frames)."""
-        mine = {k: [g for g, x in self.contacts.items() if x == k] for k in ("serve", "dead")}
+        """Guesses you haven't marked or rejected yet (no mark or X of that kind within GUESS_NEAR frames)."""
+        mine = {k: [g for g, x in list(self.contacts.items()) + list(self.not_rally.items()) if x == k]
+                for k in ("serve", "dead")}
         return sorted(g for g, k in self.guesses.items()
                       if not any(abs(g - h) <= self.GUESS_NEAR for h in mine[k]))
 
@@ -531,6 +535,15 @@ class Review:
         self.set_contact(f, self.guesses[f])
         return self.guesses[f]
 
+    def reject_guess(self, f: int) -> str | None:
+        """X: the guess at f is neither a serve nor a rally over. It stops showing (saved as
+        not_rally, so it stays gone after a restart). Returns its kind, or None (no open guess here)."""
+        if f not in self.guesses or f not in self.open_guesses():
+            return None
+        self._push([])
+        self.not_rally[f] = self.guesses[f]
+        return self.guesses[f]
+
     def next_contact(self, f: int) -> int | None:
         later = [g for g in sorted(self.contacts) if g > f]
         return later[0] if later else None
@@ -540,7 +553,8 @@ class Review:
         self.undo_stack.append(([(f, self.labels.get(f), self.boxes.get(f), self.src.get(f), self.others_edit.get(f),
                                   self.contacts.get(f), self.touched_by.get(f), self.touched_box.get(f),
                                   f in self.unseen) for f in frames],
-                                [list(r) for r in self.reviewed], list(self.clicks), list(self.other_clicks)))
+                                [list(r) for r in self.reviewed], list(self.clicks), list(self.other_clicks),
+                                dict(self.not_rally)))
         if len(self.undo_stack) > 200:
             self.undo_stack.pop(0)
 
@@ -672,7 +686,7 @@ class Review:
     def undo(self) -> bool:
         if not self.undo_stack:
             return False
-        saved, reviewed, clicks, other_clicks = self.undo_stack.pop()
+        saved, reviewed, clicks, other_clicks, self.not_rally = self.undo_stack.pop()
         self._checks = None
         for f, lab, box, src, oth, con, who, wbox, uns in saved:
             (self.unseen.add if uns else self.unseen.discard)(f)
@@ -726,6 +740,7 @@ class Review:
                 "touched_by": {str(f): self.touched_by[f] for f in sorted(self.touched_by)},
                 "touched_box": {str(f): self.touched_box[f] for f in sorted(self.touched_box)},
                 "unseen": sorted(f for f in self.unseen if f in self.contacts),
+                "not_rally": {str(f): self.not_rally[f] for f in sorted(self.not_rally)},
                 "proposals": {"pipeline": P.get("pipeline"), "file": str(paths.proposals(Path(video).stem))}}
 
 
@@ -1318,7 +1333,7 @@ def review(video: str, test: bool = False):
                 f = g; seg_i = R.segment_of(f)
                 kind = "serve" if R.guesses[g] == "serve" else "rally over"
                 msg, msg_t = (f"guess: {kind} at {g} ({len(R.open_guesses())} left). P accepts as is; "
-                              f"or step a / d and mark m {'1' if kind == 'serve' else '9'}"), time.time() + 3
+                              f"or step a / d and mark m {'1' if kind == 'serve' else '9'}; X if neither"), time.time() + 3
             continue
         if k == "P":
             kind = R.accept_guess(f); playing = False
@@ -1327,6 +1342,15 @@ def review(video: str, test: bool = False):
             else:
                 save()
                 msg, msg_t = f"{'serve' if kind == 'serve' else 'rally over'} marked at {f} (u undoes)", time.time()
+            continue
+        if k == "X":
+            kind = R.reject_guess(f); playing = False
+            if kind is None:
+                msg, msg_t = "X: no open guess at this frame (p jumps to one)", time.time()
+            else:
+                save()
+                msg, msg_t = (f"guess rejected at {f} ({len(R.open_guesses())} left; u undoes). "
+                              f"p for the next"), time.time()
             continue
         if k == "v":
             playing = False

@@ -40,12 +40,12 @@ def test_touch_gap_and_mixed_and_rally_marks():
     assert touch_flags({"5": "serve", "40": "pass", "41": "pass", "90": "dead"}) == {}
 
 
-def _review():
+def _review(verified=None):
     N = 50
     P = {"n": N, "fps": 30, "width": 1920, "height": 1080,
          "frames": [{"xy": [900, 500], "box": [30, 30], "doubt": []} for _ in range(N)],
          "segments": [{"f0": 0, "f1": N - 1, "kind": "rally"}]}
-    return Review(P, None, None)
+    return Review(P, verified, None)
 
 
 def test_toucher_saved_removed_with_the_touch_and_undone():
@@ -93,6 +93,22 @@ def test_rally_guesses():
     assert R.accept_guess(30) is None
     R.undo(); R.undo()
     assert R.open_guesses() == [5, 30]
+
+
+def test_reject_rally_guess():
+    R = _review()
+    R.load_guesses([{"f0": 5, "f1": 30}, {"f0": 500, "f1": 600}])
+    assert R.reject_guess(10) is None                              # no guess at this frame
+    assert R.reject_guess(500) == "serve"
+    assert R.open_guesses() == [5, 30, 600] and 500 not in R.contacts   # a rejection is not a mark
+    assert R.reject_guess(500) is None                             # already rejected
+    J = R.to_json("x.mp4")
+    assert J["not_rally"] == {"500": "serve"}
+    R2 = _review(J)                                                # survives a restart
+    R2.load_guesses([{"f0": 5, "f1": 30}, {"f0": 520, "f1": 600}])  # rerun moved it a little: still gone
+    assert R2.open_guesses() == [5, 30, 600]
+    R.undo()
+    assert R.open_guesses() == [5, 30, 500, 600]
 
 
 def _seg(f0, f1, p0, v):
