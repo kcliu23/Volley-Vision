@@ -789,7 +789,8 @@ class FrameSource:
             if not ok:
                 return
             if self.scale != 1.0:
-                img = cv2.resize(img, None, fx=self.scale, fy=self.scale, interpolation=cv2.INTER_AREA)
+                img = cv2.resize(img, None, fx=self.scale, fy=self.scale,     # LINEAR: 0.7 ms vs AREA 3.6 ms,
+                                 interpolation=cv2.INTER_LINEAR)       # so 2x playback keeps up
             self.cache[self.pos] = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 90])[1].tobytes()
             self.pos += 1
 
@@ -972,6 +973,13 @@ class Follower:
 
 
 # ── drawing ──────────────────────────────────────────────────────────────────
+
+def play_steps(elapsed: float, fps: float, speed: float, max_steps: int = 8) -> int:
+    """Frames to advance while playing, after `elapsed` s since the last step. Drawing a frame
+    takes longer than 1/120 s, so 2x / 4x on a 60 fps clip skips frames to keep the speed
+    (one frame per draw capped it near 1x). At most max_steps, so a slow draw doesn't leap."""
+    return min(max_steps, int(elapsed * fps * speed))
+
 
 def draw(cv2, img, R: Review, f: int, scale: float, seg_i: int, speed: float, playing: bool, mouse, msg: str,
          people=None, pick=None):
@@ -1258,10 +1266,11 @@ def review(video: str, test: bool = False):
                 f = int(round(x / max(canvas.shape[1] - 1, 1) * (R.n - 1)))
                 seg_i = R.segment_of(f); playing = False
         if key == 255:
-            if playing and time.time() - last_step >= 1.0 / (P["fps"] * SPEEDS[speed_i]):
-                last_step = time.time()
+            now = time.time()
+            if playing and (steps := play_steps(now - last_step, P["fps"], SPEEDS[speed_i])):
+                last_step = max(last_step + steps / (P["fps"] * SPEEDS[speed_i]), now - 0.1)   # keep the remainder
                 if f < R.n - 1:
-                    f += 1
+                    f = min(R.n - 1, f + steps)
                     seg_i = R.segment_of(f)
                 else:
                     playing = False

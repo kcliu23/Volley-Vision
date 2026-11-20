@@ -128,3 +128,12 @@ def test_turn_flag_unmarked_touch_and_hidden():
     straight = _seg(0, 100, (100, 100), (10, 5))
     assert turn_flags(straight, C) == {}
     assert turn_flags(L, {}) == {}                                                   # not in play: no flag
+
+
+def test_play_steps_keeps_speed():
+    from tools.review import play_steps
+    assert play_steps(0.005, 60, 1.0) == 0                          # too soon: wait
+    assert play_steps(0.030, 60, 1.0) == 1
+    assert play_steps(0.030, 60, 2.0) == 3                          # 2x on 60 fps: skip frames to keep up
+    assert play_steps(0.030, 60, 4.0) == 7
+    assert play_steps(1.0, 60, 4.0) == 8                            # a slow draw doesn't leap
