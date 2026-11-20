@@ -35,3 +35,9 @@ def test_edge_hits_start_strict_end_loose():
     J = {"starts": [2, -4, 30], "ends": [20, -31, 5]}
     H = edge_hits(J, 60.0)                       # start: 3 frames; end: 0.5 s = 30 frames
     assert (H["start_ok"], H["start_n"], H["end_ok"], H["end_n"]) == (1, 3, 2, 3)
+
+
+def test_unseen_serve_not_timed():
+    from evaluation.rallies_eval import judge
+    J = judge([(100, 400)], [(150, 400)], (0, 1000), unseen={100})
+    assert J["found"] == 1 and J["starts"] == [] and J["unseen_start"] == 1

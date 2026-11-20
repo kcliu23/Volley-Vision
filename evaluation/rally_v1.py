@@ -47,7 +47,7 @@ def load(stem: str, output: str) -> dict | None:
     a, b = span
     rows = np.arange(len(X))
     keep = (rows * w >= a) & ((rows + 1) * w - 1 <= b)                 # windows inside the checked part
-    return {"stem": stem, "X": X, "y": y, "keep": keep, "names": names, "fps": fps, "n": n,
+    return {"stem": stem, "unseen": set(V.get("unseen") or []), "X": X, "y": y, "keep": keep, "names": names, "fps": fps, "n": n,
             "truth": truth, "rej": rej, "span": span}
 
 
@@ -88,7 +88,7 @@ def main():
         p = m.predict_proba(c["X"])[:, 1]
         acc = np.mean((p[c["keep"]] >= 0.5) == c["y"][c["keep"]])
         v1 = pass_b.to_rallies(p, c["fps"], c["n"])
-        J1 = judge(c["truth"], v1, c["span"], c["rej"])
+        J1 = judge(c["truth"], v1, c["span"], c["rej"], unseen=c["unseen"])
         J1.update(edge_hits(J1, c["fps"]))
         tot["v1"].append(J1)
         print(f"{c['stem']:16s} windows {int(c['keep'].sum()):5d} ({c['y'][c['keep']].mean():.0%} in play), "
@@ -96,11 +96,11 @@ def main():
         print("   " + _line("v1", J1))
         R = rule_rallies(c["stem"], [a.output] + a.rules)
         if R is not None:
-            J0 = judge(c["truth"], R, c["span"], c["rej"])
+            J0 = judge(c["truth"], R, c["span"], c["rej"], unseen=c["unseen"])
             J0.update(edge_hits(J0, c["fps"]))
             tot["rule"].append(J0)
             print("   " + _line("rule", J0))
-            J2 = judge(c["truth"], pass_b.snap_edges(v1, R, c["fps"]), c["span"], c["rej"])
+            J2 = judge(c["truth"], pass_b.snap_edges(v1, R, c["fps"]), c["span"], c["rej"], unseen=c["unseen"])
             J2.update(edge_hits(J2, c["fps"]))
             tot["v1+rule"].append(J2)
             print("   " + _line("v1+rule", J2))

@@ -76,9 +76,10 @@ def checked_span(truth: list, rejected: list[int], fps: float, n: int) -> tuple[
 
 
 def judge(truth: list, pred: list[tuple[int, int]], span: tuple[int, int], rejected: list[int] = (),
-          near: int = 90) -> dict:
+          near: int = 90, unseen: set[int] = frozenset()) -> dict:
     """Score detected rallies `pred` [(f0, f1)] against your rallies `truth` [(serve, dead|None)]
-    inside `span`. Pure function (tests use it)."""
+    inside `span`. Serves in `unseen` (v: hit off-screen, your best guess) aren't timed: they count
+    as found but their start is left out (like tools.review promises). Pure function (tests use it)."""
     a, b = span
     T = [(s, d) for s, d in truth if d is not None and a <= s and d <= b]
     P = [(f0, f1) for f0, f1 in pred if f1 >= a and f0 <= b]
@@ -89,10 +90,12 @@ def judge(truth: list, pred: list[tuple[int, int]], span: tuple[int, int], rejec
     for _, i, j in pairs:
         if i not in mt and j not in mp:
             mt.add(i); mp.add(j); match.append((i, j))
-    starts, ends, acc_s, acc_e = [], [], 0, 0
+    starts, ends, acc_s, acc_e, uns = [], [], 0, 0, 0
     for i, j in match:
         (s, d), (f0, f1) = T[i], P[j]
-        if f0 == s:
+        if s in unseen:
+            uns += 1
+        elif f0 == s:
             acc_s += 1
         else:
             starts.append(f0 - s)
@@ -111,7 +114,7 @@ def judge(truth: list, pred: list[tuple[int, int]], span: tuple[int, int], rejec
         kept[max(f0, a) - a:min(f1, b) - a + 1] = True
     return {"n_true": len(T), "found": len(match), "missed": [T[i] for i in range(len(T)) if i not in mt],
             "fake": fakes, "fake_rejected": rej, "starts": starts, "ends": ends,
-            "accepted_start": acc_s, "accepted_end": acc_e,
+            "accepted_start": acc_s, "accepted_end": acc_e, "unseen_start": uns,
             "play": int(play.sum()), "play_kept": int((play & kept).sum()),
             "dead": int((~play).sum()), "dead_cut": int((~play & ~kept).sum()), "span": span}
 
@@ -152,7 +155,7 @@ def main():
         if span is None:
             print(f"{s:16s} (no closed rally marked)")
             continue
-        J = judge(truth, [(r["f0"], r["f1"]) for r in R], span, rejected)
+        J = judge(truth, [(r["f0"], r["f1"]) for r in R], span, rejected, unseen=set(V.get("unseen") or []))
         J.update(edge_hits(J, V.get("fps", 30)))
         later = sum(1 for r in R if r["f0"] > span[1])
         print(f"{s:16s} {span[0]:>6d}-{span[1]:<6d} {J['n_true']:5d} {J['found']:5d} {len(J['missed']):6d} "
@@ -174,7 +177,8 @@ def main():
           f"{len(tot['fake'])} fake ({tot['fake_rejected']} of them you rejected with X)")
     print(f"in play kept {_pct(tot['play_kept'], tot['play'])}, dead time cut {_pct(tot['dead_cut'], tot['dead'])}")
     print(_edges("start - your serve", tot["starts"], tot["accepted_start"], tot["start_ok"],
-                 f"{START_TOL_F} frames"))
+                 f"{START_TOL_F} frames")
+          + (f", {tot['unseen_start']} serves not seen (v) left out" if tot.get("unseen_start") else ""))
     print(_edges("end - your rally over", tot["ends"], tot["accepted_end"], tot["end_ok"], f"{END_TOL_S:g} s"))
 
 
