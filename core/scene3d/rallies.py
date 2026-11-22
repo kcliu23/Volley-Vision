@@ -36,6 +36,11 @@ REST_S = 3.0                   # s: the next rally starts no sooner than this af
 NET_UNSURE_M = 1.5             # m: a landing this close to the net: its side from the last flight (over or not)
 CARRY_FROM_Z = 1.5             # m: a rally's last arc ending this low and falling is carried to the floor ...
 CARRY_MAX_S = 0.6              # s: ... if it gets there within this
+NET_CROSS_START = True         # a high flight that clears the net starts play like a serve touch does
+                               #   (FIVB 10.1: the ball crossing the net is play): short rallies (an ace,
+                               #   a serve out after one touch) are kept. Off: the old rule.
+NET_CROSS_POINTS = 10          # [guess] ... when the 3D fit of that flight has this many points (a
+                               #   6-point fit "clearing" the tape by 0.0 m was a ball thrown back)
 
 
 @dataclass
@@ -151,9 +156,14 @@ def _rally_spans(fr: dict, flights: list, touches: list, fps: float) -> list:
     def seen_after(g):                                    # how far to look after a low point: UP_AFTER_S,
         n = bisect.bisect_right(keys, g + after) - bisect.bisect_right(keys, g)   # or past a hole in the
         return after if n >= after // 3 else int(BACK_GAP_S * fps)               # 3D (it may come back up)
+    def crosses(F):                                       # clears the net, high: a serve or an attack
+        nc = F.get("net_crossing")
+        return (NET_CROSS_START and bool(nc) and nc.get("clears_net_by_m", -1) > 0
+                and F.get("n_points", 0) >= NET_CROSS_POINTS)
     out, free_from, i = [], -10 ** 9, 0
     while i < len(flights):
-        served = any(flights[i]["f0"] - 6 <= f <= flights[i]["f1"] for f in serves)
+        served = (any(flights[i]["f0"] - 6 <= f <= flights[i]["f1"] for f in serves)
+                  or (apex[i] >= PLAY_APEX_M and crosses(flights[i])))
         if flights[i]["f0"] < free_from or not ((served and goes_on(flights[i]["f0"], START_RUN_S / 2))
                                                  or (apex[i] >= PLAY_APEX_M and goes_on(flights[i]["f0"]))):
             i += 1
@@ -186,7 +196,8 @@ def _rally_spans(fr: dict, flights: list, touches: list, fps: float) -> list:
                 break
             k += 1
         end = land_f if land_f is not None else last
-        out.append((start, land_f, end, [G for G in flights if G["f1"] >= start and G["f0"] <= end]))
+        fl = [G for G in flights if G["f1"] >= start and G["f0"] <= end]
+        out.append((start, land_f, end, fl, any(crosses(G) and zmax(G["f0"], G["f1"]) >= PLAY_APEX_M for G in fl)))
         free_from = end + int(REST_S * fps)
         while i < len(flights) and flights[i]["f0"] < free_from:
             i += 1
@@ -201,7 +212,10 @@ def find_rallies(B: dict, touches: list, servers=None) -> list[Rally]:
     fps = float(B.get("fps") or 60.0)
     flights = sorted(B["flights"], key=lambda F: F["f0"])
     out = []
-    for start, land_f, f1, fl in _rally_spans(fr, flights, touches, fps):
+    keep_short = set()
+    for start, land_f, f1, fl, crossed in _rally_spans(fr, flights, touches, fps):
+        if crossed:
+            keep_short.add(start)
         tc = [t for t in touches if start - 6 <= t["frame"] <= f1]
         serve = next((t for t in tc if t.get("kind") == "serve" and t["frame"] <= start + 6), None)
         land, extrap = (fr[land_f][:2] if land_f is not None else None), False
@@ -244,7 +258,7 @@ def find_rallies(B: dict, touches: list, servers=None) -> list[Rally]:
         out.append(Rally(start, end_f, serve["side"] if serve else None, end,
                          [round(v, 2) for v in land] if land is not None else None, last_side, winner, why))
     # a "rally" shorter than this with no serve is the ball bouncing or rolling between points
-    out = [r for r in out if (r.f1 - r.f0) / fps >= MIN_RALLY_S or r.serve_side is not None]
+    out = [r for r in out if (r.f1 - r.f0) / fps >= MIN_RALLY_S or r.serve_side is not None or r.f0 in keep_short]
     if servers is not None:
         poses, cam = servers
         for r, side in zip(out, server_sides(out, poses, cam, fps)):
