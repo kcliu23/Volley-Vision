@@ -764,7 +764,7 @@ def constant_rate(video: str) -> bool:
     try:
         out = subprocess.run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
                               "packet=pts", "-of", "csv=p=0", str(video)],
-                             capture_output=True, text=True, timeout=120).stdout.split()
+                             capture_output=True, text=True, timeout=30).stdout.split()
         pts = sorted(int(x) for x in out)
     except Exception:                                    # no ffprobe, odd output: don't seek
         return False
@@ -778,8 +778,11 @@ class FrameSource:
     """Display-size frames, kept in memory as JPEG around where you are.
 
     Seeking is unreliable on phone video (variable frame times), so it is only used when the file
-    passes two checks once: constant_rate() and a seek-vs-decode picture comparison. Otherwise
-    going back re-opens the file and decodes from frame 0 (slow late in a long game)."""
+    passes two checks once: constant_rate() and a seek-vs-decode picture comparison. And every
+    seek is checked again: the first frame it reads must carry the time of the frame asked for
+    (k / fps); if not, seeking is switched off for good and that load decodes from frame 0.
+    Without seeking, going back re-opens the file and decodes from frame 0 (slow late in a long game).
+    Files whose first frame time isn't 0 (edit lists) never seek: deliberately conservative."""
     SEEK_MIN = 300         # frames: a jump forward further than this seeks instead of decoding through
     BACK_EXTRA = 240       # frames: going back fetches this much more, so the next a presses are instant
     KEEP = 300             # frames kept in memory beyond the window either side
@@ -817,37 +820,63 @@ class FrameSource:
         return bool(k > 0 and ok1 and ok2 and np.array_equal(img1, img2))
 
     def load(self, f0: int, f1: int, pad: int = 30):
-        cv2 = self.cv2
         f0, f1 = max(0, f0 - pad), f1 + pad
         need = [f for f in range(f0, f1 + 1) if f not in self.cache]
         if not need:
             return
         start = need[0]
         back = self.cap is None or start < self.pos
-        if self.cap is not None and start < self.pos:
-            start = max(0, start - self.BACK_EXTRA)
-        self.cache = {f: v for f, v in self.cache.items() if f0 - self.KEEP <= f <= f1 + self.KEEP}
         if (back or start - self.pos > self.SEEK_MIN) and start > 0 and self.can_seek():
-            if self.cap is None:
-                self._open()
-            self.cap.set(cv2.CAP_PROP_POS_FRAMES, start)
-            self.pos = start
-        elif back:
+            if self.cap is not None and start < self.pos:
+                start = max(1, start - self.BACK_EXTRA)            # the next a presses are then instant
+            self.cache = {f: v for f, v in self.cache.items() if f0 - self.KEEP <= f <= f1 + self.KEEP}
+            if self._seek(start):
+                self._decode(start, need[-1])
+                return
+            self.seek_ok = False                                   # a seek missed: never again
+            print("[review] a jump landed on the wrong frame: jumps now decode from the start")
+            back = True
+        self.cache = {f: v for f, v in self.cache.items() if f0 - self.KEEP <= f <= f1 + self.KEEP}
+        if back:
             self._open()
         while self.pos < start:
             if not self.cap.grab():
                 return
             self.pos += 1
-        while self.pos <= need[-1]:
+        self._decode(start, need[-1])
+
+    def _seek(self, start: int) -> bool:
+        """Jump to frame `start` and check it landed there (the frame read carries time start / fps).
+        On success that frame is cached and pos is start + 1."""
+        cv2 = self.cv2
+        if self.cap is None:
+            self._open()
+        fps = self.cap.get(cv2.CAP_PROP_FPS) or 0.0
+        if fps <= 0 or not self.cap.set(cv2.CAP_PROP_POS_FRAMES, start):
+            return False
+        ok, img = self.cap.read()
+        if not ok or abs(self.cap.get(cv2.CAP_PROP_POS_MSEC) - start * 1000.0 / fps) > 250.0 / fps:
+            return False                                           # more than a quarter frame off
+        self.pos = start
+        self._put(img)
+        return True
+
+    def _decode(self, start: int, last: int):
+        while self.pos <= last:
             ok, img = self.cap.read()
             if not ok:
                 return
-            if self.pos not in self.cache:
-                if self.scale != 1.0:
-                    img = cv2.resize(img, None, fx=self.scale, fy=self.scale,     # LINEAR: 0.7 ms vs AREA 3.6 ms,
-                                     interpolation=cv2.INTER_LINEAR)       # so 2x playback keeps up
-                self.cache[self.pos] = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 90])[1].tobytes()
-            self.pos += 1
+            self._put(img)
+
+    def _put(self, img):
+        """Cache the frame just read as frame `pos`, then move pos on."""
+        cv2 = self.cv2
+        if self.pos not in self.cache:
+            if self.scale != 1.0:
+                img = cv2.resize(img, None, fx=self.scale, fy=self.scale,     # LINEAR: 0.7 ms vs AREA 3.6 ms,
+                                 interpolation=cv2.INTER_LINEAR)       # so 2x playback keeps up
+            self.cache[self.pos] = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 90])[1].tobytes()
+        self.pos += 1
 
     def get(self, f: int):
         b = self.cache.get(f)
