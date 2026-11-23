@@ -1,7 +1,7 @@
 """How often the pipeline names the right toucher: output/<clip>/touches.json (tools.ball3d_run)
 against your who-touched-it (tools.review: touched_by + touched_box).
 
-    python -m evaluation.whotouched holdout1 holdout2 ... [--output output]
+    python -m evaluation.whotouched holdout1 holdout2 ... [--output output] [--player-ids]
 
 Each touch you named (consecutive marked frames = one touch) is matched to the pipeline's touch
 within MATCH frames of it:
@@ -27,9 +27,9 @@ def _iou(a, b):
     return ix / u if u > 0 else 0.0
 
 
-def score(stem: str, output: str) -> dict:
+def score(stem: str, output: str, sfx: str = "") -> dict:
     out = {"named": 0, "right": 0, "wrong": 0, "no toucher": 0, "no touch": 0}
-    vp, tp = Path(paths.verified(stem)), Path(output) / stem / "touches.json"
+    vp, tp = Path(paths.verified(stem)), Path(output) / stem / f"touches{sfx}.json"
     if not vp.exists() or not tp.exists():
         return out
     V = json.load(open(vp))
@@ -64,12 +64,13 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("stems", nargs="+")
     ap.add_argument("--output", default=str(paths.OUTPUT))
+    ap.add_argument("--player-ids", action="store_true", help="score touches_ids.json (tools.ball3d_run --player-ids)")
     a = ap.parse_args()
     keys = ["named", "right", "wrong", "no toucher", "no touch"]
     tot = dict.fromkeys(keys, 0)
     print(f"{'clip':12s} " + " ".join(f"{k:>11s}" for k in keys))
     for s in a.stems:
-        r = score(s, a.output)
+        r = score(s, a.output, "_ids" if a.player_ids else "")
         if r["named"]:
             print(f"{s:12s} " + " ".join(f"{r[k]:11d}" for k in keys))
         for k in keys:

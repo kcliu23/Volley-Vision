@@ -196,10 +196,15 @@ def main():
                     help="everything you labeled: your ball (--labels), touch marks (--use-my-touches), player "
                          "numbers and who touched it. Writes ball3d_labels.json / touches_labels.json / "
                          "ball3d_labels.png (the automatic results, without --use-labels, stay as they are)")
+    ap.add_argument("--player-ids", action="store_true",
+                    help="your player numbers only (tools.label_players): touches name the player. The numbers "
+                         "also steer the fit, so it writes ball3d_ids.json / touches_ids.json / rallies_ids.json "
+                         "(the automatic results stay as they are)")
     a = ap.parse_args()
     if a.use_labels:
         a.labels = a.use_my_touches = True
-    sfx = "_labels" if a.use_labels else ""            # automatic by default: none of your labels
+    ids = a.use_labels or a.player_ids
+    sfx = "_labels" if a.use_labels else ("_ids" if a.player_ids else "")   # automatic by default: no labels
     stem = Path(a.video).stem
     from core.common.timing import Laps
     TL = Laps(f"[ball3d] {stem}:")
@@ -236,7 +241,7 @@ def main():
     from core.scene3d.rally3d import solve_clip
     TL.lap("inputs, frame times, ball sizes")
     players = load_people(stem, a.output, cam, fps, log=lambda m: print(f"[ball3d] {stem}: " + m),
-                          use_labels=a.use_labels)
+                          use_labels=ids)
     if players:
         print(f"[ball3d] {stem}: {len(players)} player tracks: a touch away from all of them costs more")
     poses, plabels = None, None
@@ -245,7 +250,7 @@ def main():
         poses = json.load(open(pj2))["frames"]
         print(f"[ball3d] {stem}: poses found: touches are anchored to the player who made them")
         from core.people.player_labels import PlayerLabels
-        if a.use_labels:
+        if ids:
             plabels = PlayerLabels.load(stem, pj2, log=lambda m: print(f"[ball3d] {stem}: " + m))
         if plabels is not None:
             print(f"[ball3d] {stem}: your player numbers: each toucher's side of the net is known")

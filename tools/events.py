@@ -1,6 +1,6 @@
 """events.json + stats.json from the saved 3D (touches.json, rallies.json): no rerun.
 
-    python -m tools.events videos/match.mov            # or a clip name; + --labels for the 3D from your labels
+    python -m tools.events videos/match.mov            # or a clip name; + --labels / --player-ids: that 3D run
 
 Each touch gets its rally, team, player, type (core.events: the cheapest sequence the rules allow,
 from the ball's height and the 3D's sides), zone, and receptions a grade. Stats: core.stats.
@@ -35,10 +35,11 @@ def main():
     ap.add_argument("videos", nargs="+")
     ap.add_argument("--output", default=str(paths.OUTPUT))
     ap.add_argument("--labels", action="store_true")
+    ap.add_argument("--player-ids", action="store_true", help="the 3D from tools.ball3d_run --player-ids")
     a = ap.parse_args()
     for v in a.videos:
         stem = Path(v).stem
-        r = run(stem, a.output, "_labels" if a.labels else "")
+        r = run(stem, a.output, "_labels" if a.labels else ("_ids" if a.player_ids else ""))
         if r is None:
             continue
         ev, st = r
