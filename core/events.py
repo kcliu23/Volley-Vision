@@ -2,19 +2,11 @@
 section 3). Built from what the pipeline already writes: touches.json (the 3D fit's touches, their
 side and toucher) and rallies.json (core.scene3d.rallies: start, end, winner, score).
 
-The type comes from the order inside the rally, not from a model:
-    the serve: the first of the rally's first SERVE_LOOK touches far back and high (the serve
-    rule's test, core.rules.serve); touches before it (the ball held / bounced) are "other".
-    No such touch: the first one
-    a touch at the net, up at the tape, right after the other team's attack      block
-    a team's 1st touch: after the serve             reception
-                        otherwise                   dig
-    a team's 2nd touch                              set (a setter's dump is rare; the 3D missing
-                                                    the attack or a side wrong at the net isn't:
-                                                    "attack" here was wrong 9 times in 10, Nov 19)
-    a team's 3rd touch                              attack
-A block doesn't count as one of the team's touches (FIVB 14.4.1): after it, the next touch by
-either team starts that team's count again (core.rules.sequence counts the same way).
+The type comes from types_dp, not from a model: the cheapest touch sequence the rules allow
+(serve, then per team 1st touch = reception after the serve, else dig; 2nd = set; 3rd = attack;
+a touch up at the tape right after the other team's attack = block). A block doesn't count as
+one of the team's touches (FIVB 14.4.1): after it, the next touch by either team starts that
+team's count again (core.rules.sequence counts the same way).
 """
 from __future__ import annotations
 
@@ -37,46 +29,6 @@ def zone(xy, side: int) -> int | None:
     front = abs(x) <= ATTACK_LINE_M
     return {("r", True): 2, ("m", True): 3, ("l", True): 4,
             ("r", False): 1, ("m", False): 6, ("l", False): 5}[(lane, front)]
-
-
-def _is_block(t, prev, net_h) -> bool:
-    if prev is None or t.get("side") is None or prev.get("side") is None or t["side"] == prev["side"]:
-        return False
-    xyz = t.get("xyz")
-    return xyz is not None and abs(xyz[0]) < BLOCK_NEAR_M and xyz[2] > net_h - BLOCK_BELOW_TAPE_M
-
-
-def types(touches: list[dict], net_h: float = NET_H_MEN_M) -> list[str]:
-    """The type of each touch of ONE rally, in order (see the module doc)."""
-    out: list[str] = []
-    team, n, after_serve = None, 0, False
-    sv = next((i for i, t in enumerate(touches[:SERVE_LOOK]) if t.get("xyz") is not None
-               and abs(t["xyz"][0]) >= SERVE_HIT_X_M and t["xyz"][2] >= SERVE_START_Z_M), 0)
-    for i, t in enumerate(touches):
-        s = t.get("side")
-        prev = touches[i - 1] if i else None
-        if i < sv:
-            out.append("other")                   # before the serve: held, bounced, tossed
-            continue
-        if i == sv:
-            out.append("serve")
-            team, n, after_serve = s, 0, True
-            continue
-        if _is_block(t, prev, net_h) and out[-1] == "attack":     # a block answers an attack (FIVB 14.1.1)
-            out.append("block")
-            team, n = s, 0                        # the blocking team still has 3
-            continue
-        if s is None:
-            out.append("other")
-            continue
-        if s != team:
-            team, n = s, 1
-            out.append("reception" if after_serve and out[-1] == "serve" else "dig")
-        else:
-            n += 1
-            out.append({2: "set", 3: "attack"}.get(n, "other"))
-        after_serve = False
-    return out
 
 
 def build(touches: list[dict], rallies: list[dict], clip: str, fps: float | None = None,
