@@ -48,6 +48,8 @@ def test_stats_and_reception_grade():
     st = team_stats(ev)
     assert st["teams"]["near"]["attacks"] == 1 and st["teams"]["far"]["serves"] == 1
     assert st["side_out"] == 1.0                 # the receiving team won it
+    assert st["teams"]["far"]["served_rallies"] == 1 and st["teams"]["far"]["serve_won"] == 0.0
+    assert st["teams"]["near"]["served_rallies"] == 0 and st["teams"]["near"]["serve_won"] is None
     assert st["timing_s"]["set_to_attack"] == 0.5
 
 

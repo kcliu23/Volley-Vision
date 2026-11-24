@@ -66,7 +66,10 @@ def report(st: dict) -> list[str]:
         return f"{g['n']:2d} {pct(g)}"
     out = []
     for team, other in (("near", "far"), ("far", "near")):
-        z = st["teams"][team]["reception_by_zone"]
+        t = st["teams"][team]
+        if t.get("served_rallies"):
+            out.append(f"{team} won {t['serve_won'] * 100:.0f}% of the {t['served_rallies']} rallies it served")
+        z = t["reception_by_zone"]
         z = {int(k): v for k, v in z.items()}
         out.append(f"{team} receiving by zone (receptions, positive %), facing the net"
                    f" = where {other} served to:")

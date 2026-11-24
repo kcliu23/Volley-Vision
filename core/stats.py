@@ -2,7 +2,8 @@
 Per team, per FIVB zone 1-6 (where the receiver stood), and per player (touches with a number:
 tools.ball3d_run --player-ids).
 
-    serve       attempts; aces (reception graded error) and errors need the rally's end: later
+    serve       attempts (serves the 3D saw); served_rallies and serve_won (% of the rallies the
+                team served that it won). Aces / errors: not yet (they need every reception seen)
     reception   attempts, A / B / C / error, positive % (A + B); also per zone and per player.
                 A team's serve targets are the other team's reception zones (how well they
                 received where we served); aces the 3D missed aren't in them
@@ -65,6 +66,10 @@ def team_stats(ev: dict) -> dict:
             lengths.append(max(ts) - min(ts))
     known = [r for r in R if r["winner"] and r["serve_team"]]
     side_out = [r["winner"] != r["serve_team"] for r in known]
+    for team in out:                                       # points won on our own serve (break points)
+        mine = [r["winner"] == team for r in known if r["serve_team"] == team]
+        out[team]["served_rallies"] = len(mine)
+        out[team]["serve_won"] = round(sum(mine) / len(mine), 2) if mine else None
     return {"teams": out, "players": players, "timing_s": {k: _med(v) for k, v in gaps.items()} | {"rally_length": _med(lengths)},
             "side_out": round(sum(side_out) / len(side_out), 2) if side_out else None,
             "rallies": len(R), "rallies_with_winner": len(known)}
