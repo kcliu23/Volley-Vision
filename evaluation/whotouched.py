@@ -17,14 +17,9 @@ import json
 from pathlib import Path
 
 from core.common import paths
+from core.people.player_labels import _iou
 
 MATCH = 4
-
-
-def _iou(a, b):
-    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
-    u = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - ix
-    return ix / u if u > 0 else 0.0
 
 
 def score(stem: str, output: str, sfx: str = "") -> dict:

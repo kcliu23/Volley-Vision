@@ -19,12 +19,10 @@ LABELS = Path("data/player_ids")
 
 
 def _iou(a, b):
-    w = min(a[2], b[2]) - max(a[0], b[0])
-    h = min(a[3], b[3]) - max(a[1], b[1])
-    if w <= 0 or h <= 0:
-        return 0.0
-    i = w * h
-    return i / ((a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - i)
+    """Overlap of two boxes (x1, y1, x2, y2): intersection / union, 0 for empty boxes."""
+    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
+    u = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - ix
+    return ix / u if u > 0 else 0.0
 
 
 def remap_by_boxes(saved_frames: dict, pose: dict, min_iou: float = 0.6):

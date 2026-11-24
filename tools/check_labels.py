@@ -24,15 +24,10 @@ import numpy as np
 
 from core.common import paths
 from core.common.label_checks import all_flags
+from core.people.player_labels import _iou
 
 SIDE_HOLD = 30            # frames a number must stay on the other side to count as a switch
 COURT_X, COURT_Y = 12.0, 8.0   # feet beyond this (court + free zone) aren't on the floor: skipped
-
-
-def _iou(a, b):
-    ix = max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(0.0, min(a[3], b[3]) - max(a[1], b[1]))
-    u = (a[2] - a[0]) * (a[3] - a[1]) + (b[2] - b[0]) * (b[3] - b[1]) - ix
-    return ix / u if u > 0 else 0.0
 
 
 def _runs(flags: dict[int, str]) -> dict[int, str]:
