@@ -5,7 +5,7 @@ The pipeline has one "finder" slot (historically called TrackNet: the TrackNet s
 
     *.pth.tar or a path containing "wasb"  -> core.ball.wasb       (WASB, HRNet)
     anything else                          -> core.ball.tracknet   (TrackNetV3)
-(VballNet was tried and dropped: core/archive/vballnet.py.)
+(VballNet was tried and dropped: core/archive/vballnet.py in git history, removed Nov 24.)
 
 Each finder caches its candidates per clip (output/<clip>/cache/tracknet[_tag].json) and gets
 its own score calibration (models/score_calibration.json, one model per finder name), because

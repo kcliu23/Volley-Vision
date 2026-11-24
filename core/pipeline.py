@@ -4,7 +4,7 @@ pipeline="finder-first" (default): WASB on every frame, YOLO only on crops aroun
     candidates, joint linker (core/ball/finder_first.py) -> flights + contacts -> render.
 pipeline="classic": YOLO on every frame (cached), rule linker + zoom search, TrackNet gap
     filling -> flights + contacts -> render.
-The old single-pass tracker (run_legacy) is archived in core/archive/legacy_pipeline.py.
+The old single-pass tracker (run_legacy) is in git history: core/archive/legacy_pipeline.py (removed Nov 24).
 """
 import json
 import os

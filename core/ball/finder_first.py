@@ -14,7 +14,7 @@
 No zoom-search rounds, no rule-linker cascade. (A tracklet layer with rival / fixture removal
 used to sit before the joint linker; removed 2026-10-28 after evaluation.ablate showed the joint
 linker alone scores the same on holdout and dev, and better on the checked clips:
-core/archive/tracklet_linker.py.) Holdout numbers: README.md.
+core/archive/tracklet_linker.py in git history.) Holdout numbers: README.md.
 
 Caches (output/<clip>/cache/): sample_dets.json (sparse YOLO + profile), tracknet_<finder>.json
 (finder candidates), crops_<finder>[_strict0.6 | _top2_p0.1].json (crop finds; no suffix = loose).
