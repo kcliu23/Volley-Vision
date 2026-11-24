@@ -93,7 +93,7 @@ from pathlib import Path
 import numpy as np
 
 from core.common import paths
-from core.common.safe_io import backup, load_json, save_json
+from core.common.safe_io import Guarded, backup, load_json
 
 SPEEDS = [0.25, 0.5, 1.0, 2.0, 4.0]
 MAX_W, MAX_H = 1500, 860
@@ -1209,8 +1209,10 @@ def review(video: str, test: bool = False):
     scale = min(MAX_W / P["width"], (MAX_H - TIMELINE_H - TOP_H) / P["height"], 1.0)
     src = FrameSource(video, scale)
 
+    guard = Guarded(vp, log=lambda m: print(f"[review] {m}"))   # never over another window's saves
+
     def save():
-        save_json(vp, R.to_json(video), separators=(",", ":"))     # temp file then swap: never half-written
+        guard.save(R.to_json(video), separators=(",", ":"))      # temp file then swap: never half-written
 
     seg_i = R.next_unreviewed_segment(-1)
     if seg_i is None:

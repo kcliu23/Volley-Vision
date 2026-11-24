@@ -69,3 +69,22 @@ def test_old_backups_next_to_the_file_still_load(tmp_path):
     S.save_json(tmp_path / "clip.backup-20000101-000000.json", {"v": 0})
     p.write_text("{ broken")
     assert S.load_json(p, log=lambda m: None) == {"v": 0}
+
+
+def test_guarded_save_never_overwrites_another_windows_changes(tmp_path, clock):
+    p = tmp_path / "clip.json"
+    S.save_json(p, {"v": "start"})
+    a, b = S.Guarded(p, log=lambda m: None), S.Guarded(p, log=lambda m: None)   # two windows on one clip
+    assert a.save({"v": "a1"}) == p and a.save({"v": "a2"}) == p                  # its own saves: fine
+    went = b.save({"v": "b"})                                                    # b's copy is stale
+    assert json.load(open(p)) == {"v": "a2"}                                     # a's work kept
+    assert went.parent.name == ".conflicts" and json.load(open(went)) == {"v": "b"}
+    assert b.save({"v": "b2"}) == went and json.load(open(went)) == {"v": "b2"}  # b keeps saving there
+    assert a.save({"v": "a3"}) == p
+
+
+def test_guarded_new_file_created_elsewhere_is_kept(tmp_path, clock):
+    p = tmp_path / "clip.json"
+    g = S.Guarded(p, log=lambda m: None)                  # opened with no file yet
+    S.save_json(p, {"v": "other"})
+    assert g.save({"v": "mine"}) != p and json.load(open(p)) == {"v": "other"}

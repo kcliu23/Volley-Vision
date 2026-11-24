@@ -56,7 +56,7 @@ from pathlib import Path
 import numpy as np
 
 from core.common import paths
-from core.common.safe_io import backup, file_key, load_json, save_json
+from core.common.safe_io import Guarded, backup, file_key, load_json
 from core.people.player_labels import _iou, remap_by_boxes  # noqa: F401  (moved there)
 
 OUT_DIR = Path("data/player_ids")
@@ -215,6 +215,7 @@ def main():
             named_at.update(old.get("named_at", {}))
             print(f"[label] {stem}: loaded {len(names)} named pieces from {out}")
 
+    out = Guarded(out, log=lambda m: print(f"[label] {stem}: {m}"))   # never over another window's saves
     def piece(tid: int, f: int) -> str:
         return piece_of(cuts, tid, f)
 
@@ -536,7 +537,7 @@ def main():
                 (200, 255, 200) if took else (120, 200, 255))
         elif key in (13, 10):
             save(out, stem, pj, names, cuts, pose, piece, named_at=named_at, pose_key=pose_key)
-            say(f"Saved {len(names)} named pieces  ->  {out}", (120, 255, 120))
+            say(f"Saved {len(names)} named pieces  ->  {out.path}", (120, 255, 120))
             changed = False
         elif key in (ord("q"), 27):
             if changed:
@@ -548,7 +549,7 @@ def main():
     cv2.destroyAllWindows()
 
 
-def save(out: Path, stem: str, pose_path: Path, names: dict, cuts: dict, pose: dict, piece, quiet: bool = False,
+def save(out: Guarded, stem: str, pose_path: Path, names: dict, cuts: dict, pose: dict, piece, quiet: bool = False,
          named_at: dict | None = None, pose_key: str | None = None):
     """Pieces (tied to this pose.json, by pose_key) + boxes per frame with their number (survive a new pose run)."""
     frames = {}
@@ -562,12 +563,12 @@ def save(out: Path, stem: str, pose_path: Path, names: dict, cuts: dict, pose: d
                 row.append({"box": p["box"], "player": v})
         if row:
             frames[f] = row
-    save_json(out, {"schema": "vv-player-ids/1", "clip": stem, "pose": str(pose_path), "pose_key": pose_key,
+    went = out.save({"schema": "vv-player-ids/1", "clip": stem, "pose": str(pose_path), "pose_key": pose_key,
                     "sides": "players 1-6 near side (camera side), 7-12 far side",
                     "pieces": names, "cuts": {str(k): v for k, v in cuts.items()}, "named_at": named_at or {},
                     "frames": frames}, separators=(",", ":"))   # temp file then swap: never half-written
     if not quiet:
-        print(f"[label] {stem}: saved {len(names)} named pieces, {sum(len(r) for r in frames.values())} boxes  →  {out}")
+        print(f"[label] {stem}: saved {len(names)} named pieces, {sum(len(r) for r in frames.values())} boxes  →  {went}")
 
 if __name__ == "__main__":
     main()

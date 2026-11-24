@@ -150,11 +150,25 @@ def scenario_pose_rerun():
     return tot > 0 and agree / tot > 0.98, f"{agree}/{tot} saved boxes keep their number ({report})"
 
 
+def scenario_second_window():
+    """Another window (or an iCloud sync) writes the file mid-session: its save is kept, and this
+    window's later changes go to .conflicts/ instead of erasing it."""
+    def other_window(L):
+        json.dump({**L, "pieces": {"99": 5}}, open(T.OUT_DIR / f"{CLIP}.json", "w"))
+
+    def conflicts(L):
+        return [json.load(open(p)).get("pieces", {}).get("8") for p in (T.OUT_DIR / ".conflicts").glob("*.json")]
+    out, checks = run([("click", point(0, 8)), ("key", ord("3")), ("check", other_window),
+                       ("click", point(0, 8)), ("key", ord("4")), ("check", conflicts)])
+    ok = out.get("pieces") == {"99": 5} and checks[1] == [4]
+    return ok, f"file: {out.get('pieces')}, conflict copies (piece 8): {checks[1]}"
+
+
 pytestmark = [pytest.mark.data, pytest.mark.slow]   # replays the real video: ~2 min
 
 
 @pytest.mark.parametrize("scenario", [scenario_swap, scenario_plain_fix, scenario_undo, scenario_autosave,
-                                      scenario_damaged_file, scenario_pose_rerun], ids=lambda f: f.__name__[9:])
+                                      scenario_damaged_file, scenario_pose_rerun, scenario_second_window], ids=lambda f: f.__name__[9:])
 def test_scenario(scenario):
     ok, msg = scenario()
     assert ok, msg
@@ -163,7 +177,8 @@ def test_scenario(scenario):
 if __name__ == "__main__":
     fails = 0
     for name, fn in [("swap", scenario_swap), ("plain fix", scenario_plain_fix), ("undo", scenario_undo),
-                     ("autosave", scenario_autosave), ("damaged file", scenario_damaged_file), ("pose re-run", scenario_pose_rerun)]:
+                     ("autosave", scenario_autosave), ("damaged file", scenario_damaged_file), ("pose re-run", scenario_pose_rerun),
+                     ("second window", scenario_second_window)]:
         ok, msg = fn()
         fails += not ok
         print(f"{'PASS' if ok else 'FAIL'}  {name:12s} {msg}")

@@ -8,6 +8,10 @@
                                     call once per session, before the first change. Hidden, so tools
                                     that list <dir>/*.json never mistake a backup for a clip.
     file_key(path)                  a short fingerprint of a file's content (to notice it changed)
+    g = Guarded(path); g.save(obj)  save_json, but never over changes made elsewhere since this
+                                    session loaded or last saved the file (a second window on the
+                                    same clip, an iCloud copy synced back): those changes stay, and
+                                    this session's go to <dir>/.conflicts/<stem>.conflict-<time>.json
 """
 from __future__ import annotations
 
@@ -80,3 +84,22 @@ def file_key(path) -> str:
         for chunk in iter(lambda: fh.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()[:16]
+
+
+class Guarded:
+    """A hand-label file one window owns. Make it right after loading the file."""
+
+    def __init__(self, path, log=print):
+        self.path, self.log = Path(path), log
+        self.key = file_key(self.path) if self.path.exists() else None
+
+    def save(self, obj, **dump_kw) -> Path:
+        now = file_key(self.path) if self.path.exists() else None
+        if now != self.key:                                 # someone else wrote it: keep theirs
+            orig = self.path
+            self.path = orig.parent / ".conflicts" / f"{orig.stem}.conflict-{time.strftime('%Y%m%d-%H%M%S')}.json"
+            self.log(f"[safe_io] !!! {orig} was changed by another window or a sync since it was opened. "
+                     f"Not overwriting it: this window now saves to {self.path}. Merge by hand.")
+        save_json(self.path, obj, **dump_kw)
+        self.key = file_key(self.path)
+        return self.path
