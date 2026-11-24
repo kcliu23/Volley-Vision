@@ -179,7 +179,6 @@ def frame_cache(video: str, stem: str, scale: float):
 def main():
     import cv2
 
-    from core.geometry.camera import Camera
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("video")
     ap.add_argument("--output", default=str(paths.OUTPUT))
@@ -228,11 +227,9 @@ def main():
     group = {}
     on_court = {}
     if cam_p.exists():
-        from core.people.reid import build_ids
-        cam = Camera.load(cam_p)
+        from core.people.reid import build_ids_cached
         fps = cv2.VideoCapture(a.video).get(cv2.CAP_PROP_FPS) or 60.0
-        print(f"[label] {stem}: re-ID guesses ...", flush=True)
-        ids = build_ids(pose, a.video, cam, fps)
+        ids = build_ids_cached(pose, pose_key, a.video, cam_p, fps, paths.cache_dir(stem, a.output) / "reid.json")
         group = {t: v["player"] for t, v in ids.items()}
         on_court = {t: v["on_court"] for t, v in ids.items()}
 

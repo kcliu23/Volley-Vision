@@ -15,10 +15,13 @@ time. Off-court people (feet outside the court + 1.5 m: the bench, referees, spe
 apart.
 
     ids = build_ids(pose_frames, video, cam, fps)
+    ids = build_ids_cached(pose_frames, pose_key, video, cam_path, fps, cache)   # same, saved for reuse
     ids["tracklet id"] -> {"player": n, "side": -1 near / +1 far / 0, "on_court": bool}
 """
 from __future__ import annotations
 
+import heapq
+import json
 from collections import defaultdict
 
 import numpy as np
@@ -118,44 +121,33 @@ def build_ids(pose_frames: dict, video: str, cam, fps: float):
     look, emb = _looks(T, video)
     # players: lists of tracklet ids, joined greedily by the best (lowest cost) valid pair
     groups = {tid: [tid] for tid in T}
+    pos = {tid: i for i, tid in enumerate(T)}             # ties go to the earlier pair, as in a full rescan
 
-    def span(g):
-        return min(T[t]["f0"] for t in g), max(T[t]["f1"] for t in g)
-
-    def overlaps(g1, g2):
-        s1 = set(f for t in g1 for f in T[t]["frames"])
-        return any(f in s1 for t in g2 for f in T[t]["frames"])
-
-    def end_spot(g, at_end):
+    def summary(g):
+        """What cost() needs from a group, worked out once per merge instead of once per pair."""
         pts = sorted((q for t in g for q in T[t]["spots"]), key=lambda q: q[0])
-        if not pts:
-            return None
-        q = pts[-1] if at_end else pts[0]
-        return q
+        s = sum(T[t]["side"] * len(T[t]["frames"]) for t in g)
+        la = [look[t] for t in g if t in look]
+        ea = [emb[t] for t in g if t in emb]
+        return {"f0": min(T[t]["f0"] for t in g), "f1": max(T[t]["f1"] for t in g),
+                "on": any(T[t]["on_court"] for t in g), "side": int(np.sign(s)) if s else 0,
+                "first": pts[0] if pts else None, "last": pts[-1] if pts else None,
+                "look": np.mean(la, axis=0) if la else None, "emb": np.mean(ea, axis=0) if ea else None}
 
-    def side(g):
-        s = [T[t]["side"] * len(T[t]["frames"]) for t in g]
-        return int(np.sign(sum(s))) if abs(sum(s)) > 0 else 0
-
-    def cost(g1, g2):
-        a0, a1 = span(g1)
-        b0, b1 = span(g2)
-        if a1 < b0:
-            first, second, gap = g1, g2, b0 - a1
-        elif b1 < a0:
-            first, second, gap = g2, g1, a0 - b1
+    def cost(A, B):
+        if A["f1"] < B["f0"]:
+            first, second, gap = A, B, B["f0"] - A["f1"]
+        elif B["f1"] < A["f0"]:
+            first, second, gap = B, A, A["f0"] - B["f1"]
         else:
             return None                                    # on screen together
         if gap / fps > MAX_GAP_S:
             return None
-        on1 = any(T[t]["on_court"] for t in g1)
-        on2 = any(T[t]["on_court"] for t in g2)
-        if on1 != on2:
+        if A["on"] != B["on"]:
             return None
-        s1, s2 = side(g1), side(g2)
-        if s1 and s2 and s1 != s2:
+        if A["side"] and B["side"] and A["side"] != B["side"]:
             return None                                    # players don't change sides mid-clip
-        e, s = end_spot(first, True), end_spot(second, False)
+        e, s = first["last"], second["first"]
         dist_cost = 0.5
         if e is not None and s is not None:
             d = float(np.hypot(e[1] - s[1], e[2] - s[2]))
@@ -163,34 +155,63 @@ def build_ids(pose_frames: dict, video: str, cam, fps: float):
             if d > reach:
                 return None
             dist_cost = d / reach
-        la = [look[t] for t in g1 if t in look]
-        lb = [look[t] for t in g2 if t in look]
         look_cost = 0.3
-        if la and lb:
-            look_cost = float(cv2.compareHist(np.mean(la, axis=0), np.mean(lb, axis=0), cv2.HISTCMP_BHATTACHARYYA))
-            ea = [emb[t] for t in g1 if t in emb]
-            eb = [emb[t] for t in g2 if t in emb]
-            if ea and eb:
-                ma, mb = np.mean(ea, axis=0), np.mean(eb, axis=0)
+        if A["look"] is not None and B["look"] is not None:
+            look_cost = float(cv2.compareHist(A["look"], B["look"], cv2.HISTCMP_BHATTACHARYYA))
+            if A["emb"] is not None and B["emb"] is not None:
+                ma, mb = A["emb"], B["emb"]
                 look_cost = 0.5 * look_cost + 0.5 * (1.0 - float(ma @ mb / (np.linalg.norm(ma) * np.linalg.norm(mb))))
-            if look_cost > LOOK_MAX:
+            if not look_cost <= LOOK_MAX:                   # NaN (an empty histogram) is no match either
                 return None
         return look_cost + 0.5 * dist_cost + 0.2 * gap / fps
 
-    while True:
-        keys = list(groups)
-        best = None
-        for i, a in enumerate(keys):
-            for b in keys[i + 1:]:
-                c = cost(groups[a], groups[b])
-                if c is not None and (best is None or c < best[0]):
-                    best = (c, a, b)
-        if best is None:
-            break
-        _, a, b = best
+    # greedy, best pair first: a heap of pair costs, and after a merge only the merged group's pairs
+    # are rescored (a full rescan per merge took hours on a 2,900-piece game)
+    S = {t: summary(g) for t, g in groups.items()}
+    ver = dict.fromkeys(groups, 0)
+    heap = []
+
+    def push(a, b):
+        if pos[a] > pos[b]:
+            a, b = b, a
+        c = cost(S[a], S[b])
+        if c is not None:
+            heapq.heappush(heap, (c, pos[a], pos[b], a, b, ver[a], ver[b]))
+
+    keys = list(groups)
+    for i, a in enumerate(keys):
+        for b in keys[i + 1:]:
+            push(a, b)
+    while heap:
+        _, _, _, a, b, va, vb = heapq.heappop(heap)
+        if b not in groups or a not in groups or ver[a] != va or ver[b] != vb:
+            continue                                       # stale: a side was merged since
         groups[a] = groups[a] + groups.pop(b)
+        ver[a] += 1
+        S[a] = summary(groups[a])
+        for k in groups:
+            if k != a:
+                push(a, k)
     out = {}
-    for n, (_gid, g) in enumerate(sorted(groups.items(), key=lambda kv: -sum(len(T[t]["frames"]) for t in kv[1]))):
+    for n, (gid, g) in enumerate(sorted(groups.items(), key=lambda kv: -sum(len(T[t]["frames"]) for t in kv[1]))):
         for t in g:
-            out[t] = {"player": n, "side": side(g), "on_court": any(T[t2]["on_court"] for t2 in g)}
+            out[t] = {"player": n, "side": S[gid]["side"], "on_court": any(T[t2]["on_court"] for t2 in g)}
     return out
+
+
+def build_ids_cached(pose_frames: dict, pose_key: str, video: str, cam_path, fps: float, cache):
+    """build_ids, saved in `cache` and reused while the pose and camera files stay the same.
+    On a full game the looks alone (every frame read) take many minutes."""
+    from core.common.safe_io import file_key, save_json
+    from core.geometry.camera import Camera
+    key = f"v1:{pose_key}:{file_key(cam_path)}"           # bump v1 when build_ids changes its answer
+    try:
+        old = json.load(open(cache))
+    except (OSError, ValueError):                         # none yet, or damaged: redo it
+        old = {}
+    if old.get("key") == key:
+        return {int(t): v for t, v in old["ids"].items()}
+    print("[reid] re-ID guesses (first time only; slow on a long clip) ...", flush=True)
+    ids = build_ids(pose_frames, video, Camera.load(cam_path), fps)
+    save_json(cache, {"key": key, "ids": ids})
+    return ids

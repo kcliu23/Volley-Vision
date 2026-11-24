@@ -49,3 +49,20 @@ def test_too_far_to_run_is_not_joined():
                  2: (65, 140, -1.0, -3.0, -1.0, -3.0)})  # 6+ m away 5 frames later
     ids = build_ids(pf, "no-video.mov", FlatCamera(), fps=60.0)
     assert ids[1]["player"] != ids[2]["player"]
+
+
+def test_cache_reused_until_the_camera_changes(tmp_path, monkeypatch):
+    import core.people.reid as reid
+    from core.geometry.camera import Camera
+    calls = []
+    monkeypatch.setattr(reid, "build_ids", lambda *a: calls.append(1) or {7: {"player": 0, "side": 1, "on_court": True}})
+    monkeypatch.setattr(Camera, "load", staticmethod(lambda p: None))
+    cam, cache = tmp_path / "cam.json", tmp_path / "cache" / "reid.json"
+    cam.write_text("a")
+    first = reid.build_ids_cached({}, "pose1", "v.mov", cam, 60.0, cache)
+    again = reid.build_ids_cached({}, "pose1", "v.mov", cam, 60.0, cache)
+    assert first == again == {7: {"player": 0, "side": 1, "on_court": True}} and len(calls) == 1
+    cam.write_text("b")                                   # recalibrated: guesses redone
+    reid.build_ids_cached({}, "pose1", "v.mov", cam, 60.0, cache)
+    reid.build_ids_cached({}, "pose2", "v.mov", cam, 60.0, cache)   # new pose run: redone
+    assert len(calls) == 3
