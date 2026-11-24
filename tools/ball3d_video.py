@@ -65,7 +65,7 @@ def main():
     ap.add_argument("--players", choices=["touch", "all", "none"], default="touch",
                     help="player tags: touch (default) = only whoever touched the ball, fading in and out around "
                          "the touch; all = every player (checking your numbers); none")
-    ap.add_argument("--labels", action="store_true", help="the 3D built from your labels (ball3d_run --use-labels): "
+    ap.add_argument("--labels", action="store_true", help="the 3D built from your labels (ball3d_run --labels): "
                     "ball3d_labels.json -> ball3d_labels.mp4, with your player numbers")
     a = ap.parse_args()
     sfx = "_labels" if a.labels else ""

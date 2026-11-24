@@ -26,7 +26,7 @@ from core.geometry.camera import Camera
 from core.scene3d.ball3d import BALL_D, calibrate_size, edge_mask, free_px, sizes_for
 
 
-def positions(stem: str, track: dict, labels: bool, contacts: dict | None = None, my_ball: bool = False):
+def positions(stem: str, track: dict, labels: bool, contacts: dict | None = None):
     """(uv (n, 2) with NaN where no ball, weight (n,))."""
     n = len(track["frames"])
     uv, w = np.full((n, 2), np.nan), np.zeros(n)
@@ -69,14 +69,6 @@ def positions(stem: str, track: dict, labels: bool, contacts: dict | None = None
                 uv[r["f"]] = r["pos"][:2]
                 st = r["state"]
                 w[r["f"]] = filled_weight(r["f"]) if st == "filled" else (0.5 if st == "tracknet" else 1.0)
-    # --my-ball: your clicked ball positions (tools.review) win over the tracker wherever you
-    # placed one. Off by default: on the holdouts it found 1 more touch but invented 7 more
-    # (64 vs 57), since clicks add strong points during contacts where the tracker had none
-    vp = paths.verified(stem)
-    if my_ball and not labels and Path(vp).exists():
-        for k, v in (json.load(open(vp)).get("labels") or {}).items():
-            if isinstance(v, list) and int(k) < n:
-                uv[int(k)], w[int(k)] = v[:2], 1.0
     return uv, w
 
 
@@ -136,7 +128,7 @@ def write_touches(path, flights, frames, uv, T, fps, cam, poses, plabels, stem, 
                 break
         mine = [g for g in (who or {}) if abs(g - t) <= TOUCH_GAP // 2 + 2]
         toucher = None
-        if mine:                                          # you said who touched it (--use-labels): that's it
+        if mine:                                          # you said who touched it (--labels): that's it
             g = min(mine, key=lambda g: abs(g - t))
             toucher = {"number": who[g], "track": None, "box": (who_box or {}).get(g), "d": None,
                        "feet": None, "labelled": True}
@@ -183,28 +175,18 @@ def write_rallies(d: Path, sfx: str, stem: str):  # also: python -m tools.rallie
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("video")
-    ap.add_argument("--labels", action="store_true", help="use your checked labels instead of the tracker's output")
     ap.add_argument("--output", default=str(paths.OUTPUT))
-    ap.add_argument("--v2", action="store_true", help=argparse.SUPPRESS)   # the default now; kept so old commands work
-    ap.add_argument("--picture-timing-only", action="store_true",
-                    help="don't move catch-up skips to where the ball's double step is")
-    ap.add_argument("--my-ball", action="store_true",
-                    help="your clicked ball positions (tools.review) replace the tracker's where you placed one")
-    ap.add_argument("--use-my-touches", action="store_true",
-                    help="your touch marks (tools.review) are the touches; only the ball in play is fitted")
-    ap.add_argument("--use-labels", action="store_true",
-                    help="everything you labeled: your ball (--labels), touch marks (--use-my-touches), player "
-                         "numbers and who touched it. Writes ball3d_labels.json / touches_labels.json / "
-                         "ball3d_labels.png (the automatic results, without --use-labels, stay as they are)")
+    ap.add_argument("--labels", action="store_true",
+                    help="everything you labeled: your ball, touch marks, player numbers and who touched it. "
+                         "Writes ball3d_labels.json / touches_labels.json / rallies_labels.json (the automatic "
+                         "results stay as they are)")
     ap.add_argument("--player-ids", action="store_true",
                     help="your player numbers only (tools.label_players): touches name the player. The numbers "
                          "also steer the fit, so it writes ball3d_ids.json / touches_ids.json / rallies_ids.json "
                          "(the automatic results stay as they are)")
     a = ap.parse_args()
-    if a.use_labels:
-        a.labels = a.use_my_touches = True
-    ids = a.use_labels or a.player_ids
-    sfx = "_labels" if a.use_labels else ("_ids" if a.player_ids else "")   # automatic by default: no labels
+    ids = a.labels or a.player_ids
+    sfx = "_labels" if a.labels else ("_ids" if a.player_ids else "")   # automatic by default: no labels
     stem = Path(a.video).stem
     from core.common.timing import Laps
     TL = Laps(f"[ball3d] {stem}:")
@@ -214,7 +196,7 @@ def main():
     C = json.load(open(paths.contacts(stem, a.output)))
     fps = float(track.get("fps") or C.get("fps") or 60.0)
     n = len(track["frames"])
-    uv, w = positions(stem, track, a.labels, C, my_ball=a.my_ball)
+    uv, w = positions(stem, track, a.labels, C)
     size = sizes_for(stem, n)
 
     # true frame times: screen recordings repeat a frame now and then and skip one a few frames
@@ -223,9 +205,8 @@ def main():
     T = frame_times(a.video, paths.clip_dir(stem, a.output))
     if len(T) < n:
         T = np.r_[T, T[-1] + np.arange(1, n - len(T) + 1)]
-    if not a.picture_timing_only:
-        from core.common.frametime import place_skips_by_ball
-        T = place_skips_by_ball(T, uv, w, log=lambda m: print(f"[ball3d] {stem}: {m}"))
+    from core.common.frametime import place_skips_by_ball
+    T = place_skips_by_ball(T, uv, w, log=lambda m: print(f"[ball3d] {stem}: {m}"))
     print(f"[ball3d] {stem}: frame timing: {summary(T)}")
     # ball-size bias of this clip: YOLO boxes on a moving, blurred ball run larger than the ball;
     # gravity alone fixes depth on long, clean flights, and the ratio says by how much
@@ -256,7 +237,7 @@ def main():
             print(f"[ball3d] {stem}: your player numbers: each toucher's side of the net is known")
     bpx = float(np.nanmedian(size)) if np.isfinite(size).any() else 25.0
     fixed, keep = None, None
-    if a.use_my_touches:
+    if a.labels:
         from evaluation.inplay import in_play
         from evaluation.touches3d import your_touches
         V = json.load(open(paths.verified(stem)))
@@ -274,7 +255,7 @@ def main():
     who, named = None, None
     vp = Path(paths.verified(stem))
     serves, who_box = None, None
-    if vp.exists() and a.use_labels:
+    if vp.exists() and a.labels:
         Vj = json.load(open(vp))
         who = {int(k): int(v) for k, v in (Vj.get("touched_by") or {}).items()} or None
         unseen = set(Vj.get("unseen") or [])           # a serve not seen (hit off-screen): no "starts far back"

@@ -37,7 +37,7 @@ def main():
     stem = Path(a.video).stem
     if not paths.track(stem, a.output).exists():
         sys.exit(f"[labeled] {stem}: run the pipeline first: python -m main {a.video}")
-    _run(["tools.ball3d_run", a.video, "--output", a.output, "--use-labels"])
+    _run(["tools.ball3d_run", a.video, "--output", a.output, "--labels"])
     _run(["tools.ball3d_viewer", a.video, "--output", a.output, "--labels"])
     if a.render_video:
         _run(["tools.ball3d_video", a.video, "--output", a.output, "--labels", "--players", a.players])
