@@ -3,7 +3,6 @@
     python -m tools.autolabel videos/test40.mov videos/test41.mov
     python -m tools.autolabel --dir ~/Videos/games            # every video in a folder (batch;
                                                               # a failing clip is skipped, not fatal)
-    python -m tools.autolabel videos/test40.mov --classic      # the old pipeline (+ --tracknet)
 
 Runs the finder-first pipeline with the loose crop rule (fewest missed balls: a miss costs
 more clicks in review than a false ball), plus full-frame YOLO on every frame (cached), which
@@ -17,7 +16,7 @@ Writes data/proposals/<clip>.json:
 
 Doubt reasons flag frames worth a closer look (shown in red on the review timeline):
   filled      position is a physics guess (no detection) — the ball may be hidden
-  tracknet    position from the ball finder only (WASB, or TrackNet with --classic)
+  tracknet    position from the ball finder only
   resting     a ball not in play (held, resting, caught in the net): the tracker leaves it out,
               but it's a visible ball, so it's proposed for the labels
   low_conf    weak YOLO detection (conf < 0.15)
@@ -75,41 +74,30 @@ def _box_sizes(track_rows, dets, ball_px):
     return out
 
 
-def propose(video: str, out_dir: str = "data/proposals", tracknet: str | None = None,
-            output_dir: str = "output", model_path: str = "models/best4.pt", classic: bool = False,
-            finder: str = FINDER_DEFAULT) -> Path:
+def propose(video: str, out_dir: str = "data/proposals", output_dir: str = "output",
+            model_path: str = "models/best4.pt", finder: str = FINDER_DEFAULT) -> Path:
     from core.ball import finders
     from core.common import paths
     from core.pipeline import run
     stem = Path(video).stem
-    if classic:
-        run(input_path=video, output_dir=output_dir, model_path=model_path, tracknet=tracknet, render=False,
-            pipeline="classic")
-        dets = json.load(open(paths.dets(stem, output_dir)))
-        prof = dets.get("profile") or {}
-        tpath = paths.tracknet(stem, output_dir)
-        from core.ball.tracknet import correct
-        tn = correct(json.load(open(tpath))["frames"], float(prof.get("ball_px") or 30.0)) \
-            if (tracknet and tpath.exists()) else None
-    else:
-        from core.ball.finder_first import TOP
-        dp = paths.dets(stem, output_dir)
-        if not dp.exists():           # full-frame YOLO: other-ball suggestions + hard negatives need it
-            from ultralytics import YOLO
+    from core.ball.finder_first import TOP
+    dp = paths.dets(stem, output_dir)
+    if not dp.exists():           # full-frame YOLO: other-ball suggestions + hard negatives need it
+        from ultralytics import YOLO
 
-            from tools.dump_detections import dump
-            print("[autolabel] full-frame YOLO pass (for other balls / hard negatives; cached)")
-            dump(video, YOLO(model_path), paths.ensure(dp), 0.05, 1280)
-        run(input_path=video, output_dir=output_dir, model_path=model_path, render=False,
-            pipeline="finder-first", finder=finder, crop_top=TOP, crop_p=None)   # loose crop rule
-        dets = json.load(open(dp))
-        sample = json.load(open(paths.cache_dir(stem, output_dir) / "sample_dets.json"))
-        prof = sample.get("profile") or {}
-        ftag = finders.tag(finder) or "tracknet"
-        crops = json.load(open(paths.cache_dir(stem, output_dir) / f"crops_{ftag}.json"))
-        dets["zoom"] = crops["found"]           # box sizes at crop-confirmed positions
-        tn = finders.correct(finders.load_cached(stem, finder, output_dir), float(prof.get("ball_px") or 30.0), finder)
-        tracknet = finder
+        from tools.dump_detections import dump
+        print("[autolabel] full-frame YOLO pass (for other balls / hard negatives; cached)")
+        dump(video, YOLO(model_path), paths.ensure(dp), 0.05, 1280)
+    run(input_path=video, output_dir=output_dir, model_path=model_path, render=False,
+        pipeline="finder-first", finder=finder, crop_top=TOP, crop_p=None)   # loose crop rule
+    dets = json.load(open(dp))
+    sample = json.load(open(paths.cache_dir(stem, output_dir) / "sample_dets.json"))
+    prof = sample.get("profile") or {}
+    ftag = finders.tag(finder) or "tracknet"
+    crops = json.load(open(paths.cache_dir(stem, output_dir) / f"crops_{ftag}.json"))
+    dets["zoom"] = crops["found"]           # box sizes at crop-confirmed positions
+    tn = finders.correct(finders.load_cached(stem, finder, output_dir), float(prof.get("ball_px") or 30.0), finder)
+    tracknet = finder
     track = json.load(open(paths.track(stem, output_dir)))
     cpath = paths.contacts(stem, output_dir)
     contacts = json.load(open(cpath))["contacts"] if cpath.exists() else []
@@ -215,15 +203,7 @@ def main():
     ap.add_argument("--dir", help="propose labels for every video in this folder")
     ap.add_argument("--out", default="data/proposals")
     ap.add_argument("--model", default="models/best4.pt")
-    # TrackNet is off by default for labeling: its points run ~0.35 ball-widths off (right
-    # direction, wrong spot), which costs more fixing than the gaps it fills. Turn it on with
-    # --tracknet (bare flag = the current checkpoint) once a retrained model is more precise.
-    ap.add_argument("--tracknet", nargs="?", const="models/tracknet/FT_TrackNet_best.pt", default=None,
-                    help="(--classic) also use TrackNet")
-    ap.add_argument("--classic", action="store_true", help="the old pipeline (YOLO every frame + rule linker + zoom)")
     ap.add_argument("--finder", default=FINDER_DEFAULT, help="ball finder (finder-first)")
-    ap.add_argument("--no-tracknet", action="store_true", help="(default; kept for old commands)")
-    ap.add_argument("--include-gt", action="store_true", help="also process clips that have ground truth (test set)")
     ap.add_argument("--redo", action="store_true", help="re-propose clips that already have a proposals file")
     a = ap.parse_args()
     vids = list(a.videos)
@@ -236,15 +216,14 @@ def main():
     for i, v in enumerate(vids, 1):
         print(f"[autolabel] ({i}/{len(vids)}) {Path(v).name}", flush=True)
         stem = Path(v).stem
-        if stem in gt and not a.include_gt:
+        if stem in gt:
             print(f"[autolabel] {stem}: has ground truth (test set), skipped")
             continue
         if (Path(a.out) / f"{stem}.json").exists() and not a.redo:
             print(f"[autolabel] {stem}: already proposed, skipped (--redo to redo)")
             continue
         try:                          # one bad clip shouldn't stop an overnight batch
-            propose(v, a.out, None if a.no_tracknet else a.tracknet, model_path=a.model, classic=a.classic,
-                    finder=a.finder)
+            propose(v, a.out, model_path=a.model, finder=a.finder)
             done.append(stem)
         except Exception as e:
             print(f"[autolabel] {stem}: FAILED ({type(e).__name__}: {e}), moving on", flush=True)

@@ -1,7 +1,6 @@
 """Player poses for one clip: a pretrained pose model (17 body points per person) with tracking.
 
     python -m tools.pose videos/test76.mov            # -> output/test76/pose.json
-    python -m tools.pose videos/test76.mov --frames 80 200
 
 Used by the 3D step to tell who touched the ball (a wrist at the ball), which side of the net
 they are on (facing the camera = far side), and where they stand (ankles, before a jump). No
@@ -68,6 +67,8 @@ def _covered(b, boxes, thr: float = 0.4) -> bool:
     return False
 
 
+MODEL = "models/yolov8m-pose.pt"
+IMGSZ = 1280
 EVERY = 2                # the whole picture on every 2nd frame ...
 FAR_EVERY = 4            # ... the far court zoom on every 4th (one the whole picture also ran on) ...
 NEAR_TOUCH = 6           # ... the whole picture on EVERY frame within this many frames of a touch
@@ -180,16 +181,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("video")
     ap.add_argument("--output", default=str(paths.OUTPUT))
-    ap.add_argument("--model", default="models/yolov8m-pose.pt")
-    ap.add_argument("--imgsz", type=int, default=1280)
-    ap.add_argument("--frames", nargs=2, type=int, default=None, help="first and last frame (default: all)")
     ap.add_argument("--redo", action="store_true", help="run again even if pose.json exists")
-    ap.add_argument("--with-dead-time", action="store_true",
-                    help="also between rallies (default: only while the ball is in play, from the 2D track)")
-    ap.add_argument("--no-far-zoom", action="store_true", help="skip the far back court zoom pass")
-    ap.add_argument("--every", type=int, default=EVERY, help="whole picture on every Nth frame (1: all); "
-                    "every frame near a touch either way")
-    ap.add_argument("--far-every", type=int, default=FAR_EVERY, help="far court zoom on every Nth frame")
     a = ap.parse_args()
     import cv2
     from ultralytics import YOLO
@@ -199,7 +191,7 @@ def main():
         print(f"[pose] {stem}: cached  →  {out}  (--redo to run again; player labels are tied to this run)")
         return
     out.parent.mkdir(parents=True, exist_ok=True)
-    m = YOLO(a.model)
+    m = YOLO(MODEL)
     import torch
     device = "mps" if torch.backends.mps.is_available() else (0 if torch.cuda.is_available() else "cpu")
     cap = cv2.VideoCapture(a.video)
@@ -207,7 +199,7 @@ def main():
     n = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
     region, m_far = None, None
     cam_file = Path("data/cameras") / f"{stem}.json"
-    if not a.no_far_zoom and cam_file.exists():
+    if cam_file.exists():
         from core.geometry.camera import Camera
         cam = Camera.load(cam_file)
         W, H = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)), int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
@@ -215,21 +207,21 @@ def main():
         region = far_region(cam, W, H, far_side=far_sign)
         if region:
             T = tiles(region)
-            m_far = [YOLO(a.model) for _ in T]           # each tile its own tracker
+            m_far = [YOLO(MODEL) for _ in T]           # each tile its own tracker
             print(f"[pose] {stem}: far court zoom on {region} in {len(T)} tiles (x{FAR_ZOOM:g})")
-    elif not a.no_far_zoom:
+    else:
         print(f"[pose] {stem}: not calibrated: no far court zoom (calibrate first to find far players)")
-    f0, f1 = a.frames or (0, n - 1)
+    f0, f1 = 0, n - 1
     cap.set(cv2.CAP_PROP_POS_FRAMES, f0)
     frames = {}
     touches = touch_frames(stem, a.output)
-    run_whole = schedule(f0, f1, a.every, touches)
-    play = None if a.with_dead_time else in_play(stem, a.output)
+    run_whole = schedule(f0, f1, EVERY, touches)
+    play = in_play(stem, a.output)
     if play is not None:                                 # between rallies nobody needs poses: skip it
         run_whole &= play
         print(f"[pose] {stem}: ball in play on {len(play & set(range(f0, f1 + 1)))} of {f1 - f0 + 1} frames: "
               f"the rest (between rallies) skipped")
-    run_far = schedule(f0, f1, a.far_every, touches, near=FAR_NEAR_TOUCH) & run_whole   # never alone: duplicates of far players
+    run_far = schedule(f0, f1, FAR_EVERY, touches, near=FAR_NEAR_TOUCH) & run_whole   # never alone: duplicates of far players
     print(f"[pose] {stem}: whole picture on {len(run_whole)} of {f1 - f0 + 1} frames, far court zoom on "
           f"{len(run_far)} (every frame within {NEAR_TOUCH} / {FAR_NEAR_TOUCH} of {len(touches)} touches)")
     t_start, t_whole, t_far = time.time(), 0.0, 0.0
@@ -244,7 +236,7 @@ def main():
             break
         frames.setdefault(f, [])
         t_a = time.time()
-        r = m.track(img, persist=True, tracker="bytetrack.yaml", imgsz=a.imgsz, verbose=False, conf=0.25,
+        r = m.track(img, persist=True, tracker="bytetrack.yaml", imgsz=IMGSZ, verbose=False, conf=0.25,
                     device=device)[0]
         ids = r.boxes.id.int().tolist() if r.boxes.id is not None else [-1] * len(r.boxes)
         frames[f] = [{"id": i, "box": [round(v, 1) for v in b.tolist()],
@@ -256,7 +248,7 @@ def main():
             whole = [p["box"] for p in frames[f]]
             for ti, ((x0, y0, x1, y1), mt) in enumerate(zip(T, m_far)):
                 crop = cv2.resize(img[y0:y1, x0:x1], None, fx=FAR_ZOOM, fy=FAR_ZOOM, interpolation=cv2.INTER_CUBIC)
-                rf = mt.track(crop, persist=True, tracker="bytetrack.yaml", imgsz=a.imgsz, verbose=False,
+                rf = mt.track(crop, persist=True, tracker="bytetrack.yaml", imgsz=IMGSZ, verbose=False,
                               conf=0.25, device=device)[0]
                 fids = rf.boxes.id.int().tolist() if rf.boxes.id is not None else [-1] * len(rf.boxes)
                 for i, b, k in zip(fids, rf.boxes.xyxy, rf.keypoints.data):
@@ -279,7 +271,7 @@ def main():
             print(f"[pose] {stem}: frame {f}/{f1}", flush=True)
     nf = fill_between(frames)
     print(f"[pose] {stem}: {nf} boxes filled in between the frames the model ran on")
-    json.dump({"schema": "vv-pose/1", "video": a.video, "every": a.every, "far_every": a.far_every, "model": a.model, "keypoints": "coco17",
+    json.dump({"schema": "vv-pose/1", "video": a.video, "every": EVERY, "far_every": FAR_EVERY, "model": MODEL, "keypoints": "coco17",
                "far_zoom": {"region": region, "zoom": FAR_ZOOM} if region else None,
                "frames": frames}, open(out, "w"), separators=(",", ":"))
     print(f"[pose] {stem}: {len(frames)} frames  →  {out}")

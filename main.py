@@ -11,7 +11,7 @@ dev tool: python -m tools.labeled <video>.)
 
 Needs the court calibration first (python -m tools.calibrate_court <video>); without it, only the
 2D track is made. Each step prints its time; results land in output/<clip>/. Options this command
-doesn't know (e.g. --ring, --trail-len) go to the 2D step (python -m tools.track2d -h).
+doesn't know (e.g. --finder) go to the 2D step (python -m tools.track2d -h).
 The tools/ commands are helpers: labeling, single steps, viewers.
 """
 from __future__ import annotations
