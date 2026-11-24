@@ -1,8 +1,11 @@
 """The first stats from events.json (notes/ANALYSIS_DESIGN.md section 4): counts over the events.
-Per team now; per player once who-touched-it is filled in on full games (Re-ID).
+Per team, per FIVB zone 1-6 (where the receiver stood), and per player (touches with a number:
+tools.ball3d_run --player-ids).
 
     serve       attempts; aces (reception graded error) and errors need the rally's end: later
-    reception   attempts, A / B / C / error, positive % (A + B)
+    reception   attempts, A / B / C / error, positive % (A + B); also per zone and per player.
+                A team's serve targets are the other team's reception zones (how well they
+                received where we served); aces the 3D missed aren't in them
     attack      attempts (kills / errors / blocked: need the rally's end, later)
     timing      serve -> reception, reception -> set, set -> attack (s, medians); rally length
     side-out    the receiving team wins the rally / rallies with a known winner
@@ -14,6 +17,12 @@ from statistics import median
 
 def _med(v):
     return round(median(v), 2) if v else None
+
+
+def _grades(rec: list[dict]) -> dict:
+    q = {g: sum(e["quality"] == g for e in rec) for g in ("A", "B", "C", "error")}
+    graded = sum(q.values())
+    return {"n": len(rec), **q, "positive": round((q["A"] + q["B"]) / graded, 2) if graded else None}
 
 
 def team_stats(ev: dict) -> dict:
@@ -32,7 +41,15 @@ def team_stats(ev: dict) -> dict:
             "attacks": sum(e["type"] == "attack" for e in mine),
             "blocks": sum(e["type"] == "block" for e in mine),
             "digs": sum(e["type"] == "dig" for e in mine),
+            "reception_by_zone": {z: _grades([e for e in rec if e["zone"] == z]) for z in range(1, 7)},
         }
+    players = {}
+    for e in E:
+        if e.get("player") is not None:
+            p = players.setdefault(str(e["player"]), {"team": e["team"], "touches": {}})
+            p["touches"][e["type"]] = p["touches"].get(e["type"], 0) + 1
+    for k, p in players.items():
+        p["reception"] = _grades([e for e in E if str(e.get("player")) == k and e["type"] == "reception"])
     gaps = {"serve_to_reception": [], "reception_to_set": [], "set_to_attack": []}
     pairs = {("serve", "reception"): "serve_to_reception", ("reception", "set"): "reception_to_set",
              ("set", "attack"): "set_to_attack"}
@@ -48,6 +65,6 @@ def team_stats(ev: dict) -> dict:
             lengths.append(max(ts) - min(ts))
     known = [r for r in R if r["winner"] and r["serve_team"]]
     side_out = [r["winner"] != r["serve_team"] for r in known]
-    return {"teams": out, "timing_s": {k: _med(v) for k, v in gaps.items()} | {"rally_length": _med(lengths)},
+    return {"teams": out, "players": players, "timing_s": {k: _med(v) for k, v in gaps.items()} | {"rally_length": _med(lengths)},
             "side_out": round(sum(side_out) / len(side_out), 2) if side_out else None,
             "rallies": len(R), "rallies_with_winner": len(known)}

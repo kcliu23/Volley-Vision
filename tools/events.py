@@ -53,6 +53,31 @@ def main():
                   f"(A {q['A']} B {q['B']} C {q['C']} err {q['error']})  sets {s['sets']}  attacks {s['attacks']}"
                   f"  blocks {s['blocks']}  digs {s['digs']}")
         print(f"[events] {stem}: timing (median s) {st['timing_s']}  side-out {st['side_out']}")
+        for line in report(st):
+            print(f"[events] {stem}: {line}")
+
+
+def report(st: dict) -> list[str]:
+    """Receiving by zone, drawn as each half court seen from that team facing the net, and per player."""
+    def pct(g):
+        return "   -" if g["positive"] is None else f"{g['positive'] * 100:3.0f}%"
+
+    def cell(g):
+        return f"{g['n']:2d} {pct(g)}"
+    out = []
+    for team, other in (("near", "far"), ("far", "near")):
+        z = st["teams"][team]["reception_by_zone"]
+        z = {int(k): v for k, v in z.items()}
+        out.append(f"{team} receiving by zone (receptions, positive %), facing the net"
+                   f" = where {other} served to:")
+        out.append(f"    net:  4 {cell(z[4])}   3 {cell(z[3])}   2 {cell(z[2])}")
+        out.append(f"          5 {cell(z[5])}   6 {cell(z[6])}   1 {cell(z[1])}")
+    for k, p in sorted(st.get("players", {}).items(), key=lambda kv: (str(kv[1]["team"]), kv[0].zfill(3))):
+        g = p["reception"]
+        other = ", ".join(f"{t} {n}" for t, n in sorted(p["touches"].items()) if t != "reception")
+        out.append(f"#{k:>2s} {str(p['team']):4s} receptions {g['n']:2d} (A {g['A']} B {g['B']} C {g['C']} err {g['error']})"
+                   f" positive {pct(g)}   other touches: {other or '-'}")
+    return out
 
 
 if __name__ == "__main__":

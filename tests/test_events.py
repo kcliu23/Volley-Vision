@@ -49,3 +49,21 @@ def test_stats_and_reception_grade():
     assert st["teams"]["near"]["attacks"] == 1 and st["teams"]["far"]["serves"] == 1
     assert st["side_out"] == 1.0                 # the receiving team won it
     assert st["timing_s"]["set_to_attack"] == 0.5
+
+
+def test_stats_by_zone_and_player():
+    def ev(t, typ, zone=None, q=None, player=None):
+        return {"rally": 1, "t": None, "team": t, "type": typ, "zone": zone, "quality": q, "player": player}
+    E = [ev("far", "serve", player=9), ev("near", "reception", 1, "A", 3), ev("near", "set", 3, player=2),
+         ev("far", "serve"), ev("near", "reception", 1, "error", 3), ev("far", "serve"),
+         ev("near", "reception", 5, "B")]
+    st = team_stats({"events": E, "rallies": []})
+    z = st["teams"]["near"]["reception_by_zone"]
+    assert z[1] == {"n": 2, "A": 1, "B": 0, "C": 0, "error": 1, "positive": 0.5}
+    assert z[5]["positive"] == 1.0 and z[6] == {"n": 0, "A": 0, "B": 0, "C": 0, "error": 0, "positive": None}
+    assert st["players"]["3"]["reception"]["n"] == 2 and st["players"]["3"]["reception"]["positive"] == 0.5
+    assert st["players"]["2"]["touches"] == {"set": 1} and st["players"]["2"]["reception"]["n"] == 0
+    assert st["players"]["9"]["team"] == "far"
+    from tools.events import report
+    lines = report(st)                                    # the printout doesn't crash and shows zone 1
+    assert any("1  2  50%" in s for s in lines) and any(s.startswith("# 3 near receptions  2") for s in lines)
